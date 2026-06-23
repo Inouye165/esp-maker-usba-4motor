@@ -1,0 +1,14 @@
+CompileFlags:
+  Remove:
+    - -mlongcalls
+    - -mdisable-hardware-atomics
+    - -fstrict-volatile-bitfields
+    - -fno-tree-switch-conversion
+
+QueryDriver:
+  - C:\Users\Ron\.platformio\packages\toolchain-xtensa-esp-elf\bin\*
+  - C:\Users\Ron\.platformio\packages\toolchain-xtensa-esp32\bin\*
+  - C:\Users\Ron\.platformio\packages\toolchain-xtensa-esp32s3\bin\*
+  - C:\Users\Ron\.platformio\packages\toolchain-riscv32-esp\bin\*
+
+
