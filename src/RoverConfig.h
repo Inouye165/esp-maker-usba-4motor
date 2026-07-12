@@ -1,0 +1,75 @@
+#ifndef ROVER_CONFIG_H
+#define ROVER_CONFIG_H
+
+#include <Arduino.h>
+
+// Control Loop Settings
+const unsigned long CONTROL_PERIOD_MS = 10; // 100 Hz rate
+const float CONTROL_PERIOD_S = 0.01f;
+
+// Pin Mappings: DC Motors
+const int M1_IN1 = 27;
+const int M1_IN2 = 13;
+const int M2_IN1 = 4;
+const int M2_IN2 = 2;
+const int M3_IN1 = 17;
+const int M3_IN2 = 12;
+const int M4_IN1 = 14;
+const int M4_IN2 = 15;
+
+// Pin Mappings: Quadrature Encoders
+const int E1_A = 18;
+const int E1_B = 19;
+const int E2_A = 5;
+const int E2_B = 23;
+const int E3_A = 35; // Input only pin
+const int E3_B = 36; // Input only pin
+const int E4_A = 34; // Input only pin
+const int E4_B = 39; // Input only pin
+
+// Physical Parameters
+const float WHEEL_DIAMETER_M = 0.065f; // 65mm wheels
+const float WHEEL_RADIUS_M = WHEEL_DIAMETER_M / 2.0f;
+const float WHEEL_SEPARATION_M = 0.170f; // 170mm track separation
+const float GEAR_RATIO = 21.3f;
+const float ENCODER_PPR = 11.0f; // Magnetic poles/pulses per rev
+// 11 PPR * 21.3 ratio * 4 (quadrature edges count) = 937.2 ticks/wheel rev
+const float TICKS_PER_WHEEL_REV = ENCODER_PPR * GEAR_RATIO * 4.0f;
+
+// Kinematic Motion Constraints (Safe Conservative Defaults for Phase 4)
+const float MAX_LINEAR_VELOCITY_MPS = 0.80f;     // High velocity ceiling for floor driving
+const float MAX_ANGULAR_VELOCITY_RADPS = 3.50f;   // High angular velocity ceiling for skid turns
+
+const float MAX_LINEAR_ACCEL_MPS2 = 10.0f;       // Instant acceleration
+const float MAX_LINEAR_DECEL_MPS2 = 15.0f;       // Instant deceleration
+const float MAX_LINEAR_JERK_MPS3 = 100.0f;       // Instant jerk response
+
+const float MAX_ANGULAR_ACCEL_RADPS2 = 20.0f;    // Snappy angular acceleration
+const float MAX_ANGULAR_DECEL_RADPS2 = 30.0f;    // Snappy angular deceleration
+const float MAX_ANGULAR_JERK_RADPS3 = 200.0f;     // Snappy angular jerk response
+
+// Motor Controller PID Gains
+const float KP_SPEED = 2.2f;
+const float KI_SPEED = 1.2f;
+const float KD_SPEED = 0.05f;
+
+// Breakaway and Static Friction Compensation Limits (Feedforward Constants)
+// Start with initial approximate breakaway values (will be refined by calibration)
+struct MotorCalibration {
+    int forwardBreakawayPwm;
+    int reverseBreakawayPwm;
+    float kV; // Velocity Feedforward gain (Duty cycle / (rad/s))
+};
+
+extern MotorCalibration motorCalibrations[4];
+
+// Watchdog communication timeout
+const uint32_t WATCHDOG_TIMEOUT_MS = 300; // Controlled deceleration trigger
+const uint32_t FAULT_TIMEOUT_MS = 1000;    // Fully disable motor output trigger
+
+// Load/Save calibration settings to NVS
+void initConfigStorage();
+void loadCalibrations();
+void saveCalibrations();
+
+#endif // ROVER_CONFIG_H

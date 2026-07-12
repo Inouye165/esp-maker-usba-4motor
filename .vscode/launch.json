@@ -14,7 +14,7 @@
             "name": "PIO Debug",
             "executable": "C:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/.pio/build/esp32dev/firmware.elf",
             "projectEnvName": "esp32dev",
-            "toolchainBinDir": "C:/Users/Ron/.platformio/packages/toolchain-xtensa-esp-elf/bin",
+            "toolchainBinDir": "C:/Users/Ron/.platformio/packages/toolchain-xtensa-esp32/bin",
             "internalConsoleOptions": "openOnSessionStart",
             "preLaunchTask": {
                 "type": "PlatformIO",
@@ -27,7 +27,7 @@
             "name": "PIO Debug (skip Pre-Debug)",
             "executable": "C:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/.pio/build/esp32dev/firmware.elf",
             "projectEnvName": "esp32dev",
-            "toolchainBinDir": "C:/Users/Ron/.platformio/packages/toolchain-xtensa-esp-elf/bin",
+            "toolchainBinDir": "C:/Users/Ron/.platformio/packages/toolchain-xtensa-esp32/bin",
             "internalConsoleOptions": "openOnSessionStart"
         },
         {
@@ -36,7 +36,7 @@
             "name": "PIO Debug (without uploading)",
             "executable": "C:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/.pio/build/esp32dev/firmware.elf",
             "projectEnvName": "esp32dev",
-            "toolchainBinDir": "C:/Users/Ron/.platformio/packages/toolchain-xtensa-esp-elf/bin",
+            "toolchainBinDir": "C:/Users/Ron/.platformio/packages/toolchain-xtensa-esp32/bin",
             "internalConsoleOptions": "openOnSessionStart",
             "loadMode": "manual"
         }

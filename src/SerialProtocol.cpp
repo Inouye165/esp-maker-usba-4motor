@@ -1,0 +1,451 @@
+#include "SerialProtocol.h"
+#include "RoverConfig.h"
+#include "CommandManager.h"
+#include "CalibrationManager.h"
+#include "SafetyManager.h"
+#include "DifferentialDrive.h"
+#include "MotorDriver.h"
+#include "MaintenanceManager.h"
+#include "MotionLimiter.h"
+
+extern MotorDriver motorDriver;
+
+SerialProtocol::SerialProtocol() 
+    : parserState(WAIT_HEAD)
+    , extLen(0)
+    , payloadIdx(0)
+    , lastCharTimeMs(0) {}
+
+void SerialProtocol::begin() {
+    Serial.begin(115200);
+    parserState = WAIT_HEAD;
+    lastCharTimeMs = millis();
+}
+
+bool SerialProtocol::update(CommandManager &cmdManager, CalibrationManager &calManager, MaintenanceManager &maintenanceManager, SafetyManager &safetyManager, ControlLoopStats &stats) {
+    bool commandReceived = false;
+    uint32_t now = millis();
+    
+    // Parser timeout: reset state machine if transmission hangs for >100ms
+    if (parserState != WAIT_HEAD && (now - lastCharTimeMs > 100)) {
+        parserState = WAIT_HEAD;
+    }
+    
+    while (Serial.available() > 0) {
+        uint8_t b = Serial.read();
+        lastCharTimeMs = now;
+        
+        switch (parserState) {
+            case WAIT_HEAD:
+                if (b == 0xFF) {
+                    parserState = WAIT_DEVICE;
+                }
+                break;
+                
+            case WAIT_DEVICE:
+                if (b == 0xFC) {
+                    parserState = WAIT_LEN;
+                } else if (b != 0xFF) {
+                    parserState = WAIT_HEAD;
+                }
+                break;
+                
+            case WAIT_LEN:
+                extLen = b;
+                if (extLen > sizeof(payloadBuf) || extLen < 2) {
+                    parserState = WAIT_HEAD;
+                } else {
+                    payloadIdx = 0;
+                    parserState = WAIT_PAYLOAD;
+                }
+                break;
+                
+            case WAIT_PAYLOAD:
+                payloadBuf[payloadIdx++] = b;
+                if (payloadIdx >= extLen) {
+                    processPacket(cmdManager, calManager, maintenanceManager, safetyManager, stats);
+                    parserState = WAIT_HEAD;
+                    commandReceived = true;
+                }
+                break;
+        }
+    }
+    
+    return commandReceived;
+}
+
+void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManager &calManager, MaintenanceManager &maintenanceManager, SafetyManager &safetyManager, ControlLoopStats &stats) {
+    uint8_t funcId = payloadBuf[0];
+    uint8_t receivedChecksum = payloadBuf[extLen - 1];
+
+    uint16_t sum = extLen;
+    for (int i = 0; i < extLen - 1; i++) {
+        sum += payloadBuf[i];
+    }
+    uint8_t calculatedChecksum = sum & 0xFF;
+
+    if (calculatedChecksum != receivedChecksum) {
+        return;
+    }
+
+    cmdManager.resetWatchdog();
+
+    switch (funcId) {
+        case 0x10: { // CMD_MOTOR (Set individual speeds -100..100)
+            if (extLen >= 6) {
+                if (maintenanceManager.isActive() || calManager.getState() != CAL_IDLE) break;
+                
+                int8_t m1 = (int8_t)payloadBuf[1];
+                int8_t m2 = (int8_t)payloadBuf[2];
+                int8_t m3 = (int8_t)payloadBuf[3];
+                int8_t m4 = (int8_t)payloadBuf[4];
+                
+                float maxWheelRadps = MAX_LINEAR_VELOCITY_MPS / WHEEL_RADIUS_M;
+                float w1 = (m1 / 100.0f) * maxWheelRadps;
+                float w2 = (m2 / 100.0f) * maxWheelRadps;
+                float w3 = (m3 / 100.0f) * maxWheelRadps;
+                float w4 = (m4 / 100.0f) * maxWheelRadps;
+                
+                float linear = 0.0f;
+                float angular = 0.0f;
+                DifferentialDrive::wheelsToVelocity(w1, w2, w3, w4, linear, angular);
+                
+                cmdManager.setCommand(linear, angular, SOURCE_USB_SERIAL);
+            }
+            break;
+        }
+        
+        case 0x12: { // CMD_MOTION (vx, vy, vz as int16 LE * 1000)
+            if (extLen >= 8) {
+                if (maintenanceManager.isActive() || calManager.getState() != CAL_IDLE) break;
+                
+                int16_t vx = (int16_t)(payloadBuf[1] | (payloadBuf[2] << 8));
+                int16_t vy = (int16_t)(payloadBuf[3] | (payloadBuf[4] << 8));
+                int16_t vz = (int16_t)(payloadBuf[5] | (payloadBuf[6] << 8));
+                
+                float linear = (float)vx / 1000.0f;
+                float angular = (float)vz / 1000.0f;
+                
+                cmdManager.setCommand(linear, angular, SOURCE_ROS);
+            }
+            break;
+        }
+        
+        case 0x20: { // CMD_START_CALIBRATION_SIMULATION
+            if (extLen >= 7) {
+                bool safetyAck = (payloadBuf[1] == 1);
+                bool simFlag = (payloadBuf[2] == 1);
+                uint32_t sessId = (payloadBuf[3] | (payloadBuf[4] << 8) | (payloadBuf[5] << 16) | (payloadBuf[6] << 24));
+                
+                // Safety check: force simulation in current phase
+                calManager.startCalibration(safetyAck, simFlag, sessId);
+                cmdManager.requestSourceChange(SOURCE_CALIBRATION, 0.0f, 0.0f);
+            }
+            break;
+        }
+        
+        case 0x21: { // CMD_ABORT_CALIBRATION
+            calManager.cancelCalibration();
+            cmdManager.requestSourceChange(SOURCE_NONE, 0.0f, 0.0f);
+            break;
+        }
+        
+        case 0x22: { // CMD_CLEAR_FAULTS
+            safetyManager.clearFaults();
+            cmdManager.clearEmergencyStop();
+            Serial.println("[Safety] Faults cleared via serial command.");
+            break;
+        }
+        
+        case 0x23: { // CMD_GET_FIRMWARE_INFO
+            sendFirmwareInfo();
+            break;
+        }
+        
+        case 0x24: { // CMD_RESET_TIMING_STATS
+            stats.lastDurationUs = 0;
+            stats.minDurationUs = 9999999;
+            stats.avgDurationUs = 0;
+            stats.maxDurationUs = 0;
+            stats.missedDeadlines = 0;
+            stats.totalIterations = 0;
+            Serial.println("[Stats] Control loop timing statistics reset.");
+            break;
+        }
+
+        case 0x25: { // CMD_START_CALIBRATION_REAL
+            if (extLen >= 7) {
+                uint32_t sessId = (payloadBuf[3] | (payloadBuf[4] << 8) | (payloadBuf[5] << 16) | (payloadBuf[6] << 24));
+                calManager.startCalibration(true, false, sessId);
+                cmdManager.requestSourceChange(SOURCE_CALIBRATION, 0.0f, 0.0f);
+            }
+            break;
+        }
+
+        case 0x26: { // CMD_ENTER_MAINTENANCE
+            if (extLen >= 7) {
+                bool safetyAck = (payloadBuf[1] == 1);
+                int motorIdx = (int)payloadBuf[2];
+                uint32_t sessId = (payloadBuf[3] | (payloadBuf[4] << 8) | (payloadBuf[5] << 16) | (payloadBuf[6] << 24));
+                
+                if (calManager.getState() == CAL_IDLE) {
+                    maintenanceManager.enter(safetyAck, motorIdx, sessId, motorDriver);
+                }
+            }
+            break;
+        }
+
+        case 0x27: { // CMD_MAINTENANCE_SET_OUTPUT
+            if (extLen >= 11) {
+                uint32_t sessId = (payloadBuf[3] | (payloadBuf[4] << 8) | (payloadBuf[5] << 16) | (payloadBuf[6] << 24));
+                int motorIdx = (int)payloadBuf[7];
+                int dir = (int)payloadBuf[8];
+                int rawPwm = (int)payloadBuf[9];
+                bool enabled = (payloadBuf[10] == 1);
+                
+                if (maintenanceManager.isActive() && maintenanceManager.getSessionId() == sessId && motorIdx == maintenanceManager.getActiveMotor()) {
+                    if (enabled) {
+                        int pwm = (dir == 0) ? rawPwm : -rawPwm;
+                        maintenanceManager.setOutput(pwm);
+                    } else {
+                        maintenanceManager.setOutput(0);
+                    }
+                }
+            }
+            break;
+        }
+
+        case 0x28: { // CMD_EXIT_MAINTENANCE
+            maintenanceManager.exit(motorDriver);
+            break;
+        }
+
+        case 0x29: { // CMD_EMERGENCY_STOP
+            cmdManager.triggerEmergencyStop();
+            motorDriver.emergencyStop();
+            maintenanceManager.exit(motorDriver);
+            calManager.cancelCalibration();
+            Serial.println("[Safety] Emergency Stop triggered via serial command.");
+            break;
+        }
+
+        case 0x2A: { // CMD_VERIFY_READY
+            if (extLen >= 7) {
+                calManager.motorDirectionsVerified = (payloadBuf[1] == 1);
+                calManager.encoderDirectionsVerified = (payloadBuf[2] == 1);
+                calManager.maintenanceStopVerified = (payloadBuf[3] == 1);
+                calManager.emergencyStopVerified = (payloadBuf[4] == 1);
+                calManager.deadmanVerified = (payloadBuf[5] == 1);
+                Serial.printf("[Calibration] Readiness gates updated: MotorDir=%d, EncDir=%d, MaintStop=%d, EStop=%d, Deadman=%d\n",
+                    calManager.motorDirectionsVerified, calManager.encoderDirectionsVerified,
+                    calManager.maintenanceStopVerified, calManager.emergencyStopVerified, calManager.deadmanVerified);
+            }
+            break;
+        }
+
+        case 0x2C: { // CMD_ARM_NORMAL_DRIVE
+            if (!maintenanceManager.isActive() && calManager.getState() == CAL_IDLE && !safetyManager.hasFaults() && !cmdManager.isEmergencyStopped()) {
+                if (cmdManager.armNormalDrive()) {
+                    motorDriver.setMode(MotorOutputMode::NORMAL_DRIVE);
+                    Serial.println("[Command] NORMAL_DRIVE ARMED successfully.");
+                } else {
+                    Serial.println("[Command] Rejecting ARM: safety locks active.");
+                }
+            } else {
+                Serial.println("[Command] Rejecting ARM: calibration, maintenance, faults, or E-STOP active.");
+            }
+            break;
+        }
+
+        case 0x2D: { // CMD_DISARM_NORMAL_DRIVE
+            cmdManager.disarmNormalDrive();
+            Serial.println("[Command] NORMAL_DRIVE DISARMED. Initiating controlled stop.");
+            break;
+        }
+    }
+}
+
+void SerialProtocol::writePacket(uint8_t extType, const uint8_t *data, uint8_t dataLen) {
+    uint8_t outExtLen = dataLen + 3;
+    uint8_t sum = outExtLen + extType;
+    
+    Serial.write(0xFF);
+    Serial.write(0xFB); // Board -> Host ID
+    Serial.write(outExtLen);
+    Serial.write(extType);
+    
+    for (uint8_t i = 0; i < dataLen; i++) {
+        Serial.write(data[i]);
+        sum += data[i];
+    }
+    
+    Serial.write(sum & 0xFF);
+}
+
+void SerialProtocol::sendTelemetry(
+    const int32_t *ticks,
+    float batteryVolts,
+    float currentYawRate,
+    const CalibrationManager &calManager,
+    const MaintenanceManager &maintenanceManager,
+    const ControlLoopStats &stats,
+    uint32_t faultFlags
+) {
+    // 1. Encoder packet (TYPE_ENCODER = 0x0D)
+    uint8_t encoderData[16];
+    memcpy(&encoderData[0],  &ticks[0], 4);
+    memcpy(&encoderData[4],  &ticks[1], 4);
+    memcpy(&encoderData[8],  &ticks[2], 4);
+    memcpy(&encoderData[12], &ticks[3], 4);
+    writePacket(0x0D, encoderData, 16);
+    
+    // 2. Battery packet (TYPE_BATTERY = 0x0A) - Report 0.0V since physical ADC is not verified
+    uint8_t batteryData[7] = {0, 0, 0, 0, 0, 0, 0};
+    writePacket(0x0A, batteryData, 7);
+    
+    // 3. IMU telemetry packet (TYPE_IMU = 0x0E)
+    int16_t gz_raw = (int16_t)(currentYawRate * -100.0f);
+    int16_t ax_raw = 0;
+    int16_t ay_raw = 0;
+    int16_t az_raw = 1000;
+    int16_t gx_raw = 0;
+    int16_t gy_raw = 0;
+    int16_t mx_raw = 0;
+    int16_t my_raw = 0;
+    int16_t mz_raw = 0;
+    
+    uint8_t imuData[19];
+    memcpy(&imuData[0],  &gx_raw, 2);
+    memcpy(&imuData[2],  &gy_raw, 2);
+    memcpy(&imuData[4],  &gz_raw, 2);
+    memcpy(&imuData[6],  &ax_raw, 2);
+    memcpy(&imuData[8],  &ay_raw, 2);
+    memcpy(&imuData[10], &az_raw, 2);
+    memcpy(&imuData[12], &mx_raw, 2);
+    memcpy(&imuData[14], &my_raw, 2);
+    memcpy(&imuData[16], &mz_raw, 2);
+    imuData[18] = 0;
+    writePacket(0x0E, imuData, 19);
+
+    // 3b. Maintenance telemetry status (TYPE_MAINTENANCE_STATUS = 0x35)
+    uint8_t maintData[15];
+    memset(maintData, 0, sizeof(maintData));
+    maintData[0] = 1; // Major protocol version
+    maintData[1] = 1; // Minor protocol version
+    
+    uint32_t maintSess = maintenanceManager.getSessionId();
+    memcpy(&maintData[2], &maintSess, 4);
+    
+    maintData[6] = maintenanceManager.isActive() ? 1 : 0;
+    maintData[7] = (uint8_t)maintenanceManager.getActiveMotor();
+    maintData[8] = (uint8_t)(maintenanceManager.getActiveMotor() + 1); // Human readable motor number
+    maintData[9] = (maintenanceManager.getTestPwm() < 0) ? 1 : 0; // Direction (0=FWD, 1=REV)
+    maintData[10] = (uint8_t)abs(maintenanceManager.getTestPwm()); // Requested PWM magnitude
+    
+    // Check mode and print actual output if mode matches
+    int actualPwm = 0;
+    if (motorDriver.getMode() == MotorOutputMode::SINGLE_MOTOR_MAINTENANCE && motorDriver.getAuthorizedMotor() == maintenanceManager.getActiveMotor()) {
+        actualPwm = abs(maintenanceManager.getTestPwm());
+    }
+    maintData[11] = (uint8_t)actualPwm; // Actual PWM magnitude
+    maintData[12] = maintenanceManager.isDeadmanActive() ? 1 : 0;
+    
+    uint32_t remTimeout = maintenanceManager.getRemainingTimeoutMs();
+    memcpy(&maintData[13], &remTimeout, 2);
+    
+    writePacket(0x35, maintData, 15);
+
+    // 4. Calibration telemetry packet (TYPE_CALIBRATION_STATUS = 0x30)
+    uint8_t calData[55];
+    memset(calData, 0, sizeof(calData));
+    calData[0] = 1; // Major protocol version
+    calData[1] = 1; // Minor protocol version
+    
+    uint32_t sessId = calManager.getSessionId();
+    memcpy(&calData[2], &sessId, 4);
+    
+    calData[6] = calManager.getIsSimulation() ? 1 : 0;
+    calData[7] = (uint8_t)calManager.getState();
+    
+    int activeM = calManager.getActiveMotor();
+    calData[8] = (uint8_t)activeM;
+    calData[9] = (uint8_t)(activeM + 1);
+    calData[10] = (calManager.getState() == CAL_MEASURING_REV) ? 1 : 0;
+    calData[11] = (uint8_t)calManager.getCurrentPwm();
+    
+    int delta = calManager.getSimulatedDelta();
+    calData[12] = (uint8_t)delta;
+    calData[13] = (delta >= 8) ? 1 : 0; // Movement detected
+    
+    calData[14] = (motorDriver.getMode() == MotorOutputMode::LOCKED || motorDriver.getMode() == MotorOutputMode::EMERGENCY_STOP || motorDriver.getMode() == MotorOutputMode::FAULTED) ? 1 : 0;
+    
+    for (int i = 0; i < 4; i++) {
+        calData[15 + i] = (uint8_t)calManager.getForwardBreakaway(i);
+        calData[19 + i] = (uint8_t)calManager.getReverseBreakaway(i);
+    }
+    
+    // Copy the failure reason (max 32 bytes)
+    strncpy((char*)&calData[23], calManager.getFailureReason(), 32);
+    
+    writePacket(0x30, calData, 55);
+
+    // 5. Control loop timing telemetry packet (TYPE_LOOP_TIMING = 0x33)
+    uint8_t timingData[24];
+    memcpy(&timingData[0],  &stats.lastDurationUs, 4);
+    memcpy(&timingData[4],  &stats.minDurationUs, 4);
+    memcpy(&timingData[8],  &stats.avgDurationUs, 4);
+    memcpy(&timingData[12], &stats.maxDurationUs, 4);
+    memcpy(&timingData[16], &stats.missedDeadlines, 4);
+    memcpy(&timingData[20], &stats.totalIterations, 4);
+    writePacket(0x33, timingData, 24);
+
+    // 6. Fault report telemetry packet (TYPE_FAULT_REPORT = 0x34)
+    uint8_t faultData[4];
+    memcpy(faultData, &faultFlags, 4);
+    writePacket(0x34, faultData, 4);
+    
+    // 7. Normal drive telemetry packet (TYPE_NORMAL_DRIVE_STATUS = 0x36)
+    extern CommandManager commandManager;
+    extern MotionLimiter motionLimiter;
+    extern MotorDriver motorDriver;
+    
+    uint8_t normalData[24];
+    memset(normalData, 0, sizeof(normalData));
+    normalData[0] = commandManager.isNormalDriveArmed() ? 1 : 0;
+    normalData[1] = (uint8_t)motorDriver.getMode();
+    normalData[2] = (uint8_t)commandManager.getActiveSource();
+    
+    uint32_t cmdAgeMs = millis() - commandManager.getLastCmdReceivedMs();
+    if (commandManager.getActiveSource() == SOURCE_NONE) {
+        cmdAgeMs = 999999;
+    }
+    memcpy(&normalData[3], &cmdAgeMs, 4);
+    
+    float reqLinear = commandManager.getRequestedLinearVelocity();
+    float reqAngular = commandManager.getRequestedAngularVelocity();
+    memcpy(&normalData[7], &reqLinear, 4);
+    memcpy(&normalData[11], &reqAngular, 4);
+    
+    float limLinear = motionLimiter.getLinearVelocity();
+    float limAngular = motionLimiter.getAngularVelocity();
+    memcpy(&normalData[15], &limLinear, 4);
+    memcpy(&normalData[19], &limAngular, 4);
+    
+    normalData[23] = PHASE4A1_NORMAL_DRIVE_OUTPUT_DISABLED ? 1 : 0;
+    
+    writePacket(0x36, normalData, 24);
+}
+
+void SerialProtocol::sendFirmwareInfo() {
+    uint8_t data[112];
+    memset(data, 0, sizeof(data));
+    
+    strncpy((char*)&data[0],  "Maker-ESP32-Unified-Rover", 32);
+    strncpy((char*)&data[32], "1.3.0-phase4", 16);
+    strncpy((char*)&data[48], "v1.1", 8);
+    strncpy((char*)&data[56], "phase4-floor-backtrack", 16);
+    strncpy((char*)&data[72], __DATE__ " " __TIME__, 24);
+    strncpy((char*)&data[96], "Maker-ESP32-Pro", 16);
+    
+    writePacket(0x32, data, 112);
+}
