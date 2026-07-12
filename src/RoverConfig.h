@@ -2,6 +2,9 @@
 #define ROVER_CONFIG_H
 
 #include <Arduino.h>
+#include <Preferences.h>
+
+extern Preferences preferences;
 
 // Control Loop Settings
 const unsigned long CONTROL_PERIOD_MS = 10; // 100 Hz rate
@@ -28,9 +31,9 @@ const int E4_A = 34; // Input only pin
 const int E4_B = 39; // Input only pin
 
 // Physical Parameters
-const float WHEEL_DIAMETER_M = 0.065f; // 65mm wheels
-const float WHEEL_RADIUS_M = WHEEL_DIAMETER_M / 2.0f;
-const float WHEEL_SEPARATION_M = 0.170f; // 170mm track separation
+extern float WHEEL_DIAMETER_M;
+extern float WHEEL_RADIUS_M;
+extern float WHEEL_SEPARATION_M;
 const float GEAR_RATIO = 21.3f;
 const float ENCODER_PPR = 11.0f; // Magnetic poles/pulses per rev
 // 11 PPR * 21.3 ratio * 4 (quadrature edges count) = 937.2 ticks/wheel rev
@@ -62,6 +65,7 @@ struct MotorCalibration {
 };
 
 extern MotorCalibration motorCalibrations[4];
+extern bool USE_UNIFORM_BREAKAWAY;
 
 // Watchdog communication timeout
 const uint32_t WATCHDOG_TIMEOUT_MS = 300; // Controlled deceleration trigger

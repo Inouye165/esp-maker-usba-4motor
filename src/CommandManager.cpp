@@ -108,7 +108,7 @@ ChassisCommand CommandManager::getActiveCommand(uint32_t nowMs) {
         uint32_t elapsed = nowMs - lastCmdReceivedMs;
         if (elapsed > FAULT_TIMEOUT_MS) {
             timedOut = true;
-            normalDriveArmed = false; // Watchdog timeout disarms normal drive
+            // normalDriveArmed = false; // Watchdog timeout no longer disarms normal drive, just halts
             activeSource = SOURCE_NONE;
             currentCmd.linearVelocity = 0.0f;
             currentCmd.angularVelocity = 0.0f;

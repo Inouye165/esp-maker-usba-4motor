@@ -262,6 +262,33 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
             Serial.println("[Command] NORMAL_DRIVE DISARMED. Initiating controlled stop.");
             break;
         }
+
+        case 0x37: { // CMD_ROVER_PARAMS (Set or Query)
+            if (extLen >= 9) {
+                float newDiameter = 0.0f;
+                float newSeparation = 0.0f;
+                memcpy(&newDiameter, &payloadBuf[1], 4);
+                memcpy(&newSeparation, &payloadBuf[5], 4);
+                
+                // Update active params
+                WHEEL_DIAMETER_M = newDiameter;
+                WHEEL_RADIUS_M = newDiameter / 2.0f;
+                WHEEL_SEPARATION_M = newSeparation;
+                
+                // Save to Preferences NVS
+                preferences.putFloat("wheel_dia", newDiameter);
+                preferences.putFloat("wheel_sep", newSeparation);
+                
+                Serial.printf("[Config] Dynamic params saved to NVS: diameter=%.4f m, separation=%.4f m\n", newDiameter, newSeparation);
+            }
+            
+            // Send back current active parameters
+            uint8_t respData[8];
+            memcpy(&respData[0], &WHEEL_DIAMETER_M, 4);
+            memcpy(&respData[4], &WHEEL_SEPARATION_M, 4);
+            writePacket(0x37, respData, 8);
+            break;
+        }
     }
 }
 
