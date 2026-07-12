@@ -1,4 +1,12 @@
 /maker-esp32-pro-ref/
 /maker-esp32-ref/
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+id_ed25519*
 .pio/
+REVIEW_NOTES.md
+scratch/
