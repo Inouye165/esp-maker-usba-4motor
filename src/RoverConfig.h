@@ -34,9 +34,18 @@ const int E4_B = 39; // Input only pin
 extern float WHEEL_DIAMETER_M;
 extern float WHEEL_RADIUS_M;
 extern float WHEEL_SEPARATION_M;
-const float GEAR_RATIO = 21.3f;
+extern float LEFT_TRIM;
+extern float RIGHT_TRIM;
+extern float LEFT_TRIM_FWD;
+extern float RIGHT_TRIM_FWD;
+extern float LEFT_TRIM_REV;
+extern float RIGHT_TRIM_REV;
+void saveTrims(float left, float right);
+void saveTrimsFwd(float left, float right);
+void saveTrimsRev(float left, float right);
+const float GEAR_RATIO = 45.0f;
 const float ENCODER_PPR = 11.0f; // Magnetic poles/pulses per rev
-// 11 PPR * 21.3 ratio * 4 (quadrature edges count) = 937.2 ticks/wheel rev
+// 11 PPR * 45.0 ratio * 4 (quadrature edges count) = 1980.0 ticks/wheel rev
 const float TICKS_PER_WHEEL_REV = ENCODER_PPR * GEAR_RATIO * 4.0f;
 
 // Kinematic Motion Constraints (Safe Conservative Defaults for Phase 4)

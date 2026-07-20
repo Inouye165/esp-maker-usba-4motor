@@ -1,3 +1,4 @@
+// Rebuild triggered: Updated GEAR_RATIO parameters to 45.0f
 #include "SerialProtocol.h"
 #include "RoverConfig.h"
 #include "CommandManager.h"
@@ -287,6 +288,54 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
             memcpy(&respData[0], &WHEEL_DIAMETER_M, 4);
             memcpy(&respData[4], &WHEEL_SEPARATION_M, 4);
             writePacket(0x37, respData, 8);
+            break;
+        }
+
+        case 0x38: { // CMD_SET_TRIM (Set or Query forward straight trims)
+            if (extLen >= 9) {
+                float newLeftTrim = 1.00f;
+                float newRightTrim = 1.00f;
+                memcpy(&newLeftTrim, &payloadBuf[1], 4);
+                memcpy(&newRightTrim, &payloadBuf[5], 4);
+                
+                // Bounds validation [0.80, 1.20]
+                if (newLeftTrim >= 0.80f && newLeftTrim <= 1.20f &&
+                    newRightTrim >= 0.80f && newRightTrim <= 1.20f) {
+                    saveTrimsFwd(newLeftTrim, newRightTrim);
+                } else {
+                    Serial.printf("[Protocol] Rejected invalid FWD trims: Left=%.4f, Right=%.4f (bounds: [0.8, 1.2])\n", newLeftTrim, newRightTrim);
+                }
+            }
+            
+            // Reply back with active forward trims
+            uint8_t respData[8];
+            memcpy(&respData[0], &LEFT_TRIM_FWD, 4);
+            memcpy(&respData[4], &RIGHT_TRIM_FWD, 4);
+            writePacket(0x38, respData, 8);
+            break;
+        }
+
+        case 0x39: { // CMD_SET_TRIM_REV (Set or Query reverse straight trims)
+            if (extLen >= 9) {
+                float newLeftTrim = 1.00f;
+                float newRightTrim = 1.00f;
+                memcpy(&newLeftTrim, &payloadBuf[1], 4);
+                memcpy(&newRightTrim, &payloadBuf[5], 4);
+                
+                // Bounds validation [0.80, 1.20]
+                if (newLeftTrim >= 0.80f && newLeftTrim <= 1.20f &&
+                    newRightTrim >= 0.80f && newRightTrim <= 1.20f) {
+                    saveTrimsRev(newLeftTrim, newRightTrim);
+                } else {
+                    Serial.printf("[Protocol] Rejected invalid REV trims: Left=%.4f, Right=%.4f (bounds: [0.8, 1.2])\n", newLeftTrim, newRightTrim);
+                }
+            }
+            
+            // Reply back with active reverse trims
+            uint8_t respData[8];
+            memcpy(&respData[0], &LEFT_TRIM_REV, 4);
+            memcpy(&respData[4], &RIGHT_TRIM_REV, 4);
+            writePacket(0x39, respData, 8);
             break;
         }
     }

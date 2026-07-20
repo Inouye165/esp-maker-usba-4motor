@@ -10,3 +10,9 @@ id_ed25519*
 .pio/
 REVIEW_NOTES.md
 scratch/
+.agents/
+deploy_firmware.py
+
+# Python cache
+__pycache__/
+*.pyc

@@ -7,6 +7,12 @@ Preferences preferences;
 float WHEEL_DIAMETER_M = 0.065f;
 float WHEEL_RADIUS_M = 0.0325f;
 float WHEEL_SEPARATION_M = 0.170f;
+float LEFT_TRIM = 1.00f;
+float RIGHT_TRIM = 1.00f;
+float LEFT_TRIM_FWD = 1.00f;
+float RIGHT_TRIM_FWD = 1.00f;
+float LEFT_TRIM_REV = 1.00f;
+float RIGHT_TRIM_REV = 1.00f;
 bool USE_UNIFORM_BREAKAWAY = true;
 
 // Default calibrations:
@@ -64,7 +70,17 @@ void loadCalibrations() {
     WHEEL_DIAMETER_M = preferences.getFloat("wheel_dia", 0.065f);
     WHEEL_RADIUS_M = WHEEL_DIAMETER_M / 2.0f;
     WHEEL_SEPARATION_M = preferences.getFloat("wheel_sep", 0.170f);
+    
+    LEFT_TRIM_FWD = preferences.getFloat("left_trim", 1.00f);
+    RIGHT_TRIM_FWD = preferences.getFloat("right_trim", 1.00f);
+    LEFT_TRIM_REV = preferences.getFloat("left_trim_rev", 1.00f);
+    RIGHT_TRIM_REV = preferences.getFloat("right_trim_rev", 1.00f);
+    LEFT_TRIM = LEFT_TRIM_FWD;
+    RIGHT_TRIM = RIGHT_TRIM_FWD;
+    
     Serial.printf("[Config] Loaded physical dimensions: diameter=%.4f m, separation=%.4f m\n", WHEEL_DIAMETER_M, WHEEL_SEPARATION_M);
+    Serial.printf("[Config] Loaded FWD trims: Left=%.4f, Right=%.4f | REV trims: Left=%.4f, Right=%.4f\n", 
+                  LEFT_TRIM_FWD, RIGHT_TRIM_FWD, LEFT_TRIM_REV, RIGHT_TRIM_REV);
 }
 
 void saveCalibrations() {
@@ -91,4 +107,24 @@ void saveCalibrations() {
     preferences.putFloat("m4_kv", motorCalibrations[3].kV);
 
     Serial.println("[Config] Saved breakaway parameters to NVS.");
+}
+
+void saveTrims(float left, float right) {
+    saveTrimsFwd(left, right);
+}
+
+void saveTrimsFwd(float left, float right) {
+    LEFT_TRIM_FWD = left;
+    RIGHT_TRIM_FWD = right;
+    preferences.putFloat("left_trim", left);
+    preferences.putFloat("right_trim", right);
+    Serial.printf("[Config] Saved FWD straight drive trims to NVS: Left=%.4f, Right=%.4f\n", left, right);
+}
+
+void saveTrimsRev(float left, float right) {
+    LEFT_TRIM_REV = left;
+    RIGHT_TRIM_REV = right;
+    preferences.putFloat("left_trim_rev", left);
+    preferences.putFloat("right_trim_rev", right);
+    Serial.printf("[Config] Saved REV straight drive trims to NVS: Left=%.4f, Right=%.4f\n", left, right);
 }

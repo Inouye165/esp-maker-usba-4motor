@@ -204,8 +204,52 @@ void runMotionControlLoop() {
   float rightTargetRadps = 0.0f;
   DifferentialDrive::velocityToWheels(targetLinear, targetAngular, leftTargetRadps, rightTargetRadps);
   
-  // 7. Route target wheel speeds to controllers
-  wheelController.setTargets(leftTargetRadps, rightTargetRadps);
+  // Apply straight drive trims dynamically based on direction
+  if (targetLinear >= 0.0f) {
+      LEFT_TRIM = LEFT_TRIM_FWD;
+      RIGHT_TRIM = RIGHT_TRIM_FWD;
+  } else {
+      LEFT_TRIM = LEFT_TRIM_REV;
+      RIGHT_TRIM = RIGHT_TRIM_REV;
+  }
+  leftTargetRadps *= LEFT_TRIM;
+  rightTargetRadps *= RIGHT_TRIM;
+  
+  // 7. Route target wheel speeds to controllers with active straight-line synchronization
+  static int32_t syncStartTicks[4] = {0, 0, 0, 0};
+  static bool wasGoingStraight = false;
+  
+  bool isGoingStraight = (activeCmd.linearVelocity != 0.0f) && (activeCmd.angularVelocity == 0.0f);
+  
+  if (isGoingStraight) {
+      if (!wasGoingStraight) {
+          wasGoingStraight = true;
+          for (int i = 0; i < 4; i++) {
+              syncStartTicks[i] = encoderManager.getTicks(i);
+          }
+      }
+      
+      int32_t relTicks[4];
+      for (int i = 0; i < 4; i++) {
+          relTicks[i] = encoderManager.getTicks(i) - syncStartTicks[i];
+      }
+      
+      float avgTicks = (relTicks[0] + relTicks[1] + relTicks[2] + relTicks[3]) / 4.0f;
+      const float K_SYNC = 0.005f; // rad/s target correction per tick error
+      
+      float target0 = leftTargetRadps - (relTicks[0] - avgTicks) * K_SYNC;
+      float target2 = leftTargetRadps - (relTicks[2] - avgTicks) * K_SYNC;
+      float target1 = rightTargetRadps - (relTicks[1] - avgTicks) * K_SYNC;
+      float target3 = rightTargetRadps - (relTicks[3] - avgTicks) * K_SYNC;
+      
+      wheelController.setWheelTarget(0, target0);
+      wheelController.setWheelTarget(1, target1);
+      wheelController.setWheelTarget(2, target2);
+      wheelController.setWheelTarget(3, target3);
+  } else {
+      wasGoingStraight = false;
+      wheelController.setTargets(leftTargetRadps, rightTargetRadps);
+  }
   
   // 8. Run PI Speed loops and update motor PWMs
   float measuredVels[4];
