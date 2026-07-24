@@ -2,7 +2,41 @@
 
 This repository contains the embedded C++ firmware (PlatformIO) for the main actuator controller board of the Robot Tank. Based on the **NULLLAB Maker-ESP32 / Maker-ESP32-Pro** (Espressif ESP32-WROOM-32E module), it drives 4 DC motors/tracks, hosts an on-board SSD1306 OLED screen for status displays, manages addressable NeoPixel LEDs, and runs an HTTP server alongside a UDP autodiscovery beacon.
 
-## Architecture & Integration
+---
+
+## 📐 Project Architecture & Two-Repository System
+
+The rover operates on a **two-repository architecture**:
+
+| Repository | Local Path | Deployment Target | Role & Purpose |
+| :--- | :--- | :--- | :--- |
+| **`esp-maker-usba-4motor`** *(This Repo)* | `C:\Users\Ron\electronic_projects\esp\esp-maker-usba-4motor` | Maker USB32 Pro / Maker-ESP32 Pro Board | Embedded C++ PlatformIO firmware: motor control, encoder acquisition, closed-loop speed control, serial protocol, watchdog, arming, e-stop, and low-level safety. |
+| **`yahboom-encoder`** | `C:\Users\Ron\electronic_projects\yahboom-encoder` | Raspberry Pi 5 (`/home/ron/yahboom-encoder`) | Host software: Cockpit API, LiDAR sidecar, ROS 2 Jazzy Docker stack, encoder odometry, TF transforms, Foxglove bridge, diagnostics, future SLAM/Nav2. |
+
+> [!IMPORTANT]
+> **Legacy Repository Naming Clarification**:
+> `yahboom-encoder` is a legacy repository and folder name. The rover **does not use the old Yahboom motor-driver board**. The active motor controller is the **Maker USB32 Pro / Maker-ESP32 Pro**. The repository name and RPi path are intentionally left unchanged until the rover is fully operational.
+
+### System Data Flow
+```
+Maker ESP32 firmware
+ → USB serial (/dev/rover-esp32)
+ → Raspberry Pi rover-server.service
+ → read-only host APIs (http://127.0.0.1:3000)
+ → ROS 2 Docker nodes
+ → /odom, /scan, /tf and diagnostics
+ → Foxglove now, SLAM/Nav2 later
+```
+
+### Hardware Ownership & Safety Boundaries
+- **`rover-server.service`**: Exclusively owns `/dev/rover-esp32` (serial telemetry & commands).
+- **`rover-lidar.service`**: Exclusively owns `/dev/rover-lidar` (LiDAR telemetry).
+- **ROS 2 Docker Container**: Has **no `/dev` mounts** and reads read-only host APIs.
+- **Foxglove**: Visualization only.
+- **`/cmd_vel`**: Not currently enabled in ROS 2.
+- **Arming Safety**: The rover must remain **disarmed** during software-only development and testing.
+
+---
 
 The board acts as the central physical controller in the tank cockpit ecosystem:
 - **UDP Beacons**: Automatically broadcasts discovery packets to the Node.js proxy server on UDP port `3000` every 2 seconds.
