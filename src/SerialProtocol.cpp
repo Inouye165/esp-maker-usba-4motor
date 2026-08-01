@@ -274,13 +274,13 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
                 // Update active params
                 WHEEL_DIAMETER_M = newDiameter;
                 WHEEL_RADIUS_M = newDiameter / 2.0f;
-                WHEEL_SEPARATION_M = newSeparation;
-                
-                // Save to Preferences NVS
-                preferences.putFloat("wheel_dia", newDiameter);
-                preferences.putFloat("wheel_sep", newSeparation);
-                
-                Serial.printf("[Config] Dynamic params saved to NVS: diameter=%.4f m, separation=%.4f m\n", newDiameter, newSeparation);
+                if (newSeparation >= 0.100f && newSeparation <= 0.500f) {
+                    WHEEL_SEPARATION_M = newSeparation;
+                    preferences.putFloat("wheel_sep", newSeparation);
+                    Serial.printf("[Config] Dynamic params saved to NVS: diameter=%.4f m, separation=%.4f m\n", newDiameter, newSeparation);
+                } else {
+                    Serial.printf("[Config ERROR] Rejected out-of-range wheel separation %.4fm (must be 0.100m to 0.500m)\n", newSeparation);
+                }
             }
             
             // Send back current active parameters

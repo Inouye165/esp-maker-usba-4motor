@@ -61,8 +61,8 @@ void MaintenanceManager::exit(MotorDriver &driver) {
 void MaintenanceManager::setOutput(int pwm) {
     if (!active) return;
     
-    // Central ceiling safety limit: max 80 PWM magnitude
-    int maxCeiling = 80;
+    // Central ceiling safety limit: max 60 PWM magnitude for safe low maintenance cap
+    int maxCeiling = 60;
     testPwm = constrain(pwm, -maxCeiling, maxCeiling);
     
     lastCommandTimeMs = millis();

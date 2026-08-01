@@ -6,7 +6,7 @@ Preferences preferences;
 // Define mutable physical parameters
 float WHEEL_DIAMETER_M = 0.065f;
 float WHEEL_RADIUS_M = 0.0325f;
-float WHEEL_SEPARATION_M = 0.170f;
+float WHEEL_SEPARATION_M = 0.197f; // Geometric baseline: 7.75 inches = 0.19685 m
 float LEFT_TRIM = 1.00f;
 float RIGHT_TRIM = 1.00f;
 float LEFT_TRIM_FWD = 1.00f;
@@ -66,10 +66,31 @@ void loadCalibrations() {
             motorCalibrations[i].reverseBreakawayPwm, motorCalibrations[i].kV);
     }
 
+    // Comprehensive safe diagnostic boot log (M1-M4 effective config audit)
+    Serial.println("[Config Diagnostic] Effective Loaded Configuration Audit:");
+    const char* drvPolarity[4] = {"NORMAL(in1=1,in2=0)", "INVERTED(in1=0,in2=1)", "NORMAL(in1=1,in2=0)", "NORMAL(in1=1,in2=0)"};
+    const char* encPolarity[4] = {"NORMAL(E1_A,E1_B)", "INVERTED(-raw)", "NORMAL(E3_A,E3_B)", "SWAPPED(E4_B,E4_A)"};
+    for (int i = 0; i < 4; i++) {
+        bool fwdNvs = preferences.isKey((String("m") + (i+1) + "_fwd_break").c_str());
+        bool revNvs = preferences.isKey((String("m") + (i+1) + "_rev_break").c_str());
+        bool kvNvs  = preferences.isKey((String("m") + (i+1) + "_kv").c_str());
+        Serial.printf("  M%d [%s | %s]: fwdBreak=%d (%s), revBreak=%d (%s), kV=%.2f (%s), maxPwm=255\n",
+            i + 1, drvPolarity[i], encPolarity[i],
+            motorCalibrations[i].forwardBreakawayPwm, fwdNvs ? "NVS" : "DEFAULT",
+            motorCalibrations[i].reverseBreakawayPwm, revNvs ? "NVS" : "DEFAULT",
+            motorCalibrations[i].kV, kvNvs ? "NVS" : "DEFAULT"
+        );
+    }
+    Serial.printf("  PID Speed Loop: Kp=%.2f, Ki=%.2f, Kd=%.2f (DEFAULT)\n", KP_SPEED, KI_SPEED, KD_SPEED);
+
     // Load dynamic physical parameters from NVS
     WHEEL_DIAMETER_M = preferences.getFloat("wheel_dia", 0.065f);
     WHEEL_RADIUS_M = WHEEL_DIAMETER_M / 2.0f;
-    WHEEL_SEPARATION_M = preferences.getFloat("wheel_sep", 0.170f);
+    WHEEL_SEPARATION_M = preferences.getFloat("wheel_sep", 0.197f);
+    if (WHEEL_SEPARATION_M < 0.100f || WHEEL_SEPARATION_M > 0.500f) {
+        Serial.printf("[Config WARNING] Invalid wheel separation %.4fm loaded from NVS, resetting to default 0.1970m\n", WHEEL_SEPARATION_M);
+        WHEEL_SEPARATION_M = 0.197f;
+    }
     
     LEFT_TRIM_FWD = preferences.getFloat("left_trim", 1.00f);
     RIGHT_TRIM_FWD = preferences.getFloat("right_trim", 1.00f);
@@ -78,9 +99,16 @@ void loadCalibrations() {
     LEFT_TRIM = LEFT_TRIM_FWD;
     RIGHT_TRIM = RIGHT_TRIM_FWD;
     
-    Serial.printf("[Config] Loaded physical dimensions: diameter=%.4f m, separation=%.4f m\n", WHEEL_DIAMETER_M, WHEEL_SEPARATION_M);
-    Serial.printf("[Config] Loaded FWD trims: Left=%.4f, Right=%.4f | REV trims: Left=%.4f, Right=%.4f\n", 
-                  LEFT_TRIM_FWD, RIGHT_TRIM_FWD, LEFT_TRIM_REV, RIGHT_TRIM_REV);
+    bool diaNvs = preferences.isKey("wheel_dia");
+    bool sepNvs = preferences.isKey("wheel_sep");
+    bool trimFwdNvs = preferences.isKey("left_trim");
+    bool trimRevNvs = preferences.isKey("left_trim_rev");
+
+    Serial.printf("[Config] Loaded physical dimensions: diameter=%.4f m (%s), separation=%.4f m (%s)\n", 
+                  WHEEL_DIAMETER_M, diaNvs ? "NVS" : "DEFAULT", WHEEL_SEPARATION_M, sepNvs ? "NVS" : "DEFAULT");
+    Serial.printf("[Config] Loaded FWD trims (%s): Left=%.4f, Right=%.4f | REV trims (%s): Left=%.4f, Right=%.4f\n", 
+                  trimFwdNvs ? "NVS" : "DEFAULT", LEFT_TRIM_FWD, RIGHT_TRIM_FWD, 
+                  trimRevNvs ? "NVS" : "DEFAULT", LEFT_TRIM_REV, RIGHT_TRIM_REV);
 }
 
 void saveCalibrations() {
