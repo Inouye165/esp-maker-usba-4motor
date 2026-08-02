@@ -33,7 +33,8 @@ const int E4_B = 39; // Input only pin
 // Physical Parameters
 extern float WHEEL_DIAMETER_M;
 extern float WHEEL_RADIUS_M;
-extern float WHEEL_SEPARATION_M;
+extern float WHEEL_SEPARATION_M; // Effective skid-steer track width (0.3408575433m)
+const float PHYSICAL_WHEEL_SEPARATION_M = 0.197f; // Physical wheel-center distance (0.197m = 7.75 in)
 extern float LEFT_TRIM;
 extern float RIGHT_TRIM;
 extern float LEFT_TRIM_FWD;
@@ -43,10 +44,8 @@ extern float RIGHT_TRIM_REV;
 void saveTrims(float left, float right);
 void saveTrimsFwd(float left, float right);
 void saveTrimsRev(float left, float right);
-const float GEAR_RATIO = 45.0f;
-const float ENCODER_PPR = 11.0f; // Magnetic poles/pulses per rev
-// 11 PPR * 45.0 ratio * 4 (quadrature edges count) = 1980.0 ticks/wheel rev
-const float TICKS_PER_WHEEL_REV = ENCODER_PPR * GEAR_RATIO * 4.0f;
+const float TICKS_PER_REV = 1974.1666666667f; // Measured 4-wheel average ticks/revolution (1974.1667)
+const float TICKS_PER_WHEEL_REV = 1974.1666666667f;
 
 // Kinematic Motion Constraints (Safe Conservative Defaults for Phase 4)
 const float MAX_LINEAR_VELOCITY_MPS = 0.80f;     // High velocity ceiling for floor driving

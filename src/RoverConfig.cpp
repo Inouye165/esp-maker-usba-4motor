@@ -6,7 +6,7 @@ Preferences preferences;
 // Define mutable physical parameters
 float WHEEL_DIAMETER_M = 0.065f;
 float WHEEL_RADIUS_M = 0.0325f;
-float WHEEL_SEPARATION_M = 0.197f; // Geometric baseline: 7.75 inches = 0.19685 m
+float WHEEL_SEPARATION_M = 0.3408575433f; // Effective skid-steer track width calibrated from 360-deg floor tests (0.3408575433m)
 float LEFT_TRIM = 1.00f;
 float RIGHT_TRIM = 1.00f;
 float LEFT_TRIM_FWD = 1.00f;
@@ -86,10 +86,10 @@ void loadCalibrations() {
     // Load dynamic physical parameters from NVS
     WHEEL_DIAMETER_M = preferences.getFloat("wheel_dia", 0.065f);
     WHEEL_RADIUS_M = WHEEL_DIAMETER_M / 2.0f;
-    WHEEL_SEPARATION_M = preferences.getFloat("wheel_sep", 0.197f);
-    if (WHEEL_SEPARATION_M < 0.100f || WHEEL_SEPARATION_M > 0.500f) {
-        Serial.printf("[Config WARNING] Invalid wheel separation %.4fm loaded from NVS, resetting to default 0.1970m\n", WHEEL_SEPARATION_M);
-        WHEEL_SEPARATION_M = 0.197f;
+    WHEEL_SEPARATION_M = preferences.getFloat("wheel_sep", 0.3408575433f);
+    if (WHEEL_SEPARATION_M < 0.100f || WHEEL_SEPARATION_M > 1.000f) {
+        Serial.printf("[Config WARNING] Invalid wheel separation %.4fm loaded from NVS, resetting to default 0.340858m\n", WHEEL_SEPARATION_M);
+        WHEEL_SEPARATION_M = 0.3408575433f;
     }
     
     LEFT_TRIM_FWD = preferences.getFloat("left_trim", 1.00f);
