@@ -88,6 +88,30 @@ private:
   uint32_t _reportIntervalUs = 20000; // ~50 Hz
   unsigned long _lastDiagPrintMs = 0;
 
+  struct ImuDiagCounters {
+    uint32_t rotVecEvents = 0;
+    uint32_t gyroEvents = 0;
+    uint32_t accelEvents = 0;
+    uint32_t linAccEvents = 0;
+    uint32_t unknownEvents = 0;
+    uint32_t totalEvents = 0;
+
+    int maxEventsInSingleUpdate = 0;
+    uint32_t hitMaxEventsCount = 0;
+
+    uint32_t maxRotVecGapMs = 0;
+    uint32_t maxGyroGapMs = 0;
+    uint32_t maxAccelGapMs = 0;
+
+    uint32_t maxUpdateDurationUs = 0;
+
+    int64_t lastRotVecEventUs = 0;
+    int64_t lastGyroEventUs = 0;
+    int64_t lastAccelEventUs = 0;
+
+    unsigned long windowStartMs = 0;
+  } _diag;
+
   static const int MAX_EVENTS_PER_LOOP = 5;
 };
 

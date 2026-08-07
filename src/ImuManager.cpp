@@ -50,6 +50,8 @@ void ImuManager::setReports() {
 void ImuManager::update() {
   if (!_initialized) return;
 
+  int64_t startTimeUs = esp_timer_get_time();
+
   if (_bno.wasReset()) {
     _data.resetCount++;
     Serial.println("[IMU WARNING] BNO08x reset detected. Re-enabling reports...");
@@ -62,9 +64,17 @@ void ImuManager::update() {
   while (eventsProcessed < MAX_EVENTS_PER_LOOP && _bno.getSensorEvent(&_sensorValue)) {
     eventsProcessed++;
     _data.sampleCount++;
+    _diag.totalEvents++;
 
     switch (_sensorValue.sensorId) {
       case SH2_ROTATION_VECTOR: {
+        _diag.rotVecEvents++;
+        if (_diag.lastRotVecEventUs > 0) {
+          uint32_t gapMs = (uint32_t)((nowUs - _diag.lastRotVecEventUs) / 1000);
+          if (gapMs > _diag.maxRotVecGapMs) _diag.maxRotVecGapMs = gapMs;
+        }
+        _diag.lastRotVecEventUs = nowUs;
+
         float r = _sensorValue.un.rotationVector.real;
         float i = _sensorValue.un.rotationVector.i;
         float j = _sensorValue.un.rotationVector.j;
@@ -88,6 +98,13 @@ void ImuManager::update() {
       }
 
       case SH2_GYROSCOPE_CALIBRATED: {
+        _diag.gyroEvents++;
+        if (_diag.lastGyroEventUs > 0) {
+          uint32_t gapMs = (uint32_t)((nowUs - _diag.lastGyroEventUs) / 1000);
+          if (gapMs > _diag.maxGyroGapMs) _diag.maxGyroGapMs = gapMs;
+        }
+        _diag.lastGyroEventUs = nowUs;
+
         float gx = _sensorValue.un.gyroscope.x;
         float gy = _sensorValue.un.gyroscope.y;
         float gz = _sensorValue.un.gyroscope.z;
@@ -105,6 +122,13 @@ void ImuManager::update() {
       }
 
       case SH2_ACCELEROMETER: { // Gravity included (REP-145)
+        _diag.accelEvents++;
+        if (_diag.lastAccelEventUs > 0) {
+          uint32_t gapMs = (uint32_t)((nowUs - _diag.lastAccelEventUs) / 1000);
+          if (gapMs > _diag.maxAccelGapMs) _diag.maxAccelGapMs = gapMs;
+        }
+        _diag.lastAccelEventUs = nowUs;
+
         float ax = _sensorValue.un.accelerometer.x;
         float ay = _sensorValue.un.accelerometer.y;
         float az = _sensorValue.un.accelerometer.z;
@@ -122,6 +146,7 @@ void ImuManager::update() {
       }
 
       case SH2_LINEAR_ACCELERATION: { // Gravity removed (internal diagnostics)
+        _diag.linAccEvents++;
         float lax = _sensorValue.un.linearAcceleration.x;
         float lay = _sensorValue.un.linearAcceleration.y;
         float laz = _sensorValue.un.linearAcceleration.z;
@@ -136,7 +161,25 @@ void ImuManager::update() {
         }
         break;
       }
+
+      default: {
+        _diag.unknownEvents++;
+        break;
+      }
     }
+  }
+
+  // Update eventsProcessed loop statistics
+  if (eventsProcessed > _diag.maxEventsInSingleUpdate) {
+    _diag.maxEventsInSingleUpdate = eventsProcessed;
+  }
+  if (eventsProcessed == MAX_EVENTS_PER_LOOP) {
+    _diag.hitMaxEventsCount++;
+  }
+
+  int64_t durUs = esp_timer_get_time() - startTimeUs;
+  if (durUs > (int64_t)_diag.maxUpdateDurationUs) {
+    _diag.maxUpdateDurationUs = (uint32_t)durUs;
   }
 
   // Clear reset recovery only after rotation vector, gyro, and accel have ALL produced valid post-reset samples
@@ -145,10 +188,51 @@ void ImuManager::update() {
     Serial.println("[IMU] All post-reset sensor reports restored. Exit reset recovery state.");
   }
 
+  // 10-Second Rate-Limited Summary Diagnostic Output (Strictly 1 line per 10s)
+  unsigned long nowMs = millis();
+  if (_diag.windowStartMs == 0) {
+    _diag.windowStartMs = nowMs;
+  }
+  if (nowMs - _diag.windowStartMs >= 10000) {
+    Serial.printf("[IMU DIAG 10S] Events(Rot:%u, Gyro:%u, Acc:%u, LinAcc:%u, Unk:%u, Tot:%u) | Loop(MaxEvents:%d, HitMaxCount:%u, MaxDurUs:%u) | MaxGapsMs(Rot:%u, Gyro:%u, Acc:%u) | Reports(Rot:%d, Gyro:%d, Acc:%d, LinAcc:%d) | Resets:%u\n",
+      _diag.rotVecEvents,
+      _diag.gyroEvents,
+      _diag.accelEvents,
+      _diag.linAccEvents,
+      _diag.unknownEvents,
+      _diag.totalEvents,
+      _diag.maxEventsInSingleUpdate,
+      _diag.hitMaxEventsCount,
+      _diag.maxUpdateDurationUs,
+      _diag.maxRotVecGapMs,
+      _diag.maxGyroGapMs,
+      _diag.maxAccelGapMs,
+      _data.reportRotVecOk ? 1 : 0,
+      _data.reportGyroOk ? 1 : 0,
+      _data.reportAccelOk ? 1 : 0,
+      _data.reportLinAccOk ? 1 : 0,
+      _data.resetCount
+    );
+
+    // Reset 10-second window counters
+    _diag.rotVecEvents = 0;
+    _diag.gyroEvents = 0;
+    _diag.accelEvents = 0;
+    _diag.linAccEvents = 0;
+    _diag.unknownEvents = 0;
+    _diag.totalEvents = 0;
+    _diag.maxEventsInSingleUpdate = 0;
+    _diag.hitMaxEventsCount = 0;
+    _diag.maxRotVecGapMs = 0;
+    _diag.maxGyroGapMs = 0;
+    _diag.maxAccelGapMs = 0;
+    _diag.maxUpdateDurationUs = 0;
+    _diag.windowStartMs = nowMs;
+  }
+
 #if IMU_DIAGNOSTIC_MODE
-  unsigned long now = millis();
-  if (now - _lastDiagPrintMs >= 500) {
-    _lastDiagPrintMs = now;
+  if (nowMs - _lastDiagPrintMs >= 500) {
+    _lastDiagPrintMs = nowMs;
     printDiagnostic();
   }
 #endif
