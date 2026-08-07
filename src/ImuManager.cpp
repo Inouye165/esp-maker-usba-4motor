@@ -33,6 +33,9 @@ void ImuManager::setReports() {
   _data.gyroUpdateUs = 0;
   _data.accelUpdateUs = 0;
   _data.linAccUpdateUs = 0;
+  _data.lin_ax = 0.0f;
+  _data.lin_ay = 0.0f;
+  _data.lin_az = 0.0f;
 
   _data.reportRotVecOk = _bno.enableReport(SH2_ROTATION_VECTOR, _reportIntervalUs);
   Serial.printf("  -> SH2_ROTATION_VECTOR: %s\n", _data.reportRotVecOk ? "SUCCESS" : "FAILED");
@@ -43,8 +46,9 @@ void ImuManager::setReports() {
   _data.reportAccelOk = _bno.enableReport(SH2_ACCELEROMETER, _reportIntervalUs);
   Serial.printf("  -> SH2_ACCELEROMETER: %s\n", _data.reportAccelOk ? "SUCCESS" : "FAILED");
 
-  _data.reportLinAccOk = _bno.enableReport(SH2_LINEAR_ACCELERATION, _reportIntervalUs);
-  Serial.printf("  -> SH2_LINEAR_ACCELERATION: %s\n", _data.reportLinAccOk ? "SUCCESS" : "FAILED");
+  // SH2_LINEAR_ACCELERATION explicitly disabled for 1-variable load reduction experiment
+  _data.reportLinAccOk = false;
+  Serial.println("  -> SH2_LINEAR_ACCELERATION: DISABLED (1-variable load reduction test)");
 }
 
 void ImuManager::update() {
@@ -188,13 +192,17 @@ void ImuManager::update() {
     Serial.println("[IMU] All post-reset sensor reports restored. Exit reset recovery state.");
   }
 
-  // 10-Second Rate-Limited Summary Diagnostic Output (Strictly 1 line per 10s)
+  // 10-Second Rate-Limited Summary Diagnostic Output (Strictly 1 line per 10s, non-blocking capacity checked)
   unsigned long nowMs = millis();
   if (_diag.windowStartMs == 0) {
     _diag.windowStartMs = nowMs;
   }
-  if (nowMs - _diag.windowStartMs >= 10000) {
-    Serial.printf("[IMU DIAG 10S] Events(Rot:%u, Gyro:%u, Acc:%u, LinAcc:%u, Unk:%u, Tot:%u) | Loop(MaxEvents:%d, HitMaxCount:%u, MaxDurUs:%u) | MaxGapsMs(Rot:%u, Gyro:%u, Acc:%u) | Reports(Rot:%d, Gyro:%d, Acc:%d, LinAcc:%d) | Resets:%u\n",
+  unsigned long elapsedWindowMs = nowMs - _diag.windowStartMs;
+  if (elapsedWindowMs >= 10000) {
+    char diagBuf[256];
+    int len = snprintf(diagBuf, sizeof(diagBuf),
+      "[IMU DIAG 10S] WinMs:%lu | Events(Rot:%u, Gyro:%u, Acc:%u, LinAcc:%u, Unk:%u, Tot:%u) | Loop(MaxEvents:%d, HitMaxCount:%u, MaxDurUs:%u) | MaxGapsMs(Rot:%u, Gyro:%u, Acc:%u) | Reports(Rot:%d, Gyro:%d, Acc:%d, LinAcc:%d) | Resets:%u\n",
+      elapsedWindowMs,
       _diag.rotVecEvents,
       _diag.gyroEvents,
       _diag.accelEvents,
@@ -214,20 +222,26 @@ void ImuManager::update() {
       _data.resetCount
     );
 
-    // Reset 10-second window counters
-    _diag.rotVecEvents = 0;
-    _diag.gyroEvents = 0;
-    _diag.accelEvents = 0;
-    _diag.linAccEvents = 0;
-    _diag.unknownEvents = 0;
-    _diag.totalEvents = 0;
-    _diag.maxEventsInSingleUpdate = 0;
-    _diag.hitMaxEventsCount = 0;
-    _diag.maxRotVecGapMs = 0;
-    _diag.maxGyroGapMs = 0;
-    _diag.maxAccelGapMs = 0;
-    _diag.maxUpdateDurationUs = 0;
-    _diag.windowStartMs = nowMs;
+    // Non-blocking write: require len > 0, len < sizeof(diagBuf) (snprintf safety), and sufficient UART TX capacity
+    if (len > 0 && len < (int)sizeof(diagBuf) && Serial.availableForWrite() >= len) {
+      Serial.write((const uint8_t*)diagBuf, len);
+
+      // Reset 10-second window counters ONLY after successfully queued
+      _diag.rotVecEvents = 0;
+      _diag.gyroEvents = 0;
+      _diag.accelEvents = 0;
+      _diag.linAccEvents = 0;
+      _diag.unknownEvents = 0;
+      _diag.totalEvents = 0;
+      _diag.maxEventsInSingleUpdate = 0;
+      _diag.hitMaxEventsCount = 0;
+      _diag.maxRotVecGapMs = 0;
+      _diag.maxGyroGapMs = 0;
+      _diag.maxAccelGapMs = 0;
+      _diag.maxUpdateDurationUs = 0;
+      _diag.windowStartMs = nowMs;
+    }
+    // If truncated or UART TX capacity is insufficient, defer print safely to next iteration without blocking!
   }
 
 #if IMU_DIAGNOSTIC_MODE
