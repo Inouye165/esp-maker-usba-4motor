@@ -4,15 +4,19 @@ ImuManager::ImuManager() {}
 
 bool ImuManager::begin(int sdaPin, int sclPin, uint8_t i2cAddr) {
   Wire.begin(sdaPin, sclPin);
-  
-  Serial.printf("[IMU] Initializing BNO08x on SDA GPIO %d, SCL GPIO %d, Address 0x%02X...\n", sdaPin, sclPin, i2cAddr);
-  
+  Wire.setClock(400000); // 400 kHz I2C Fast Mode
+
+  Serial.printf("[IMU] Initializing BNO08x on SDA GPIO %d, SCL GPIO %d, Address 0x%02X at 400 kHz I2C...\n", sdaPin, sclPin, i2cAddr);
+
   if (!_bno.begin_I2C(i2cAddr, &Wire)) {
     Serial.println("[IMU ERROR] Failed to find BNO08x chip at specified address!");
     _initialized = false;
     _inResetRecovery = true;
     return false;
   }
+
+  // Re-assert 400 kHz in case _bno.begin_I2C / Wire.begin reset clock dividers
+  Wire.setClock(400000);
 
   Serial.println("[IMU] BNO08x hardware detected successfully. Enabling sensor reports at ~50 Hz...");
   _initialized = true;
