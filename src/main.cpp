@@ -308,10 +308,14 @@ void loop() {
   }
   
 #if !IMU_DIAGNOSTIC_MODE
-  // Production 50 Hz IMU telemetry packet dispatch (20ms interval)
-  static unsigned long lastImuTime = 0;
-  if (now - lastImuTime >= 20) {
-    lastImuTime = now;
+  // Production 50 Hz IMU telemetry packet dispatch (fixed 20ms period, no catch-up bursts)
+  static uint32_t lastImuTime = 0;
+  constexpr uint32_t IMU_PERIOD_MS = 20;
+
+  uint32_t elapsedImu = now - lastImuTime;
+  if (elapsedImu >= IMU_PERIOD_MS) {
+    uint32_t periodsElapsed = elapsedImu / IMU_PERIOD_MS;
+    lastImuTime += periodsElapsed * IMU_PERIOD_MS;
     serialProtocol.sendImuTelemetry(imuManager);
   }
 
