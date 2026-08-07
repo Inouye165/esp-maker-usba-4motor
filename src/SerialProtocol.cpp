@@ -11,17 +11,9 @@
 
 extern MotorDriver motorDriver;
 
-SerialProtocol::SerialProtocol() 
-    : parserState(WAIT_HEAD)
-    , extLen(0)
-    , payloadIdx(0)
-    , lastCharTimeMs(0) {}
-
-void SerialProtocol::begin() {
-    Serial.begin(115200);
-    parserState = WAIT_HEAD;
-    lastCharTimeMs = millis();
-}
+SerialProtocol::SerialProtocol()
+    : parserState(WAIT_HEAD), extLen(0), payloadIdx(0), lastCharTimeMs(0),
+      imuSequenceNum(0), imuTxDropped(0), _pendingFaultReport(false), _pendingFaultFlags(0) {}
 
 bool SerialProtocol::update(CommandManager &cmdManager, CalibrationManager &calManager, MaintenanceManager &maintenanceManager, SafetyManager &safetyManager, ControlLoopStats &stats) {
     bool commandReceived = false;
@@ -333,7 +325,7 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
             
             // Reply back with active reverse trims
             uint8_t respData[8];
-            memcpy(&respData[0], &LEFT_TRIM_REV, 4);
+                memcpy(&respData[0], &LEFT_TRIM_REV, 4);
             memcpy(&respData[4], &RIGHT_TRIM_REV, 4);
             writePacket(0x39, respData, 8);
             break;
@@ -341,8 +333,39 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
     }
 }
 
+#include "SerialProtocol.h"
+#include "RoverConfig.h"
+#include "CommandManager.h"
+#include "CalibrationManager.h"
+#include "SafetyManager.h"
+#include "DifferentialDrive.h"
+#include "MotorDriver.h"
+#include "MaintenanceManager.h"
+#include "MotionLimiter.h"
+#include "ImuManager.h"
+
+extern MotorDriver motorDriver;
+
+void SerialProtocol::begin() {
+    Serial.setTxBufferSize(512); // Must be called BEFORE Serial.begin()
+    Serial.begin(115200);
+    parserState = WAIT_HEAD;
+    lastCharTimeMs = millis();
+}
+
+bool SerialProtocol::canWrite(uint8_t wireSize) {
+    return (Serial.availableForWrite() >= (int)wireSize);
+}
+
 void SerialProtocol::writePacket(uint8_t extType, const uint8_t *data, uint8_t dataLen) {
     uint8_t outExtLen = dataLen + 3;
+    uint8_t wireSize = dataLen + 5;
+
+    // Non-blocking TX safety guard: never write if UART ring buffer cannot accommodate entire frame
+    if (!canWrite(wireSize)) {
+        return;
+    }
+
     uint8_t sum = outExtLen + extType;
     
     Serial.write(0xFF);
@@ -356,6 +379,75 @@ void SerialProtocol::writePacket(uint8_t extType, const uint8_t *data, uint8_t d
     }
     
     Serial.write(sum & 0xFF);
+}
+
+uint8_t SerialProtocol::serializeImuTelemetry(
+    uint8_t *p,
+    uint32_t seq,
+    const ImuData &d,
+    int64_t snapUs,
+    const ImuManager &imuManager
+) {
+    memset(p, 0, 69);
+
+    p[0] = 0x01; // protocol_version
+
+    uint16_t flags = imuManager.getStatusFlags(snapUs);
+    memcpy(&p[1], &flags, 2);
+
+    memcpy(&p[3], &seq, 4);
+
+    uint32_t resetCount = d.resetCount;
+    memcpy(&p[7], &resetCount, 4);
+
+    uint64_t snapUs64 = (uint64_t)snapUs;
+    memcpy(&p[11], &snapUs64, 8);
+
+    uint16_t rotAge = imuManager.getRotVecAgeMs(snapUs);
+    memcpy(&p[19], &rotAge, 2);
+
+    uint16_t gyroAge = imuManager.getGyroAgeMs(snapUs);
+    memcpy(&p[21], &gyroAge, 2);
+
+    uint16_t accelAge = imuManager.getAccelAgeMs(snapUs);
+    memcpy(&p[23], &accelAge, 2);
+
+    memcpy(&p[25], &d.qw, 4);
+    memcpy(&p[29], &d.qx, 4);
+    memcpy(&p[33], &d.qy, 4);
+    memcpy(&p[37], &d.qz, 4);
+
+    memcpy(&p[41], &d.gx, 4);
+    memcpy(&p[45], &d.gy, 4);
+    memcpy(&p[49], &d.gz, 4);
+
+    // SH2_ACCELEROMETER (gravity included, REP-145 compliant)
+    memcpy(&p[53], &d.raw_ax, 4);
+    memcpy(&p[57], &d.raw_ay, 4);
+    memcpy(&p[61], &d.raw_az, 4);
+
+    memcpy(&p[65], &d.quatRadAccuracy, 4);
+
+    return 69;
+}
+
+void SerialProtocol::sendImuTelemetry(const ImuManager &imuManager) {
+    // Increment sequence counter for every scheduled 50 Hz attempt BEFORE capacity check
+    uint32_t seq = imuSequenceNum++;
+
+    const uint8_t wireSize = 74;
+    if (!canWrite(wireSize)) {
+        imuTxDropped++;
+        return; // Drop non-blockingly
+    }
+
+    const ImuData &d = imuManager.getData();
+    int64_t snapUs = esp_timer_get_time();
+
+    uint8_t p[69];
+    serializeImuTelemetry(p, seq, d, snapUs, imuManager);
+
+    writePacket(0x3A, p, 69);
 }
 
 void SerialProtocol::sendTelemetry(
@@ -375,33 +467,17 @@ void SerialProtocol::sendTelemetry(
     memcpy(&encoderData[12], &ticks[3], 4);
     writePacket(0x0D, encoderData, 16);
     
-    // 2. Battery packet (TYPE_BATTERY = 0x0A) - Report 0.0V since physical ADC is not verified
-    uint8_t batteryData[7] = {0, 0, 0, 0, 0, 0, 0};
-    writePacket(0x0A, batteryData, 7);
+    // 2. Battery packet (TYPE_BATTERY = 0x0A) - Throttled to 5 Hz (every 200ms)
+    static unsigned long lastBatteryTxMs = 0;
+    unsigned long nowMs = millis();
+    if (nowMs - lastBatteryTxMs >= 200) {
+        lastBatteryTxMs = nowMs;
+        uint8_t batteryData[7] = {0, 0, 0, 0, 0, 0, 0};
+        writePacket(0x0A, batteryData, 7);
+    }
     
-    // 3. IMU telemetry packet (TYPE_IMU = 0x0E)
-    int16_t gz_raw = (int16_t)(currentYawRate * -100.0f);
-    int16_t ax_raw = 0;
-    int16_t ay_raw = 0;
-    int16_t az_raw = 1000;
-    int16_t gx_raw = 0;
-    int16_t gy_raw = 0;
-    int16_t mx_raw = 0;
-    int16_t my_raw = 0;
-    int16_t mz_raw = 0;
-    
-    uint8_t imuData[19];
-    memcpy(&imuData[0],  &gx_raw, 2);
-    memcpy(&imuData[2],  &gy_raw, 2);
-    memcpy(&imuData[4],  &gz_raw, 2);
-    memcpy(&imuData[6],  &ax_raw, 2);
-    memcpy(&imuData[8],  &ay_raw, 2);
-    memcpy(&imuData[10], &az_raw, 2);
-    memcpy(&imuData[12], &mx_raw, 2);
-    memcpy(&imuData[14], &my_raw, 2);
-    memcpy(&imuData[16], &mz_raw, 2);
-    imuData[18] = 0;
-    writePacket(0x0E, imuData, 19);
+    // Note: Legacy dummy TYPE_IMU (0x0E) transmission is disabled in production.
+    // Production BNO08x IMU telemetry is handled via 50 Hz sendImuTelemetry() (TYPE_BNO08X_IMU = 0x3A).
 
     // 3b. Maintenance telemetry status (TYPE_MAINTENANCE_STATUS = 0x35)
     uint8_t maintData[15];
@@ -476,9 +552,16 @@ void SerialProtocol::sendTelemetry(
     writePacket(0x33, timingData, 24);
 
     // 6. Fault report telemetry packet (TYPE_FAULT_REPORT = 0x34)
-    uint8_t faultData[4];
-    memcpy(faultData, &faultFlags, 4);
-    writePacket(0x34, faultData, 4);
+    latchFaultReport(faultFlags);
+    if (_pendingFaultReport) {
+        uint8_t faultData[4];
+        memcpy(faultData, &_pendingFaultFlags, 4);
+        if (canWrite(9)) {
+            writePacket(0x34, faultData, 4);
+            _pendingFaultReport = false;
+            _pendingFaultFlags = 0;
+        }
+    }
     
     // 7. Normal drive telemetry packet (TYPE_NORMAL_DRIVE_STATUS = 0x36)
     extern CommandManager commandManager;

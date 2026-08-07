@@ -2,6 +2,8 @@
 #define SERIAL_PROTOCOL_H
 
 #include <Arduino.h>
+#include <cstdio>
+#include <cstring>
 
 struct ControlLoopStats {
     uint32_t lastDurationUs;
@@ -27,7 +29,10 @@ public:
         ControlLoopStats &stats
     );
     
-    // Stream outgoing telemetry packets (encoders, battery, IMU, calibration, maintenance, loop stats, safety faults)
+    // Stream production BNO08x 0x3A IMU telemetry packet (50 Hz)
+    void sendImuTelemetry(const class ImuManager &imuManager);
+
+    // Stream outgoing telemetry packets (encoders, battery, calibration, maintenance, loop stats, safety faults)
     void sendTelemetry(
         const int32_t *ticks,
         float batteryVolts,
@@ -37,9 +42,30 @@ public:
         const ControlLoopStats &stats,
         uint32_t faultFlags
     );
-    
+
     // Send firmware information packet
     void sendFirmwareInfo();
+
+    // Encapsulate production 0x3A 69-byte serialization math for hardware & golden testing
+    static uint8_t serializeImuTelemetry(
+        uint8_t *p,
+        uint32_t seq,
+        const struct ImuData &d,
+        int64_t snapUs,
+        const class ImuManager &imuManager
+    );
+
+    // Diagnostics / Metrics & Fault Latch API
+    uint32_t getImuTxDropped() const { return imuTxDropped; }
+    uint32_t getImuSequenceNum() const { return imuSequenceNum; }
+    bool isFaultReportPending() const { return _pendingFaultReport; }
+    uint32_t getPendingFaultFlags() const { return _pendingFaultFlags; }
+    void latchFaultReport(uint32_t faultFlags) {
+        if (faultFlags != 0) {
+            _pendingFaultFlags |= faultFlags;
+            _pendingFaultReport = true;
+        }
+    }
 
 private:
     enum ParserState {
@@ -54,6 +80,12 @@ private:
     uint8_t payloadBuf[128]; // Larger command payloads
     uint8_t payloadIdx;
     uint32_t lastCharTimeMs; // Timer for parser timeout
+
+    uint32_t imuSequenceNum;
+    uint32_t imuTxDropped;
+
+    bool _pendingFaultReport;
+    uint32_t _pendingFaultFlags;
     
     void processPacket(
         class CommandManager &cmdManager, 
@@ -62,6 +94,7 @@ private:
         class SafetyManager &safetyManager, 
         ControlLoopStats &stats
     );
+    bool canWrite(uint8_t wireSize);
     void writePacket(uint8_t extType, const uint8_t *data, uint8_t dataLen);
 };
 

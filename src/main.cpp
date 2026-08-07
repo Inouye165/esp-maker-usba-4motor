@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Wire.h>
 #include <Adafruit_NeoPixel.h>
 
 // Brownout workaround headers
@@ -17,6 +18,7 @@
 #include "SerialProtocol.h"
 #include "CalibrationManager.h"
 #include "MaintenanceManager.h"
+#include "ImuManager.h"
 
 // Onboard RGB LEDs Configuration
 #define RGB_PIN 16
@@ -35,6 +37,7 @@ SafetyManager safetyManager;
 SerialProtocol serialProtocol;
 CalibrationManager calManager;
 MaintenanceManager maintenanceManager;
+ImuManager imuManager;
 
 ControlLoopStats loopStats = {0, 9999999, 0, 0, 0, 0};
 
@@ -103,6 +106,7 @@ void setup() {
   wheelController.begin();
   safetyManager.begin();
   calManager.begin();
+  imuManager.begin(21, 22, 0x4B);
 
   // Initialize NeoPixels
   strip.begin();
@@ -291,6 +295,9 @@ void runMotionControlLoop() {
 }
 
 void loop() {
+  // Non-blocking update of BNO08x IMU reports
+  imuManager.update();
+
   // Non-blocking parse of incoming USB/ROS serial packets
   serialProtocol.update(commandManager, calManager, maintenanceManager, safetyManager, loopStats);
 
@@ -300,7 +307,15 @@ void loop() {
     runMotionControlLoop();
   }
   
-  // Telemetry stream update at 20Hz (50ms)
+#if !IMU_DIAGNOSTIC_MODE
+  // Production 50 Hz IMU telemetry packet dispatch (20ms interval)
+  static unsigned long lastImuTime = 0;
+  if (now - lastImuTime >= 20) {
+    lastImuTime = now;
+    serialProtocol.sendImuTelemetry(imuManager);
+  }
+
+  // Periodic bulk telemetry stream update at 20Hz (50ms)
   static unsigned long lastTelemetryTime = 0;
   if (now - lastTelemetryTime >= 50) {
     lastTelemetryTime = now;
@@ -320,9 +335,10 @@ void loop() {
       linearVel, angularVel
     );
     
-    // Broadcast telemetry to Serial Port (battery set to 0.0f per spec)
+    // Broadcast bulk telemetry to Serial Port
     serialProtocol.sendTelemetry(ticks, 0.0f, angularVel, calManager, maintenanceManager, loopStats, safetyManager.getFaults());
   }
+#endif
 
   // Brief yield
   delay(1);
