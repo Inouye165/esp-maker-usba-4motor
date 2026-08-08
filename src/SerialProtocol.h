@@ -12,6 +12,12 @@ struct ControlLoopStats {
     uint32_t maxDurationUs;
     uint32_t missedDeadlines;
     uint32_t totalIterations;
+
+    // Whole-Loop 100 Hz Scheduling & Start Lateness Diagnostics
+    uint32_t lastStartLatenessUs;
+    uint32_t maxStartLatenessUs;
+    uint32_t missedControlPeriods;
+    uint32_t maxConsecutiveMissedPeriods;
 };
 
 class SerialProtocol {

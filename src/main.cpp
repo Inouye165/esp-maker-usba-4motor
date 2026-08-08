@@ -301,12 +301,44 @@ void loop() {
   // Non-blocking parse of incoming USB/ROS serial packets
   serialProtocol.update(commandManager, calManager, maintenanceManager, safetyManager, loopStats);
 
-  // Periodic control loop at 100Hz (10ms)
-  unsigned long now = millis();
-  if (now - lastControlTime >= CONTROL_PERIOD_MS) {
+  // Truthful 100 Hz (10,000 us) control loop scheduling via esp_timer_get_time()
+  static uint64_t scheduledStartUs = 0;
+  uint64_t nowUs = esp_timer_get_time();
+
+  if (scheduledStartUs == 0) {
+    scheduledStartUs = nowUs;
+  }
+
+  if (nowUs >= scheduledStartUs + 10000) {
+    // Advance scheduledStartUs to target scheduled start time for this period
+    scheduledStartUs += 10000;
+
+    // True start lateness offset relative to target scheduled start time (0us when on deadline)
+    uint32_t latenessUs = (uint32_t)(nowUs - scheduledStartUs);
+    loopStats.lastStartLatenessUs = latenessUs;
+    if (latenessUs > loopStats.maxStartLatenessUs) {
+      loopStats.maxStartLatenessUs = latenessUs;
+    }
+
+    uint32_t periodsElapsed = (latenessUs / 10000) + 1;
+
+    // Missed 100 Hz periods: if lateness >= 10,000 us, missed = periodsElapsed - 1
+    if (periodsElapsed > 1) {
+      uint32_t missedThisTick = periodsElapsed - 1;
+      loopStats.missedControlPeriods += missedThisTick;
+      if (missedThisTick > loopStats.maxConsecutiveMissedPeriods) {
+        loopStats.maxConsecutiveMissedPeriods = missedThisTick;
+      }
+      // Advance scheduledStartUs by missed periods so absolute schedule phase is preserved
+      scheduledStartUs += (uint64_t)missedThisTick * 10000;
+    }
+
+    // Execute motor/safety control loop EXACTLY ONCE per tick (no catch-up bursts)
     runMotionControlLoop();
   }
   
+  unsigned long now = millis();
+
 #if !IMU_DIAGNOSTIC_MODE
   // Production 50 Hz IMU telemetry packet dispatch (fixed 20ms period, no catch-up bursts)
   static uint32_t lastImuTime = 0;

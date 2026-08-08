@@ -541,15 +541,21 @@ void SerialProtocol::sendTelemetry(
     
     writePacket(0x30, calData, 55);
 
-    // 5. Control loop timing telemetry packet (TYPE_LOOP_TIMING = 0x33)
-    uint8_t timingData[24];
+    // 5. Control loop timing telemetry packet (TYPE_LOOP_TIMING = 0x33) - 40 bytes (versioned & backward compatible)
+    uint8_t timingData[40];
     memcpy(&timingData[0],  &stats.lastDurationUs, 4);
     memcpy(&timingData[4],  &stats.minDurationUs, 4);
     memcpy(&timingData[8],  &stats.avgDurationUs, 4);
     memcpy(&timingData[12], &stats.maxDurationUs, 4);
     memcpy(&timingData[16], &stats.missedDeadlines, 4);
     memcpy(&timingData[20], &stats.totalIterations, 4);
-    writePacket(0x33, timingData, 24);
+
+    // Extended whole-loop 100 Hz scheduling diagnostics (offset 24..39)
+    memcpy(&timingData[24], &stats.lastStartLatenessUs, 4);
+    memcpy(&timingData[28], &stats.maxStartLatenessUs, 4);
+    memcpy(&timingData[32], &stats.missedControlPeriods, 4);
+    memcpy(&timingData[36], &stats.maxConsecutiveMissedPeriods, 4);
+    writePacket(0x33, timingData, 40);
 
     // 6. Fault report telemetry packet (TYPE_FAULT_REPORT = 0x34)
     latchFaultReport(faultFlags);
