@@ -294,16 +294,69 @@ void runMotionControlLoop() {
   }
 }
 
+struct SectionProf {
+  uint32_t maxUs = 0;
+  uint32_t countGte5ms = 0;
+  uint32_t countGte10ms = 0;
+  uint32_t countGte20ms = 0;
+
+  void record(uint32_t durUs) {
+    if (durUs > maxUs) maxUs = durUs;
+    if (durUs >= 20000) countGte20ms++;
+    else if (durUs >= 10000) countGte10ms++;
+    else if (durUs >= 5000) countGte5ms++;
+  }
+
+  void reset() {
+    maxUs = 0;
+    countGte5ms = 0;
+    countGte10ms = 0;
+    countGte20ms = 0;
+  }
+};
+
+struct MainLoopProf {
+  SectionProf imuUpdate;
+  SectionProf serialRx;
+  SectionProf controlSched;
+  SectionProf sendImuTx;
+  SectionProf sendBulkTx;
+  SectionProf delayYield;
+  SectionProf totalLoop;
+  uint32_t iterations = 0;
+  uint32_t windowStartMs = 0;
+
+  void reset() {
+    imuUpdate.reset();
+    serialRx.reset();
+    controlSched.reset();
+    sendImuTx.reset();
+    sendBulkTx.reset();
+    delayYield.reset();
+    totalLoop.reset();
+    iterations = 0;
+  }
+};
+
+static MainLoopProf g_loopProf;
+
 void loop() {
-  // Non-blocking update of BNO08x IMU reports
+  uint64_t loopStartUs = esp_timer_get_time();
+
+  // Section 1: Non-blocking update of BNO08x IMU reports
+  uint64_t t0 = loopStartUs;
   imuManager.update();
+  uint64_t t1 = esp_timer_get_time();
+  g_loopProf.imuUpdate.record((uint32_t)(t1 - t0));
 
-  // Non-blocking parse of incoming USB/ROS serial packets
+  // Section 2: Non-blocking parse of incoming USB/ROS serial packets
   serialProtocol.update(commandManager, calManager, maintenanceManager, safetyManager, loopStats);
+  uint64_t t2 = esp_timer_get_time();
+  g_loopProf.serialRx.record((uint32_t)(t2 - t1));
 
-  // Truthful 100 Hz (10,000 us) control loop scheduling via esp_timer_get_time()
+  // Section 3: Truthful 100 Hz (10,000 us) control loop scheduling via esp_timer_get_time()
   static uint64_t scheduledStartUs = 0;
-  uint64_t nowUs = esp_timer_get_time();
+  uint64_t nowUs = t2;
 
   if (scheduledStartUs == 0) {
     scheduledStartUs = nowUs;
@@ -336,11 +389,13 @@ void loop() {
     // Execute motor/safety control loop EXACTLY ONCE per tick (no catch-up bursts)
     runMotionControlLoop();
   }
-  
+  uint64_t t3 = esp_timer_get_time();
+  g_loopProf.controlSched.record((uint32_t)(t3 - t2));
+
   unsigned long now = millis();
 
 #if !IMU_DIAGNOSTIC_MODE
-  // Production 50 Hz IMU telemetry packet dispatch (fixed 20ms period, no catch-up bursts)
+  // Section 4: Production 50 Hz IMU telemetry packet dispatch (fixed 20ms period, no catch-up bursts)
   static uint32_t lastImuTime = 0;
   constexpr uint32_t IMU_PERIOD_MS = 20;
 
@@ -350,8 +405,10 @@ void loop() {
     lastImuTime += periodsElapsed * IMU_PERIOD_MS;
     serialProtocol.sendImuTelemetry(imuManager);
   }
+  uint64_t t4 = esp_timer_get_time();
+  g_loopProf.sendImuTx.record((uint32_t)(t4 - t3));
 
-  // Periodic bulk telemetry stream update at 20Hz (50ms)
+  // Section 5: Periodic bulk telemetry stream update at 20Hz (50ms)
   static unsigned long lastTelemetryTime = 0;
   if (now - lastTelemetryTime >= 50) {
     lastTelemetryTime = now;
@@ -374,8 +431,54 @@ void loop() {
     // Broadcast bulk telemetry to Serial Port
     serialProtocol.sendTelemetry(ticks, 0.0f, angularVel, calManager, maintenanceManager, loopStats, safetyManager.getFaults());
   }
+  uint64_t t5 = esp_timer_get_time();
+  g_loopProf.sendBulkTx.record((uint32_t)(t5 - t4));
+#else
+  uint64_t t5 = t3;
 #endif
 
-  // Brief yield
+  // Section 6: Brief yield
   delay(1);
+  uint64_t t6 = esp_timer_get_time();
+  g_loopProf.delayYield.record((uint32_t)(t6 - t5));
+
+  // Total loop iteration
+  g_loopProf.totalLoop.record((uint32_t)(t6 - loopStartUs));
+  g_loopProf.iterations++;
+
+  // 10-Second Rate-Limited Main Loop Profiling Diagnostic Output (non-blocking, capacity-checked)
+  if (g_loopProf.windowStartMs == 0) {
+    g_loopProf.windowStartMs = now;
+  }
+  if (now - g_loopProf.windowStartMs >= 10000) {
+    char profBuf[384];
+    int len = snprintf(profBuf, sizeof(profBuf),
+      "[LOOP PROF 10S] WinMs:%lu Iter:%u | MaxUs(Imu:%u, Serial:%u, Sched:%u, SendImu:%u, SendBulk:%u, Delay:%u, Tot:%u) | >=5ms(Imu:%u, Serial:%u, Sched:%u, SendImu:%u, SendBulk:%u, Delay:%u) | >=10ms(Imu:%u, Delay:%u) | >=20ms(Imu:%u, Delay:%u)\n",
+      now - g_loopProf.windowStartMs,
+      g_loopProf.iterations,
+      g_loopProf.imuUpdate.maxUs,
+      g_loopProf.serialRx.maxUs,
+      g_loopProf.controlSched.maxUs,
+      g_loopProf.sendImuTx.maxUs,
+      g_loopProf.sendBulkTx.maxUs,
+      g_loopProf.delayYield.maxUs,
+      g_loopProf.totalLoop.maxUs,
+      g_loopProf.imuUpdate.countGte5ms,
+      g_loopProf.serialRx.countGte5ms,
+      g_loopProf.controlSched.countGte5ms,
+      g_loopProf.sendImuTx.countGte5ms,
+      g_loopProf.sendBulkTx.countGte5ms,
+      g_loopProf.delayYield.countGte5ms,
+      g_loopProf.imuUpdate.countGte10ms,
+      g_loopProf.delayYield.countGte10ms,
+      g_loopProf.imuUpdate.countGte20ms,
+      g_loopProf.delayYield.countGte20ms
+    );
+
+    if (len > 0 && len < (int)sizeof(profBuf) && Serial.availableForWrite() >= len) {
+      Serial.write((const uint8_t*)profBuf, len);
+      g_loopProf.reset();
+      g_loopProf.windowStartMs = now;
+    }
+  }
 }
