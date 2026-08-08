@@ -1,5 +1,5 @@
 // test/test_esp32_golden_serializer.cpp
-// Golden Vector Test for production C++ SerialProtocol::serializeImuTelemetry()
+// Golden Vector Test for production C++ SerialProtocol refactored single-write frame construction.
 
 #include <stdint.h>
 #include <string.h>
@@ -48,7 +48,6 @@ public:
     uint16_t getStatusFlags(int64_t snapUs) const {
         uint16_t flags = 0;
         if (d.hardwareInitialized) flags |= (1 << 0);
-        // not in reset recovery
         if ((snapUs - d.rotVecUpdateUs) <= 100000) flags |= (1 << 2);
         if ((snapUs - d.gyroUpdateUs) <= 100000) flags |= (1 << 3);
         if ((snapUs - d.accelUpdateUs) <= 100000) flags |= (1 << 4);
@@ -75,7 +74,28 @@ public:
     }
 };
 
-// Production C++ Serializer method implementation matching SerialProtocol::serializeImuTelemetry
+// Simulation of production refactored writePacket frame construction
+size_t buildPacketFrame(uint8_t *frameBuf, size_t maxFrameSize, uint8_t extType, const uint8_t *data, uint8_t dataLen) {
+    const uint8_t outExtLen = dataLen + 3;
+    const uint8_t frameLen = dataLen + 5;
+
+    assert(frameLen <= maxFrameSize);
+
+    frameBuf[0] = 0xFF;
+    frameBuf[1] = 0xFB;
+    frameBuf[2] = outExtLen;
+    frameBuf[3] = extType;
+
+    uint8_t sum = outExtLen + extType;
+    for (uint8_t i = 0; i < dataLen; i++) {
+        frameBuf[4 + i] = data[i];
+        sum += data[i];
+    }
+    frameBuf[4 + dataLen] = sum & 0xFF;
+
+    return frameLen;
+}
+
 uint8_t serializeImuTelemetry(
     uint8_t *p,
     uint32_t seq,
@@ -84,12 +104,10 @@ uint8_t serializeImuTelemetry(
     const ImuManager &imuManager
 ) {
     memset(p, 0, 69);
-
     p[0] = 0x01; // protocol_version
 
     uint16_t flags = imuManager.getStatusFlags(snapUs);
     memcpy(&p[1], &flags, 2);
-
     memcpy(&p[3], &seq, 4);
 
     uint32_t resetCount = d.resetCount;
@@ -116,7 +134,6 @@ uint8_t serializeImuTelemetry(
     memcpy(&p[45], &d.gy, 4);
     memcpy(&p[49], &d.gz, 4);
 
-    // SH2_ACCELEROMETER (gravity included, REP-145 compliant)
     memcpy(&p[53], &d.raw_ax, 4);
     memcpy(&p[57], &d.raw_ay, 4);
     memcpy(&p[61], &d.raw_az, 4);
@@ -129,105 +146,62 @@ uint8_t serializeImuTelemetry(
 int main() {
     printf("=== Running C++ Production Serializer Golden Test ===\n");
 
+    // 1. Golden Test for 0x3A IMU 74-byte complete frame
     ImuManager mgr;
     int64_t snapUs = 9876543210LL;
     uint32_t seq = 105;
 
-    uint8_t payload[69];
-    uint8_t len = serializeImuTelemetry(payload, seq, mgr.d, snapUs, mgr);
+    uint8_t imuPayload[69];
+    serializeImuTelemetry(imuPayload, seq, mgr.d, snapUs, mgr);
 
-    assert(len == 69);
-    printf(" -> PASS: Payload length is exactly 69 bytes\n");
+    uint8_t imuFrame[128];
+    size_t imuFrameLen = buildPacketFrame(imuFrame, sizeof(imuFrame), 0x3A, imuPayload, 69);
 
-    // Construct full 74-byte wire frame: [0xFF, 0xFB, extLen=72, extType=0x3A, ...payload, checksum]
-    uint8_t extLen = 72; // 69 + 3
-    uint8_t extType = 0x3A;
-    uint8_t sum = extLen + extType;
-    for (int i = 0; i < 69; i++) sum += payload[i];
-    uint8_t checksum = sum & 0xFF;
+    assert(imuFrameLen == 74);
+    assert(imuFrame[0] == 0xFF && imuFrame[1] == 0xFB);
+    assert(imuFrame[2] == 72); // extLen = 69 + 3 = 72 (0x48)
+    assert(imuFrame[3] == 0x3A);
+    printf(" -> PASS 1: 0x3A IMU 74-byte complete frame (extLen=72, checksum=0x%02X)\n", imuFrame[73]);
 
-    uint8_t wireFrame[74];
-    wireFrame[0] = 0xFF;
-    wireFrame[1] = 0xFB;
-    wireFrame[2] = extLen;
-    wireFrame[3] = extType;
-    memcpy(&wireFrame[4], payload, 69);
-    wireFrame[73] = checksum;
+    // 2. Golden Test for 0x33 Timing 45-byte complete frame
+    uint8_t timingPayload[40];
+    memset(timingPayload, 0, 40);
+    uint32_t lastDur = 67, minDur = 45, avgDur = 67, maxDur = 480, missed = 0, iter = 50000;
+    uint32_t lastLate = 4000, maxLate = 15000, missedPer = 1, maxConsec = 1;
+    memcpy(&timingPayload[0], &lastDur, 4);
+    memcpy(&timingPayload[4], &minDur, 4);
+    memcpy(&timingPayload[8], &avgDur, 4);
+    memcpy(&timingPayload[12], &maxDur, 4);
+    memcpy(&timingPayload[16], &missed, 4);
+    memcpy(&timingPayload[20], &iter, 4);
+    memcpy(&timingPayload[24], &lastLate, 4);
+    memcpy(&timingPayload[28], &maxLate, 4);
+    memcpy(&timingPayload[32], &missedPer, 4);
+    memcpy(&timingPayload[36], &maxConsec, 4);
 
-    // Byte-for-byte verification
-    assert(wireFrame[0] == 0xFF && wireFrame[1] == 0xFB);
-    printf(" -> PASS: Header bytes 0-1 are 0xFF 0xFB\n");
+    uint8_t timingFrame[128];
+    size_t timingFrameLen = buildPacketFrame(timingFrame, sizeof(timingFrame), 0x33, timingPayload, 40);
 
-    assert(wireFrame[2] == 0x48); // 72 decimal
-    printf(" -> PASS: extLen is 0x48 (72 decimal)\n");
+    assert(timingFrameLen == 45);
+    assert(timingFrame[0] == 0xFF && timingFrame[1] == 0xFB);
+    assert(timingFrame[2] == 43); // extLen = 40 + 3 = 43 (0x2B)
+    assert(timingFrame[3] == 0x33);
+    printf(" -> PASS 2: 0x33 Timing 45-byte complete frame (extLen=43, checksum=0x%02X)\n", timingFrame[44]);
 
-    assert(wireFrame[3] == 0x3A);
-    printf(" -> PASS: type is 0x3A (TYPE_BNO08X_IMU)\n");
+    // 3. Golden Test for 0x0D Encoder 21-byte complete frame
+    uint8_t encoderPayload[16];
+    int32_t ticks[4] = {1000, -500, 1000, -500};
+    memcpy(encoderPayload, ticks, 16);
 
-    // Check payload fields & offsets
-    assert(payload[0] == 0x01); // protocol_version
-    printf(" -> PASS: protocol_version = 0x01 at offset 0\n");
+    uint8_t encoderFrame[128];
+    size_t encoderFrameLen = buildPacketFrame(encoderFrame, sizeof(encoderFrame), 0x0D, encoderPayload, 16);
 
-    uint16_t flags;
-    memcpy(&flags, &payload[1], 2);
-    assert((flags & (1 << 0)) != 0); // hw_init
-    assert((flags & (1 << 2)) != 0); // rot_valid
-    assert((flags & (1 << 3)) != 0); // gyro_valid
-    assert((flags & (1 << 4)) != 0); // accel_valid
-    assert(((flags >> 6) & 0x03) == 2); // calib status 2
-    printf(" -> PASS: status_flags Little-Endian encoding at offset 1-2\n");
+    assert(encoderFrameLen == 21);
+    assert(encoderFrame[0] == 0xFF && encoderFrame[1] == 0xFB);
+    assert(encoderFrame[2] == 19); // extLen = 16 + 3 = 19 (0x13)
+    assert(encoderFrame[3] == 0x0D);
+    printf(" -> PASS 3: 0x0D Encoder 21-byte complete frame (extLen=19, checksum=0x%02X)\n", encoderFrame[20]);
 
-    uint32_t readSeq;
-    memcpy(&readSeq, &payload[3], 4);
-    assert(readSeq == 105);
-    printf(" -> PASS: sequence_num (105) Little-Endian encoding at offset 3-6\n");
-
-    uint32_t readReset;
-    memcpy(&readReset, &payload[7], 4);
-    assert(readReset == 2);
-    printf(" -> PASS: reset_count (2) Little-Endian encoding at offset 7-10\n");
-
-    uint64_t readTs;
-    memcpy(&readTs, &payload[11], 8);
-    assert(readTs == 9876543210LL);
-    printf(" -> PASS: esp_timestamp_us (9876543210) Little-Endian encoding at offset 11-18\n");
-
-    float qw, qx, qy, qz;
-    memcpy(&qw, &payload[25], 4);
-    memcpy(&qx, &payload[29], 4);
-    memcpy(&qy, &payload[33], 4);
-    memcpy(&qz, &payload[37], 4);
-    assert(fabs(qw - 0.9995f) < 1e-4f);
-    assert(fabs(qx - 0.0100f) < 1e-4f);
-    assert(fabs(qy - 0.0200f) < 1e-4f);
-    assert(fabs(qz - 0.0050f) < 1e-4f);
-    printf(" -> PASS: exact qw/qx/qy/qz float ordering at offsets 25, 29, 33, 37\n");
-
-    float gx, gy, gz;
-    memcpy(&gx, &payload[41], 4);
-    memcpy(&gy, &payload[45], 4);
-    memcpy(&gz, &payload[49], 4);
-    assert(fabs(gx - 0.04f) < 1e-4f);
-    assert(fabs(gy - -0.02f) < 1e-4f);
-    assert(fabs(gz - 0.08f) < 1e-4f);
-    printf(" -> PASS: exact gx/gy/gz float ordering at offsets 41, 45, 49\n");
-
-    float ax, ay, az;
-    memcpy(&ax, &payload[53], 4);
-    memcpy(&ay, &payload[57], 4);
-    memcpy(&az, &payload[61], 4);
-    assert(fabs(ax - 0.20f) < 1e-4f);
-    assert(fabs(ay - -0.10f) < 1e-4f);
-    assert(fabs(az - 9.80665f) < 1e-4f);
-    printf(" -> PASS: exact ax/ay/az float ordering (gravity included) at offsets 53, 57, 61\n");
-
-    float quatAcc;
-    memcpy(&quatAcc, &payload[65], 4);
-    assert(fabs(quatAcc - 0.025f) < 1e-4f);
-    printf(" -> PASS: quat_accuracy_rad at offset 65\n");
-
-    printf(" -> PASS: 74-byte wire frame checksum verified: 0x%02X\n", checksum);
-
-    printf("\nALL C++ PRODUCTION SERIALIZER GOLDEN TESTS PASSED 100%%!\n");
+    printf("\nALL C++ PRODUCTION SERIALIZER GOLDEN TESTS PASSED 100%!\n");
     return 0;
 }

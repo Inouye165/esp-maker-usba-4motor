@@ -358,27 +358,35 @@ bool SerialProtocol::canWrite(uint8_t wireSize) {
 }
 
 void SerialProtocol::writePacket(uint8_t extType, const uint8_t *data, uint8_t dataLen) {
-    uint8_t outExtLen = dataLen + 3;
-    uint8_t wireSize = dataLen + 5;
+    constexpr size_t MAX_FRAME_SIZE = 128;
+    const uint8_t outExtLen = dataLen + 3;
+    const uint8_t frameLen = dataLen + 5;
+
+    if (frameLen > MAX_FRAME_SIZE) {
+        return; // Safety guard against buffer overflow
+    }
 
     // Non-blocking TX safety guard: never write if UART ring buffer cannot accommodate entire frame
-    if (!canWrite(wireSize)) {
-        return;
+    if (!canWrite(frameLen)) {
+        return; // Drop/defer non-blockingly without partial transmission
     }
 
+    // Construct complete wire frame in contiguous buffer
+    uint8_t frameBuf[MAX_FRAME_SIZE];
+    frameBuf[0] = 0xFF;
+    frameBuf[1] = 0xFB;
+    frameBuf[2] = outExtLen;
+    frameBuf[3] = extType;
+
     uint8_t sum = outExtLen + extType;
-    
-    Serial.write(0xFF);
-    Serial.write(0xFB); // Board -> Host ID
-    Serial.write(outExtLen);
-    Serial.write(extType);
-    
     for (uint8_t i = 0; i < dataLen; i++) {
-        Serial.write(data[i]);
+        frameBuf[4 + i] = data[i];
         sum += data[i];
     }
-    
-    Serial.write(sum & 0xFF);
+    frameBuf[4 + dataLen] = sum & 0xFF;
+
+    // Execute exactly ONE bulk buffer write
+    Serial.write(frameBuf, frameLen);
 }
 
 uint8_t SerialProtocol::serializeImuTelemetry(
