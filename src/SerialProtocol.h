@@ -20,6 +20,48 @@ struct ControlLoopStats {
     uint32_t maxConsecutiveMissedPeriods;
 };
 
+struct PacketProf {
+    uint32_t maxUs = 0;
+    uint32_t countGte1ms = 0;
+    uint32_t countGte5ms = 0;
+    uint32_t countGte10ms = 0;
+
+    void record(uint32_t durUs) {
+        if (durUs > maxUs) maxUs = durUs;
+        if (durUs >= 1000) countGte1ms++;
+        if (durUs >= 5000) countGte5ms++;
+        if (durUs >= 10000) countGte10ms++;
+    }
+
+    void reset() {
+        maxUs = 0;
+        countGte1ms = 0;
+        countGte5ms = 0;
+        countGte10ms = 0;
+    }
+};
+
+struct TelemetryTxProf {
+    PacketProf p0x0D_encoder;
+    PacketProf p0x0A_battery;
+    PacketProf p0x35_maint;
+    PacketProf p0x30_cal;
+    PacketProf p0x33_timing;
+    PacketProf p0x34_fault;
+    PacketProf p0x3A_imu;
+    uint32_t windowStartMs = 0;
+
+    void reset() {
+        p0x0D_encoder.reset();
+        p0x0A_battery.reset();
+        p0x35_maint.reset();
+        p0x30_cal.reset();
+        p0x33_timing.reset();
+        p0x34_fault.reset();
+        p0x3A_imu.reset();
+    }
+};
+
 class SerialProtocol {
 public:
     SerialProtocol();

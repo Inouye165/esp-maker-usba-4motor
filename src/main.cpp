@@ -302,9 +302,9 @@ struct SectionProf {
 
   void record(uint32_t durUs) {
     if (durUs > maxUs) maxUs = durUs;
+    if (durUs >= 5000) countGte5ms++;
+    if (durUs >= 10000) countGte10ms++;
     if (durUs >= 20000) countGte20ms++;
-    else if (durUs >= 10000) countGte10ms++;
-    else if (durUs >= 5000) countGte5ms++;
   }
 
   void reset() {
@@ -453,7 +453,7 @@ void loop() {
   if (now - g_loopProf.windowStartMs >= 10000) {
     char profBuf[384];
     int len = snprintf(profBuf, sizeof(profBuf),
-      "[LOOP PROF 10S] WinMs:%lu Iter:%u | MaxUs(Imu:%u, Serial:%u, Sched:%u, SendImu:%u, SendBulk:%u, Delay:%u, Tot:%u) | >=5ms(Imu:%u, Serial:%u, Sched:%u, SendImu:%u, SendBulk:%u, Delay:%u) | >=10ms(Imu:%u, Delay:%u) | >=20ms(Imu:%u, Delay:%u)\n",
+      "[LOOP PROF 10S] WinMs:%lu Iter:%u | MaxUs(Imu:%u, Serial:%u, Sched:%u, SendImu:%u, SendBulk:%u, Delay:%u, Tot:%u) | >=5ms(Imu:%u, SendImu:%u, SendBulk:%u, Delay:%u) | >=10ms(Imu:%u, SendImu:%u, SendBulk:%u, Delay:%u) | >=20ms(Imu:%u, SendImu:%u, SendBulk:%u, Delay:%u)\n",
       now - g_loopProf.windowStartMs,
       g_loopProf.iterations,
       g_loopProf.imuUpdate.maxUs,
@@ -464,14 +464,16 @@ void loop() {
       g_loopProf.delayYield.maxUs,
       g_loopProf.totalLoop.maxUs,
       g_loopProf.imuUpdate.countGte5ms,
-      g_loopProf.serialRx.countGte5ms,
-      g_loopProf.controlSched.countGte5ms,
       g_loopProf.sendImuTx.countGte5ms,
       g_loopProf.sendBulkTx.countGte5ms,
       g_loopProf.delayYield.countGte5ms,
       g_loopProf.imuUpdate.countGte10ms,
+      g_loopProf.sendImuTx.countGte10ms,
+      g_loopProf.sendBulkTx.countGte10ms,
       g_loopProf.delayYield.countGte10ms,
       g_loopProf.imuUpdate.countGte20ms,
+      g_loopProf.sendImuTx.countGte20ms,
+      g_loopProf.sendBulkTx.countGte20ms,
       g_loopProf.delayYield.countGte20ms
     );
 

@@ -431,7 +431,11 @@ uint8_t SerialProtocol::serializeImuTelemetry(
     return 69;
 }
 
+static TelemetryTxProf g_txProf;
+
 void SerialProtocol::sendImuTelemetry(const ImuManager &imuManager) {
+    uint64_t tStart = esp_timer_get_time();
+
     // Increment sequence counter for every scheduled 50 Hz attempt BEFORE capacity check
     uint32_t seq = imuSequenceNum++;
 
@@ -448,6 +452,9 @@ void SerialProtocol::sendImuTelemetry(const ImuManager &imuManager) {
     serializeImuTelemetry(p, seq, d, snapUs, imuManager);
 
     writePacket(0x3A, p, 69);
+
+    uint64_t tEnd = esp_timer_get_time();
+    g_txProf.p0x3A_imu.record((uint32_t)(tEnd - tStart));
 }
 
 void SerialProtocol::sendTelemetry(
@@ -460,12 +467,15 @@ void SerialProtocol::sendTelemetry(
     uint32_t faultFlags
 ) {
     // 1. Encoder packet (TYPE_ENCODER = 0x0D)
+    uint64_t t0 = esp_timer_get_time();
     uint8_t encoderData[16];
     memcpy(&encoderData[0],  &ticks[0], 4);
     memcpy(&encoderData[4],  &ticks[1], 4);
     memcpy(&encoderData[8],  &ticks[2], 4);
     memcpy(&encoderData[12], &ticks[3], 4);
     writePacket(0x0D, encoderData, 16);
+    uint64_t t1 = esp_timer_get_time();
+    g_txProf.p0x0D_encoder.record((uint32_t)(t1 - t0));
     
     // 2. Battery packet (TYPE_BATTERY = 0x0A) - Throttled to 5 Hz (every 200ms)
     static unsigned long lastBatteryTxMs = 0;
@@ -475,9 +485,8 @@ void SerialProtocol::sendTelemetry(
         uint8_t batteryData[7] = {0, 0, 0, 0, 0, 0, 0};
         writePacket(0x0A, batteryData, 7);
     }
-    
-    // Note: Legacy dummy TYPE_IMU (0x0E) transmission is disabled in production.
-    // Production BNO08x IMU telemetry is handled via 50 Hz sendImuTelemetry() (TYPE_BNO08X_IMU = 0x3A).
+    uint64_t t2 = esp_timer_get_time();
+    g_txProf.p0x0A_battery.record((uint32_t)(t2 - t1));
 
     // 3b. Maintenance telemetry status (TYPE_MAINTENANCE_STATUS = 0x35)
     uint8_t maintData[15];
@@ -494,7 +503,6 @@ void SerialProtocol::sendTelemetry(
     maintData[9] = (maintenanceManager.getTestPwm() < 0) ? 1 : 0; // Direction (0=FWD, 1=REV)
     maintData[10] = (uint8_t)abs(maintenanceManager.getTestPwm()); // Requested PWM magnitude
     
-    // Check mode and print actual output if mode matches
     int actualPwm = 0;
     if (motorDriver.getMode() == MotorOutputMode::SINGLE_MOTOR_MAINTENANCE && motorDriver.getAuthorizedMotor() == maintenanceManager.getActiveMotor()) {
         actualPwm = abs(maintenanceManager.getTestPwm());
@@ -506,6 +514,8 @@ void SerialProtocol::sendTelemetry(
     memcpy(&maintData[13], &remTimeout, 2);
     
     writePacket(0x35, maintData, 15);
+    uint64_t t3 = esp_timer_get_time();
+    g_txProf.p0x35_maint.record((uint32_t)(t3 - t2));
 
     // 4. Calibration telemetry packet (TYPE_CALIBRATION_STATUS = 0x30)
     uint8_t calData[55];
@@ -536,10 +546,11 @@ void SerialProtocol::sendTelemetry(
         calData[19 + i] = (uint8_t)calManager.getReverseBreakaway(i);
     }
     
-    // Copy the failure reason (max 32 bytes)
     strncpy((char*)&calData[23], calManager.getFailureReason(), 32);
     
     writePacket(0x30, calData, 55);
+    uint64_t t4 = esp_timer_get_time();
+    g_txProf.p0x30_cal.record((uint32_t)(t4 - t3));
 
     // 5. Control loop timing telemetry packet (TYPE_LOOP_TIMING = 0x33) - 40 bytes (versioned & backward compatible)
     uint8_t timingData[40];
@@ -550,12 +561,13 @@ void SerialProtocol::sendTelemetry(
     memcpy(&timingData[16], &stats.missedDeadlines, 4);
     memcpy(&timingData[20], &stats.totalIterations, 4);
 
-    // Extended whole-loop 100 Hz scheduling diagnostics (offset 24..39)
     memcpy(&timingData[24], &stats.lastStartLatenessUs, 4);
     memcpy(&timingData[28], &stats.maxStartLatenessUs, 4);
     memcpy(&timingData[32], &stats.missedControlPeriods, 4);
     memcpy(&timingData[36], &stats.maxConsecutiveMissedPeriods, 4);
     writePacket(0x33, timingData, 40);
+    uint64_t t5 = esp_timer_get_time();
+    g_txProf.p0x33_timing.record((uint32_t)(t5 - t4));
 
     // 6. Fault report telemetry packet (TYPE_FAULT_REPORT = 0x34)
     latchFaultReport(faultFlags);
@@ -568,7 +580,9 @@ void SerialProtocol::sendTelemetry(
             _pendingFaultFlags = 0;
         }
     }
-    
+    uint64_t t6 = esp_timer_get_time();
+    g_txProf.p0x34_fault.record((uint32_t)(t6 - t5));
+
     // 7. Normal drive telemetry packet (TYPE_NORMAL_DRIVE_STATUS = 0x36)
     extern CommandManager commandManager;
     extern MotionLimiter motionLimiter;
@@ -599,6 +613,41 @@ void SerialProtocol::sendTelemetry(
     normalData[23] = PHASE4A1_NORMAL_DRIVE_OUTPUT_DISABLED ? 1 : 0;
     
     writePacket(0x36, normalData, 24);
+
+    // 10-Second Rate-Limited Packet TX Summary Diagnostic Output (non-blocking, capacity checked)
+    if (g_txProf.windowStartMs == 0) {
+        g_txProf.windowStartMs = nowMs;
+    }
+    if (nowMs - g_txProf.windowStartMs >= 10000) {
+        char txBuf[384];
+        int len = snprintf(txBuf, sizeof(txBuf),
+            "[TX PROF 10S] WinMs:%lu | MaxUs(0x0D:%u, 0x0A:%u, 0x35:%u, 0x30:%u, 0x33:%u, 0x34:%u, 0x3A:%u) | >=1ms(0x0D:%u, 0x30:%u, 0x33:%u, 0x3A:%u) | >=5ms(0x30:%u, 0x33:%u, 0x3A:%u) | >=10ms(0x30:%u, 0x33:%u, 0x3A:%u)\n",
+            nowMs - g_txProf.windowStartMs,
+            g_txProf.p0x0D_encoder.maxUs,
+            g_txProf.p0x0A_battery.maxUs,
+            g_txProf.p0x35_maint.maxUs,
+            g_txProf.p0x30_cal.maxUs,
+            g_txProf.p0x33_timing.maxUs,
+            g_txProf.p0x34_fault.maxUs,
+            g_txProf.p0x3A_imu.maxUs,
+            g_txProf.p0x0D_encoder.countGte1ms,
+            g_txProf.p0x30_cal.countGte1ms,
+            g_txProf.p0x33_timing.countGte1ms,
+            g_txProf.p0x3A_imu.countGte1ms,
+            g_txProf.p0x30_cal.countGte5ms,
+            g_txProf.p0x33_timing.countGte5ms,
+            g_txProf.p0x3A_imu.countGte5ms,
+            g_txProf.p0x30_cal.countGte10ms,
+            g_txProf.p0x33_timing.countGte10ms,
+            g_txProf.p0x3A_imu.countGte10ms
+        );
+
+        if (len > 0 && len < (int)sizeof(txBuf) && Serial.availableForWrite() >= len) {
+            Serial.write((const uint8_t*)txBuf, len);
+            g_txProf.reset();
+            g_txProf.windowStartMs = nowMs;
+        }
+    }
 }
 
 void SerialProtocol::sendFirmwareInfo() {
