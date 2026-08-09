@@ -446,6 +446,7 @@ void loop() {
   g_loopProf.totalLoop.record((uint32_t)(t6 - loopStartUs));
   g_loopProf.iterations++;
 
+#if !PRODUCTION_BINARY_ONLY_SERIAL
   // 10-Second Rate-Limited Main Loop Profiling Diagnostic Output (non-blocking, capacity-checked)
   if (g_loopProf.windowStartMs == 0) {
     g_loopProf.windowStartMs = now;
@@ -483,4 +484,5 @@ void loop() {
       g_loopProf.windowStartMs = now;
     }
   }
+#endif
 }

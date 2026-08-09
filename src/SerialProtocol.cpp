@@ -146,7 +146,7 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
         case 0x22: { // CMD_CLEAR_FAULTS
             safetyManager.clearFaults();
             cmdManager.clearEmergencyStop();
-            Serial.println("[Safety] Faults cleared via serial command.");
+            LOG_SERIAL_PRINTLN("[Safety] Faults cleared via serial command.");
             break;
         }
         
@@ -218,7 +218,7 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
             motorDriver.emergencyStop();
             maintenanceManager.exit(motorDriver);
             calManager.cancelCalibration();
-            Serial.println("[Safety] Emergency Stop triggered via serial command.");
+            LOG_SERIAL_PRINTLN("[Safety] Emergency Stop triggered via serial command.");
             break;
         }
 
@@ -229,7 +229,7 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
                 calManager.maintenanceStopVerified = (payloadBuf[3] == 1);
                 calManager.emergencyStopVerified = (payloadBuf[4] == 1);
                 calManager.deadmanVerified = (payloadBuf[5] == 1);
-                Serial.printf("[Calibration] Readiness gates updated: MotorDir=%d, EncDir=%d, MaintStop=%d, EStop=%d, Deadman=%d\n",
+                LOG_SERIAL_PRINTF("[Calibration] Readiness gates updated: MotorDir=%d, EncDir=%d, MaintStop=%d, EStop=%d, Deadman=%d\n",
                     calManager.motorDirectionsVerified, calManager.encoderDirectionsVerified,
                     calManager.maintenanceStopVerified, calManager.emergencyStopVerified, calManager.deadmanVerified);
             }
@@ -240,19 +240,19 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
             if (!maintenanceManager.isActive() && calManager.getState() == CAL_IDLE && !safetyManager.hasFaults() && !cmdManager.isEmergencyStopped()) {
                 if (cmdManager.armNormalDrive()) {
                     motorDriver.setMode(MotorOutputMode::NORMAL_DRIVE);
-                    Serial.println("[Command] NORMAL_DRIVE ARMED successfully.");
+                    LOG_SERIAL_PRINTLN("[Command] NORMAL_DRIVE ARMED successfully.");
                 } else {
-                    Serial.println("[Command] Rejecting ARM: safety locks active.");
+                    LOG_SERIAL_PRINTLN("[Command] Rejecting ARM: safety locks active.");
                 }
             } else {
-                Serial.println("[Command] Rejecting ARM: calibration, maintenance, faults, or E-STOP active.");
+                LOG_SERIAL_PRINTLN("[Command] Rejecting ARM: calibration, maintenance, faults, or E-STOP active.");
             }
             break;
         }
 
         case 0x2D: { // CMD_DISARM_NORMAL_DRIVE
             cmdManager.disarmNormalDrive();
-            Serial.println("[Command] NORMAL_DRIVE DISARMED. Initiating controlled stop.");
+            LOG_SERIAL_PRINTLN("[Command] NORMAL_DRIVE DISARMED. Initiating controlled stop.");
             break;
         }
 
@@ -269,9 +269,9 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
                 if (newSeparation >= 0.100f && newSeparation <= 0.500f) {
                     WHEEL_SEPARATION_M = newSeparation;
                     preferences.putFloat("wheel_sep", newSeparation);
-                    Serial.printf("[Config] Dynamic params saved to NVS: diameter=%.4f m, separation=%.4f m\n", newDiameter, newSeparation);
+                    LOG_SERIAL_PRINTF("[Config] Dynamic params saved to NVS: diameter=%.4f m, separation=%.4f m\n", newDiameter, newSeparation);
                 } else {
-                    Serial.printf("[Config ERROR] Rejected out-of-range wheel separation %.4fm (must be 0.100m to 0.500m)\n", newSeparation);
+                    LOG_SERIAL_PRINTF("[Config ERROR] Rejected out-of-range wheel separation %.4fm (must be 0.100m to 0.500m)\n", newSeparation);
                 }
             }
             
@@ -295,7 +295,7 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
                     newRightTrim >= 0.80f && newRightTrim <= 1.20f) {
                     saveTrimsFwd(newLeftTrim, newRightTrim);
                 } else {
-                    Serial.printf("[Protocol] Rejected invalid FWD trims: Left=%.4f, Right=%.4f (bounds: [0.8, 1.2])\n", newLeftTrim, newRightTrim);
+                    LOG_SERIAL_PRINTF("[Protocol] Rejected invalid FWD trims: Left=%.4f, Right=%.4f (bounds: [0.8, 1.2])\n", newLeftTrim, newRightTrim);
                 }
             }
             
@@ -319,7 +319,7 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
                     newRightTrim >= 0.80f && newRightTrim <= 1.20f) {
                     saveTrimsRev(newLeftTrim, newRightTrim);
                 } else {
-                    Serial.printf("[Protocol] Rejected invalid REV trims: Left=%.4f, Right=%.4f (bounds: [0.8, 1.2])\n", newLeftTrim, newRightTrim);
+                    LOG_SERIAL_PRINTF("[Protocol] Rejected invalid REV trims: Left=%.4f, Right=%.4f (bounds: [0.8, 1.2])\n", newLeftTrim, newRightTrim);
                 }
             }
             

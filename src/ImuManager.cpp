@@ -1,4 +1,5 @@
 #include "ImuManager.h"
+#include "SerialProtocol.h"
 
 ImuManager::ImuManager() {}
 
@@ -6,10 +7,10 @@ bool ImuManager::begin(int sdaPin, int sclPin, uint8_t i2cAddr) {
   Wire.begin(sdaPin, sclPin);
   Wire.setClock(400000); // 400 kHz I2C Fast Mode
 
-  Serial.printf("[IMU] Initializing BNO08x on SDA GPIO %d, SCL GPIO %d, Address 0x%02X at 400 kHz I2C...\n", sdaPin, sclPin, i2cAddr);
+  LOG_SERIAL_PRINTF("[IMU] Initializing BNO08x on SDA GPIO %d, SCL GPIO %d, Address 0x%02X at 400 kHz I2C...\n", sdaPin, sclPin, i2cAddr);
 
   if (!_bno.begin_I2C(i2cAddr, &Wire)) {
-    Serial.println("[IMU ERROR] Failed to find BNO08x chip at specified address!");
+    LOG_SERIAL_PRINTLN("[IMU ERROR] Failed to find BNO08x chip at specified address!");
     _initialized = false;
     _inResetRecovery = true;
     return false;
@@ -18,7 +19,7 @@ bool ImuManager::begin(int sdaPin, int sclPin, uint8_t i2cAddr) {
   // Re-assert 400 kHz in case _bno.begin_I2C / Wire.begin reset clock dividers
   Wire.setClock(400000);
 
-  Serial.println("[IMU] BNO08x hardware detected successfully. Enabling sensor reports at ~50 Hz...");
+  LOG_SERIAL_PRINTLN("[IMU] BNO08x hardware detected successfully. Enabling sensor reports at ~50 Hz...");
   _initialized = true;
   setReports();
   return true;
@@ -42,17 +43,17 @@ void ImuManager::setReports() {
   _data.lin_az = 0.0f;
 
   _data.reportRotVecOk = _bno.enableReport(SH2_ROTATION_VECTOR, _reportIntervalUs);
-  Serial.printf("  -> SH2_ROTATION_VECTOR: %s\n", _data.reportRotVecOk ? "SUCCESS" : "FAILED");
+  LOG_SERIAL_PRINTF("  -> SH2_ROTATION_VECTOR: %s\n", _data.reportRotVecOk ? "SUCCESS" : "FAILED");
 
   _data.reportGyroOk = _bno.enableReport(SH2_GYROSCOPE_CALIBRATED, _reportIntervalUs);
-  Serial.printf("  -> SH2_GYROSCOPE_CALIBRATED: %s\n", _data.reportGyroOk ? "SUCCESS" : "FAILED");
+  LOG_SERIAL_PRINTF("  -> SH2_GYROSCOPE_CALIBRATED: %s\n", _data.reportGyroOk ? "SUCCESS" : "FAILED");
 
   _data.reportAccelOk = _bno.enableReport(SH2_ACCELEROMETER, _reportIntervalUs);
-  Serial.printf("  -> SH2_ACCELEROMETER: %s\n", _data.reportAccelOk ? "SUCCESS" : "FAILED");
+  LOG_SERIAL_PRINTF("  -> SH2_ACCELEROMETER: %s\n", _data.reportAccelOk ? "SUCCESS" : "FAILED");
 
   // SH2_LINEAR_ACCELERATION explicitly disabled for 1-variable load reduction experiment
   _data.reportLinAccOk = false;
-  Serial.println("  -> SH2_LINEAR_ACCELERATION: DISABLED (1-variable load reduction test)");
+  LOG_SERIAL_PRINTLN("  -> SH2_LINEAR_ACCELERATION: DISABLED (1-variable load reduction test)");
 }
 
 void ImuManager::update() {
@@ -62,7 +63,7 @@ void ImuManager::update() {
 
   if (_bno.wasReset()) {
     _data.resetCount++;
-    Serial.println("[IMU WARNING] BNO08x reset detected. Re-enabling reports...");
+    LOG_SERIAL_PRINTLN("[IMU WARNING] BNO08x reset detected. Re-enabling reports...");
     setReports();
   }
 
@@ -193,9 +194,10 @@ void ImuManager::update() {
   // Clear reset recovery only after rotation vector, gyro, and accel have ALL produced valid post-reset samples
   if (_inResetRecovery && _rotVecPostReset && _gyroPostReset && _accelPostReset) {
     _inResetRecovery = false;
-    Serial.println("[IMU] All post-reset sensor reports restored. Exit reset recovery state.");
+    LOG_SERIAL_PRINTLN("[IMU] All post-reset sensor reports restored. Exit reset recovery state.");
   }
 
+#if !PRODUCTION_BINARY_ONLY_SERIAL
   // 10-Second Rate-Limited Summary Diagnostic Output (Strictly 1 line per 10s, non-blocking capacity checked)
   unsigned long nowMs = millis();
   if (_diag.windowStartMs == 0) {
@@ -245,8 +247,8 @@ void ImuManager::update() {
       _diag.maxUpdateDurationUs = 0;
       _diag.windowStartMs = nowMs;
     }
-    // If truncated or UART TX capacity is insufficient, defer print safely to next iteration without blocking!
   }
+#endif
 
 #if IMU_DIAGNOSTIC_MODE
   if (nowMs - _lastDiagPrintMs >= 500) {
@@ -310,7 +312,7 @@ uint16_t ImuManager::getStatusFlags(int64_t snapUs) const {
 }
 
 void ImuManager::printDiagnostic() {
-  Serial.printf("[IMU DIAG] Q(w,x,y,z)=(%.3f,%.3f,%.3f,%.3f) Gyro=(%.2f,%.2f,%.2f) Acc=(%.2f,%.2f,%.2f) Status:%d Rec:%d\n",
+  LOG_SERIAL_PRINTF("[IMU DIAG] Q(w,x,y,z)=(%.3f,%.3f,%.3f,%.3f) Gyro=(%.2f,%.2f,%.2f) Acc=(%.2f,%.2f,%.2f) Status:%d Rec:%d\n",
     _data.qw, _data.qx, _data.qy, _data.qz,
     _data.gx, _data.gy, _data.gz,
     _data.raw_ax, _data.raw_ay, _data.raw_az,

@@ -80,9 +80,9 @@ void CalibrationManager::startCalibration(bool ack, bool sim, uint32_t sessId) {
     state = CAL_PRECHECK;
     stateTimerTicks = 100; // 1 second precheck at 100Hz
     if (isSimulation) {
-        Serial.printf("[Calibration] SIMULATION START (Session: %u)\n", sessionId);
+        LOG_SERIAL_PRINTF("[Calibration] SIMULATION START (Session: %u)\n", sessionId);
     } else {
-        Serial.printf("[Calibration] REAL START (Session: %u). WARNING: Wheels will spin!\n", sessionId);
+        LOG_SERIAL_PRINTF("[Calibration] REAL START (Session: %u). WARNING: Wheels will spin!\n", sessionId);
     }
 }
 
@@ -91,7 +91,7 @@ void CalibrationManager::cancelCalibration() {
     state = CAL_ABORTED;
     stateTimerTicks = 50; // Hold aborted state for 0.5s
     testPwm = 0;
-    Serial.println("[Calibration] Cancelled/Aborted by user.");
+    LOG_SERIAL_PRINTLN("[Calibration] Cancelled/Aborted by user.");
 }
 
 void CalibrationManager::failCalibration(const char *reason) {
@@ -99,7 +99,7 @@ void CalibrationManager::failCalibration(const char *reason) {
     stateTimerTicks = 100; // Hold failed state for 1s
     testPwm = 0;
     strncpy(failureReason, reason, sizeof(failureReason) - 1);
-    Serial.printf("[Calibration] FAILED: %s\n", reason);
+    LOG_SERIAL_PRINTF("[Calibration] FAILED: %s\n", reason);
 }
 
 bool CalibrationManager::update(const int32_t *currentTicks, MotorDriver &driver) {
@@ -140,11 +140,11 @@ bool CalibrationManager::update(const int32_t *currentTicks, MotorDriver &driver
                 if (nextIsFwd) {
                     state = CAL_MEASURING_FWD;
                     stateTimerTicks = 5; // Increment PWM every 5 ticks (50ms)
-                    Serial.printf("[Calibration] Motor %d FWD starting...\n", activeMotor + 1);
+                    LOG_SERIAL_PRINTF("[Calibration] Motor %d FWD starting...\n", activeMotor + 1);
                 } else {
                     state = CAL_MEASURING_REV;
                     stateTimerTicks = 5;
-                    Serial.printf("[Calibration] Motor %d REV starting...\n", activeMotor + 1);
+                    LOG_SERIAL_PRINTF("[Calibration] Motor %d REV starting...\n", activeMotor + 1);
                 }
                 changed = true;
             }
@@ -164,7 +164,7 @@ bool CalibrationManager::update(const int32_t *currentTicks, MotorDriver &driver
                     stateTimerTicks = 50;
                     nextIsFwd = false;
                     changed = true;
-                    Serial.printf("[Calibration] Motor %d FWD breakaway (Simulated): %d\n", activeMotor + 1, testPwm);
+                    LOG_SERIAL_PRINTF("[Calibration] Motor %d FWD breakaway (Simulated): %d\n", activeMotor + 1, testPwm);
                 } else {
                     if (stateTimerTicks > 0) {
                         stateTimerTicks--;
@@ -189,7 +189,7 @@ bool CalibrationManager::update(const int32_t *currentTicks, MotorDriver &driver
                     stateTimerTicks = 100; // 1.0s settle time on real motors
                     nextIsFwd = false;
                     changed = true;
-                    Serial.printf("[Calibration] Motor %d FWD breakaway detected: %d\n", activeMotor + 1, testPwm);
+                    LOG_SERIAL_PRINTF("[Calibration] Motor %d FWD breakaway detected: %d\n", activeMotor + 1, testPwm);
                 } else {
                     if (stateTimerTicks > 0) {
                         stateTimerTicks--;
@@ -203,7 +203,7 @@ bool CalibrationManager::update(const int32_t *currentTicks, MotorDriver &driver
                             stateTimerTicks = 100;
                             nextIsFwd = false;
                             changed = true;
-                            Serial.printf("[Calibration] Motor %d FWD failed to break, default to 210\n", activeMotor + 1);
+                            LOG_SERIAL_PRINTF("[Calibration] Motor %d FWD failed to break, default to 210\n", activeMotor + 1);
                         }
                     }
                 }
@@ -230,7 +230,7 @@ bool CalibrationManager::update(const int32_t *currentTicks, MotorDriver &driver
                         nextIsFwd = true;
                     }
                     changed = true;
-                    Serial.printf("[Calibration] Motor %d REV breakaway (Simulated): %d\n", activeMotor, testPwm);
+                    LOG_SERIAL_PRINTF("[Calibration] Motor %d REV breakaway (Simulated): %d\n", activeMotor, testPwm);
                 } else {
                     if (stateTimerTicks > 0) {
                         stateTimerTicks--;
@@ -261,7 +261,7 @@ bool CalibrationManager::update(const int32_t *currentTicks, MotorDriver &driver
                         nextIsFwd = true;
                     }
                     changed = true;
-                    Serial.printf("[Calibration] Motor %d REV breakaway detected: %d\n", activeMotor, testPwm);
+                    LOG_SERIAL_PRINTF("[Calibration] Motor %d REV breakaway detected: %d\n", activeMotor, testPwm);
                 } else {
                     if (stateTimerTicks > 0) {
                         stateTimerTicks--;
@@ -281,7 +281,7 @@ bool CalibrationManager::update(const int32_t *currentTicks, MotorDriver &driver
                                 nextIsFwd = true;
                             }
                             changed = true;
-                            Serial.printf("[Calibration] Motor %d REV failed to break, default to 210\n", activeMotor);
+                            LOG_SERIAL_PRINTF("[Calibration] Motor %d REV failed to break, default to 210\n", activeMotor);
                         }
                     }
                 }
@@ -291,9 +291,9 @@ bool CalibrationManager::update(const int32_t *currentTicks, MotorDriver &driver
         case CAL_DONE:
             driver.setMode(MotorOutputMode::LOCKED, -1);
             if (isSimulation) {
-                Serial.println("[Calibration] SIMULATION DONE. Breakaway limits (not persisted to NVS):");
+                LOG_SERIAL_PRINTLN("[Calibration] SIMULATION DONE. Breakaway limits (not persisted to NVS):");
                 for (int i = 0; i < 4; i++) {
-                    Serial.printf("  Motor %d: FWD=%d, REV=%d\n", i + 1, fwdBreakaway[i], revBreakaway[i]);
+                    LOG_SERIAL_PRINTF("  Motor %d: FWD=%d, REV=%d\n", i + 1, fwdBreakaway[i], revBreakaway[i]);
                 }
             } else {
                 // Persist real calibration values to preferences (NVS)
@@ -302,7 +302,7 @@ bool CalibrationManager::update(const int32_t *currentTicks, MotorDriver &driver
                     motorCalibrations[i].reverseBreakawayPwm = revBreakaway[i];
                 }
                 saveCalibrations();
-                Serial.println("[Calibration] REAL DONE. Persisted breakaway limits to NVS.");
+                LOG_SERIAL_PRINTLN("[Calibration] REAL DONE. Persisted breakaway limits to NVS.");
             }
             state = CAL_IDLE;
             changed = true;
