@@ -5,6 +5,22 @@
 #include <cstdio>
 #include <cstring>
 
+// Production Binary-Only Serial Control Flag
+// Set to 1 for production binary-only telemetry stream (no plain-text intermingling).
+#ifndef PRODUCTION_BINARY_ONLY_SERIAL
+#define PRODUCTION_BINARY_ONLY_SERIAL 1
+#endif
+
+#if PRODUCTION_BINARY_ONLY_SERIAL
+  #define LOG_SERIAL_PRINTF(...)  ((void)0)
+  #define LOG_SERIAL_PRINTLN(...) ((void)0)
+  #define LOG_SERIAL_PRINT(...)   ((void)0)
+#else
+  #define LOG_SERIAL_PRINTF(...)  Serial.printf(__VA_ARGS__)
+  #define LOG_SERIAL_PRINTLN(...) Serial.println(__VA_ARGS__)
+  #define LOG_SERIAL_PRINT(...)   Serial.print(__VA_ARGS__)
+#endif
+
 struct ControlLoopStats {
     uint32_t lastDurationUs;
     uint32_t minDurationUs;

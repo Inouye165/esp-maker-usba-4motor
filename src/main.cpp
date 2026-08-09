@@ -85,15 +85,15 @@ void setup() {
   delay(1000);
   
   // Definitive firmware identification serial print
-  Serial.println("\n=================================");
-  Serial.println("Firmware Name: Maker-ESP32-Unified-Rover");
-  Serial.println("Firmware Version: 1.0.0-phase1");
-  Serial.println("Protocol Version: v1.1");
-  Serial.println("Source Identifier: refactor-p1-cleanup");
-  Serial.print("Build Timestamp: ");
-  Serial.println(__DATE__ " " __TIME__);
-  Serial.println("Hardware Target: Maker-ESP32-Pro");
-  Serial.println("=================================");
+  LOG_SERIAL_PRINTLN("\n=================================");
+  LOG_SERIAL_PRINTLN("Firmware Name: Maker-ESP32-Unified-Rover");
+  LOG_SERIAL_PRINTLN("Firmware Version: 1.0.0-phase1");
+  LOG_SERIAL_PRINTLN("Protocol Version: v1.1");
+  LOG_SERIAL_PRINTLN("Source Identifier: refactor-p1-cleanup");
+  LOG_SERIAL_PRINT("Build Timestamp: ");
+  LOG_SERIAL_PRINTLN(__DATE__ " " __TIME__);
+  LOG_SERIAL_PRINTLN("Hardware Target: Maker-ESP32-Pro");
+  LOG_SERIAL_PRINTLN("=================================");
 
   // Initialize NVS configurations
   initConfigStorage();

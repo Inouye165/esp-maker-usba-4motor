@@ -162,7 +162,7 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
             stats.maxDurationUs = 0;
             stats.missedDeadlines = 0;
             stats.totalIterations = 0;
-            Serial.println("[Stats] Control loop timing statistics reset.");
+            LOG_SERIAL_PRINTLN("[Stats] Control loop timing statistics reset.");
             break;
         }
 
@@ -622,6 +622,7 @@ void SerialProtocol::sendTelemetry(
     
     writePacket(0x36, normalData, 24);
 
+#if !PRODUCTION_BINARY_ONLY_SERIAL
     // 10-Second Rate-Limited Packet TX Summary Diagnostic Output (non-blocking, capacity checked)
     if (g_txProf.windowStartMs == 0) {
         g_txProf.windowStartMs = nowMs;
@@ -656,6 +657,7 @@ void SerialProtocol::sendTelemetry(
             g_txProf.windowStartMs = nowMs;
         }
     }
+#endif
 }
 
 void SerialProtocol::sendFirmwareInfo() {
