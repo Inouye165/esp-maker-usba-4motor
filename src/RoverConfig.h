@@ -2,6 +2,8 @@
 #define ROVER_CONFIG_H
 
 #include <Arduino.h>
+#include <cstdio>
+#include <cstring>
 #include <Preferences.h>
 
 extern Preferences preferences;

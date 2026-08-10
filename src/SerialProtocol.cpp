@@ -1,4 +1,6 @@
 // Rebuild triggered: Updated GEAR_RATIO parameters to 45.0f
+#include <cstdio>
+#include <cstring>
 #include "SerialProtocol.h"
 #include "RoverConfig.h"
 #include "CommandManager.h"
@@ -8,6 +10,7 @@
 #include "MotorDriver.h"
 #include "MaintenanceManager.h"
 #include "MotionLimiter.h"
+#include "ImuManager.h"
 
 extern MotorDriver motorDriver;
 
@@ -333,18 +336,7 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
     }
 }
 
-#include "SerialProtocol.h"
-#include "RoverConfig.h"
-#include "CommandManager.h"
-#include "CalibrationManager.h"
-#include "SafetyManager.h"
-#include "DifferentialDrive.h"
-#include "MotorDriver.h"
-#include "MaintenanceManager.h"
-#include "MotionLimiter.h"
-#include "ImuManager.h"
 
-extern MotorDriver motorDriver;
 
 void SerialProtocol::begin() {
     Serial.setTxBufferSize(512); // Must be called BEFORE Serial.begin()
