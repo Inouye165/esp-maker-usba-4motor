@@ -2,6 +2,11 @@
 #define ROVER_CONFIG_H
 
 #include <Arduino.h>
+#include <cstdio>
+#include <cstring>
+#include <Preferences.h>
+
+extern Preferences preferences;
 
 // Control Loop Settings
 const unsigned long CONTROL_PERIOD_MS = 10; // 100 Hz rate
@@ -28,13 +33,21 @@ const int E4_A = 34; // Input only pin
 const int E4_B = 39; // Input only pin
 
 // Physical Parameters
-const float WHEEL_DIAMETER_M = 0.065f; // 65mm wheels
-const float WHEEL_RADIUS_M = WHEEL_DIAMETER_M / 2.0f;
-const float WHEEL_SEPARATION_M = 0.170f; // 170mm track separation
-const float GEAR_RATIO = 21.3f;
-const float ENCODER_PPR = 11.0f; // Magnetic poles/pulses per rev
-// 11 PPR * 21.3 ratio * 4 (quadrature edges count) = 937.2 ticks/wheel rev
-const float TICKS_PER_WHEEL_REV = ENCODER_PPR * GEAR_RATIO * 4.0f;
+extern float WHEEL_DIAMETER_M;
+extern float WHEEL_RADIUS_M;
+extern float WHEEL_SEPARATION_M; // Effective skid-steer track width (0.3408575433m)
+const float PHYSICAL_WHEEL_SEPARATION_M = 0.197f; // Physical wheel-center distance (0.197m = 7.75 in)
+extern float LEFT_TRIM;
+extern float RIGHT_TRIM;
+extern float LEFT_TRIM_FWD;
+extern float RIGHT_TRIM_FWD;
+extern float LEFT_TRIM_REV;
+extern float RIGHT_TRIM_REV;
+void saveTrims(float left, float right);
+void saveTrimsFwd(float left, float right);
+void saveTrimsRev(float left, float right);
+const float TICKS_PER_REV = 1974.1666666667f; // Measured 4-wheel average ticks/revolution (1974.1667)
+const float TICKS_PER_WHEEL_REV = 1974.1666666667f;
 
 // Kinematic Motion Constraints (Safe Conservative Defaults for Phase 4)
 const float MAX_LINEAR_VELOCITY_MPS = 0.80f;     // High velocity ceiling for floor driving
@@ -62,6 +75,7 @@ struct MotorCalibration {
 };
 
 extern MotorCalibration motorCalibrations[4];
+extern bool USE_UNIFORM_BREAKAWAY;
 
 // Watchdog communication timeout
 const uint32_t WATCHDOG_TIMEOUT_MS = 300; // Controlled deceleration trigger

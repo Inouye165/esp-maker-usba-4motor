@@ -1,4 +1,5 @@
 #include "MaintenanceManager.h"
+#include "SerialProtocol.h"
 
 MaintenanceManager::MaintenanceManager()
     : active(false)
@@ -22,15 +23,15 @@ void MaintenanceManager::begin() {
 bool MaintenanceManager::enter(bool ack, int motorIdx, uint32_t sessId, MotorDriver &driver) {
     if (active) return false;
     if (driver.getMode() == MotorOutputMode::EMERGENCY_STOP) {
-        Serial.println("[Maintenance] Rejecting enter: Emergency Stop is active!");
+        LOG_SERIAL_PRINTLN("[Maintenance] Rejecting enter: Emergency Stop is active!");
         return false;
     }
     if (motorIdx < 0 || motorIdx >= 4) {
-        Serial.printf("[Maintenance] Rejecting enter: invalid motor index %d\n", motorIdx);
+        LOG_SERIAL_PRINTF("[Maintenance] Rejecting enter: invalid motor index %d\n", motorIdx);
         return false;
     }
     if (!ack) {
-        Serial.println("[Maintenance] Rejecting enter: safety acknowledgement required!");
+        LOG_SERIAL_PRINTLN("[Maintenance] Rejecting enter: safety acknowledgement required!");
         return false;
     }
     
@@ -44,7 +45,7 @@ bool MaintenanceManager::enter(bool ack, int motorIdx, uint32_t sessId, MotorDri
     lastCommandTimeMs = millis();
     
     driver.setMode(MotorOutputMode::SINGLE_MOTOR_MAINTENANCE, motorIdx);
-    Serial.printf("[Maintenance] ENTERED Session: %u on Motor: %d\n", sessId, motorIdx + 1);
+    LOG_SERIAL_PRINTF("[Maintenance] ENTERED Session: %u on Motor: %d\n", sessId, motorIdx + 1);
     return true;
 }
 
@@ -55,14 +56,14 @@ void MaintenanceManager::exit(MotorDriver &driver) {
     testPwm = 0;
     
     driver.setMode(MotorOutputMode::LOCKED, -1);
-    Serial.println("[Maintenance] EXITED. Outputs locked.");
+    LOG_SERIAL_PRINTLN("[Maintenance] EXITED. Outputs locked.");
 }
 
 void MaintenanceManager::setOutput(int pwm) {
     if (!active) return;
     
-    // Central ceiling safety limit: max 80 PWM magnitude
-    int maxCeiling = 80;
+    // Central ceiling safety limit: max 60 PWM magnitude for safe low maintenance cap
+    int maxCeiling = 60;
     testPwm = constrain(pwm, -maxCeiling, maxCeiling);
     
     lastCommandTimeMs = millis();
@@ -72,7 +73,7 @@ void MaintenanceManager::update(MotorDriver &driver) {
     if (!active) return;
     
     if (driver.getMode() == MotorOutputMode::EMERGENCY_STOP) {
-        Serial.println("[Maintenance] Watchdog trigger: EMERGENCY_STOP active! Stopping output.");
+        LOG_SERIAL_PRINTLN("[Maintenance] Watchdog trigger: EMERGENCY_STOP active! Stopping output.");
         exit(driver);
         return;
     }
@@ -81,14 +82,14 @@ void MaintenanceManager::update(MotorDriver &driver) {
     
     // Deadman timeout check
     if (now - lastCommandTimeMs > deadmanTimeoutMs) {
-        Serial.println("[Maintenance] Watchdog trigger: Deadman refresh timeout! Stopping output.");
+        LOG_SERIAL_PRINTLN("[Maintenance] Watchdog trigger: Deadman refresh timeout! Stopping output.");
         exit(driver);
         return;
     }
     
     // Max session duration check
     if (now - sessionStartTimeMs > sessionMaxDurationMs) {
-        Serial.println("[Maintenance] Watchdog trigger: Max session duration reached! Stopping output.");
+        LOG_SERIAL_PRINTLN("[Maintenance] Watchdog trigger: Max session duration reached! Stopping output.");
         exit(driver);
         return;
     }

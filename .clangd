@@ -1,4 +1,9 @@
 CompileFlags:
+  Add:
+    - "-isystemC:/Users/Ron/.platformio/packages/toolchain-xtensa-esp32/xtensa-esp32-elf/include"
+    - "-isystemC:/Users/Ron/.platformio/packages/toolchain-xtensa-esp32/xtensa-esp32-elf/include/c++/8.4.0"
+    - "-isystemC:/Users/Ron/.platformio/packages/toolchain-xtensa-esp32/xtensa-esp32-elf/include/c++/8.4.0/xtensa-esp32-elf"
+    - "-isystemC:/Users/Ron/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src"
   Remove:
     - -mlongcalls
     - -mdisable-hardware-atomics

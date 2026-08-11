@@ -1,3 +1,6 @@
+// Rebuild triggered: Updated GEAR_RATIO parameters to 45.0f
+#include <cstdio>
+#include <cstring>
 #include "SerialProtocol.h"
 #include "RoverConfig.h"
 #include "CommandManager.h"
@@ -7,20 +10,13 @@
 #include "MotorDriver.h"
 #include "MaintenanceManager.h"
 #include "MotionLimiter.h"
+#include "ImuManager.h"
 
 extern MotorDriver motorDriver;
 
-SerialProtocol::SerialProtocol() 
-    : parserState(WAIT_HEAD)
-    , extLen(0)
-    , payloadIdx(0)
-    , lastCharTimeMs(0) {}
-
-void SerialProtocol::begin() {
-    Serial.begin(115200);
-    parserState = WAIT_HEAD;
-    lastCharTimeMs = millis();
-}
+SerialProtocol::SerialProtocol()
+    : parserState(WAIT_HEAD), extLen(0), payloadIdx(0), lastCharTimeMs(0),
+      imuSequenceNum(0), imuTxDropped(0), _pendingFaultReport(false), _pendingFaultFlags(0) {}
 
 bool SerialProtocol::update(CommandManager &cmdManager, CalibrationManager &calManager, MaintenanceManager &maintenanceManager, SafetyManager &safetyManager, ControlLoopStats &stats) {
     bool commandReceived = false;
@@ -153,7 +149,7 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
         case 0x22: { // CMD_CLEAR_FAULTS
             safetyManager.clearFaults();
             cmdManager.clearEmergencyStop();
-            Serial.println("[Safety] Faults cleared via serial command.");
+            LOG_SERIAL_PRINTLN("[Safety] Faults cleared via serial command.");
             break;
         }
         
@@ -169,7 +165,7 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
             stats.maxDurationUs = 0;
             stats.missedDeadlines = 0;
             stats.totalIterations = 0;
-            Serial.println("[Stats] Control loop timing statistics reset.");
+            LOG_SERIAL_PRINTLN("[Stats] Control loop timing statistics reset.");
             break;
         }
 
@@ -225,7 +221,7 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
             motorDriver.emergencyStop();
             maintenanceManager.exit(motorDriver);
             calManager.cancelCalibration();
-            Serial.println("[Safety] Emergency Stop triggered via serial command.");
+            LOG_SERIAL_PRINTLN("[Safety] Emergency Stop triggered via serial command.");
             break;
         }
 
@@ -236,7 +232,7 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
                 calManager.maintenanceStopVerified = (payloadBuf[3] == 1);
                 calManager.emergencyStopVerified = (payloadBuf[4] == 1);
                 calManager.deadmanVerified = (payloadBuf[5] == 1);
-                Serial.printf("[Calibration] Readiness gates updated: MotorDir=%d, EncDir=%d, MaintStop=%d, EStop=%d, Deadman=%d\n",
+                LOG_SERIAL_PRINTF("[Calibration] Readiness gates updated: MotorDir=%d, EncDir=%d, MaintStop=%d, EStop=%d, Deadman=%d\n",
                     calManager.motorDirectionsVerified, calManager.encoderDirectionsVerified,
                     calManager.maintenanceStopVerified, calManager.emergencyStopVerified, calManager.deadmanVerified);
             }
@@ -247,39 +243,218 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
             if (!maintenanceManager.isActive() && calManager.getState() == CAL_IDLE && !safetyManager.hasFaults() && !cmdManager.isEmergencyStopped()) {
                 if (cmdManager.armNormalDrive()) {
                     motorDriver.setMode(MotorOutputMode::NORMAL_DRIVE);
-                    Serial.println("[Command] NORMAL_DRIVE ARMED successfully.");
+                    LOG_SERIAL_PRINTLN("[Command] NORMAL_DRIVE ARMED successfully.");
                 } else {
-                    Serial.println("[Command] Rejecting ARM: safety locks active.");
+                    LOG_SERIAL_PRINTLN("[Command] Rejecting ARM: safety locks active.");
                 }
             } else {
-                Serial.println("[Command] Rejecting ARM: calibration, maintenance, faults, or E-STOP active.");
+                LOG_SERIAL_PRINTLN("[Command] Rejecting ARM: calibration, maintenance, faults, or E-STOP active.");
             }
             break;
         }
 
         case 0x2D: { // CMD_DISARM_NORMAL_DRIVE
             cmdManager.disarmNormalDrive();
-            Serial.println("[Command] NORMAL_DRIVE DISARMED. Initiating controlled stop.");
+            LOG_SERIAL_PRINTLN("[Command] NORMAL_DRIVE DISARMED. Initiating controlled stop.");
+            break;
+        }
+
+        case 0x37: { // CMD_ROVER_PARAMS (Set or Query)
+            if (extLen >= 9) {
+                float newDiameter = 0.0f;
+                float newSeparation = 0.0f;
+                memcpy(&newDiameter, &payloadBuf[1], 4);
+                memcpy(&newSeparation, &payloadBuf[5], 4);
+                
+                // Update active params
+                WHEEL_DIAMETER_M = newDiameter;
+                WHEEL_RADIUS_M = newDiameter / 2.0f;
+                if (newSeparation >= 0.100f && newSeparation <= 0.500f) {
+                    WHEEL_SEPARATION_M = newSeparation;
+                    preferences.putFloat("wheel_sep", newSeparation);
+                    LOG_SERIAL_PRINTF("[Config] Dynamic params saved to NVS: diameter=%.4f m, separation=%.4f m\n", newDiameter, newSeparation);
+                } else {
+                    LOG_SERIAL_PRINTF("[Config ERROR] Rejected out-of-range wheel separation %.4fm (must be 0.100m to 0.500m)\n", newSeparation);
+                }
+            }
+            
+            // Send back current active parameters
+            uint8_t respData[8];
+            memcpy(&respData[0], &WHEEL_DIAMETER_M, 4);
+            memcpy(&respData[4], &WHEEL_SEPARATION_M, 4);
+            writePacket(0x37, respData, 8);
+            break;
+        }
+
+        case 0x38: { // CMD_SET_TRIM (Set or Query forward straight trims)
+            if (extLen >= 9) {
+                float newLeftTrim = 1.00f;
+                float newRightTrim = 1.00f;
+                memcpy(&newLeftTrim, &payloadBuf[1], 4);
+                memcpy(&newRightTrim, &payloadBuf[5], 4);
+                
+                // Bounds validation [0.80, 1.20]
+                if (newLeftTrim >= 0.80f && newLeftTrim <= 1.20f &&
+                    newRightTrim >= 0.80f && newRightTrim <= 1.20f) {
+                    saveTrimsFwd(newLeftTrim, newRightTrim);
+                } else {
+                    LOG_SERIAL_PRINTF("[Protocol] Rejected invalid FWD trims: Left=%.4f, Right=%.4f (bounds: [0.8, 1.2])\n", newLeftTrim, newRightTrim);
+                }
+            }
+            
+            // Reply back with active forward trims
+            uint8_t respData[8];
+            memcpy(&respData[0], &LEFT_TRIM_FWD, 4);
+            memcpy(&respData[4], &RIGHT_TRIM_FWD, 4);
+            writePacket(0x38, respData, 8);
+            break;
+        }
+
+        case 0x39: { // CMD_SET_TRIM_REV (Set or Query reverse straight trims)
+            if (extLen >= 9) {
+                float newLeftTrim = 1.00f;
+                float newRightTrim = 1.00f;
+                memcpy(&newLeftTrim, &payloadBuf[1], 4);
+                memcpy(&newRightTrim, &payloadBuf[5], 4);
+                
+                // Bounds validation [0.80, 1.20]
+                if (newLeftTrim >= 0.80f && newLeftTrim <= 1.20f &&
+                    newRightTrim >= 0.80f && newRightTrim <= 1.20f) {
+                    saveTrimsRev(newLeftTrim, newRightTrim);
+                } else {
+                    LOG_SERIAL_PRINTF("[Protocol] Rejected invalid REV trims: Left=%.4f, Right=%.4f (bounds: [0.8, 1.2])\n", newLeftTrim, newRightTrim);
+                }
+            }
+            
+            // Reply back with active reverse trims
+            uint8_t respData[8];
+                memcpy(&respData[0], &LEFT_TRIM_REV, 4);
+            memcpy(&respData[4], &RIGHT_TRIM_REV, 4);
+            writePacket(0x39, respData, 8);
             break;
         }
     }
 }
 
+
+
+void SerialProtocol::begin() {
+    Serial.setTxBufferSize(512); // Must be called BEFORE Serial.begin()
+    Serial.begin(115200);
+    parserState = WAIT_HEAD;
+    lastCharTimeMs = millis();
+}
+
+bool SerialProtocol::canWrite(uint8_t wireSize) {
+    return (Serial.availableForWrite() >= (int)wireSize);
+}
+
 void SerialProtocol::writePacket(uint8_t extType, const uint8_t *data, uint8_t dataLen) {
-    uint8_t outExtLen = dataLen + 3;
+    constexpr size_t MAX_FRAME_SIZE = 128;
+    const uint8_t outExtLen = dataLen + 3;
+    const uint8_t frameLen = dataLen + 5;
+
+    if (frameLen > MAX_FRAME_SIZE) {
+        return; // Safety guard against buffer overflow
+    }
+
+    // Non-blocking TX safety guard: never write if UART ring buffer cannot accommodate entire frame
+    if (!canWrite(frameLen)) {
+        return; // Drop/defer non-blockingly without partial transmission
+    }
+
+    // Construct complete wire frame in contiguous buffer
+    uint8_t frameBuf[MAX_FRAME_SIZE];
+    frameBuf[0] = 0xFF;
+    frameBuf[1] = 0xFB;
+    frameBuf[2] = outExtLen;
+    frameBuf[3] = extType;
+
     uint8_t sum = outExtLen + extType;
-    
-    Serial.write(0xFF);
-    Serial.write(0xFB); // Board -> Host ID
-    Serial.write(outExtLen);
-    Serial.write(extType);
-    
     for (uint8_t i = 0; i < dataLen; i++) {
-        Serial.write(data[i]);
+        frameBuf[4 + i] = data[i];
         sum += data[i];
     }
-    
-    Serial.write(sum & 0xFF);
+    frameBuf[4 + dataLen] = sum & 0xFF;
+
+    // Execute exactly ONE bulk buffer write
+    Serial.write(frameBuf, frameLen);
+}
+
+uint8_t SerialProtocol::serializeImuTelemetry(
+    uint8_t *p,
+    uint32_t seq,
+    const ImuData &d,
+    int64_t snapUs,
+    const ImuManager &imuManager
+) {
+    memset(p, 0, 69);
+
+    p[0] = 0x01; // protocol_version
+
+    uint16_t flags = imuManager.getStatusFlags(snapUs);
+    memcpy(&p[1], &flags, 2);
+
+    memcpy(&p[3], &seq, 4);
+
+    uint32_t resetCount = d.resetCount;
+    memcpy(&p[7], &resetCount, 4);
+
+    uint64_t snapUs64 = (uint64_t)snapUs;
+    memcpy(&p[11], &snapUs64, 8);
+
+    uint16_t rotAge = imuManager.getRotVecAgeMs(snapUs);
+    memcpy(&p[19], &rotAge, 2);
+
+    uint16_t gyroAge = imuManager.getGyroAgeMs(snapUs);
+    memcpy(&p[21], &gyroAge, 2);
+
+    uint16_t accelAge = imuManager.getAccelAgeMs(snapUs);
+    memcpy(&p[23], &accelAge, 2);
+
+    memcpy(&p[25], &d.qw, 4);
+    memcpy(&p[29], &d.qx, 4);
+    memcpy(&p[33], &d.qy, 4);
+    memcpy(&p[37], &d.qz, 4);
+
+    memcpy(&p[41], &d.gx, 4);
+    memcpy(&p[45], &d.gy, 4);
+    memcpy(&p[49], &d.gz, 4);
+
+    // SH2_ACCELEROMETER (gravity included, REP-145 compliant)
+    memcpy(&p[53], &d.raw_ax, 4);
+    memcpy(&p[57], &d.raw_ay, 4);
+    memcpy(&p[61], &d.raw_az, 4);
+
+    memcpy(&p[65], &d.quatRadAccuracy, 4);
+
+    return 69;
+}
+
+static TelemetryTxProf g_txProf;
+
+void SerialProtocol::sendImuTelemetry(const ImuManager &imuManager) {
+    uint64_t tStart = esp_timer_get_time();
+
+    // Increment sequence counter for every scheduled 50 Hz attempt BEFORE capacity check
+    uint32_t seq = imuSequenceNum++;
+
+    const uint8_t wireSize = 74;
+    if (!canWrite(wireSize)) {
+        imuTxDropped++;
+        return; // Drop non-blockingly
+    }
+
+    const ImuData &d = imuManager.getData();
+    int64_t snapUs = esp_timer_get_time();
+
+    uint8_t p[69];
+    serializeImuTelemetry(p, seq, d, snapUs, imuManager);
+
+    writePacket(0x3A, p, 69);
+
+    uint64_t tEnd = esp_timer_get_time();
+    g_txProf.p0x3A_imu.record((uint32_t)(tEnd - tStart));
 }
 
 void SerialProtocol::sendTelemetry(
@@ -292,40 +467,26 @@ void SerialProtocol::sendTelemetry(
     uint32_t faultFlags
 ) {
     // 1. Encoder packet (TYPE_ENCODER = 0x0D)
+    uint64_t t0 = esp_timer_get_time();
     uint8_t encoderData[16];
     memcpy(&encoderData[0],  &ticks[0], 4);
     memcpy(&encoderData[4],  &ticks[1], 4);
     memcpy(&encoderData[8],  &ticks[2], 4);
     memcpy(&encoderData[12], &ticks[3], 4);
     writePacket(0x0D, encoderData, 16);
+    uint64_t t1 = esp_timer_get_time();
+    g_txProf.p0x0D_encoder.record((uint32_t)(t1 - t0));
     
-    // 2. Battery packet (TYPE_BATTERY = 0x0A) - Report 0.0V since physical ADC is not verified
-    uint8_t batteryData[7] = {0, 0, 0, 0, 0, 0, 0};
-    writePacket(0x0A, batteryData, 7);
-    
-    // 3. IMU telemetry packet (TYPE_IMU = 0x0E)
-    int16_t gz_raw = (int16_t)(currentYawRate * -100.0f);
-    int16_t ax_raw = 0;
-    int16_t ay_raw = 0;
-    int16_t az_raw = 1000;
-    int16_t gx_raw = 0;
-    int16_t gy_raw = 0;
-    int16_t mx_raw = 0;
-    int16_t my_raw = 0;
-    int16_t mz_raw = 0;
-    
-    uint8_t imuData[19];
-    memcpy(&imuData[0],  &gx_raw, 2);
-    memcpy(&imuData[2],  &gy_raw, 2);
-    memcpy(&imuData[4],  &gz_raw, 2);
-    memcpy(&imuData[6],  &ax_raw, 2);
-    memcpy(&imuData[8],  &ay_raw, 2);
-    memcpy(&imuData[10], &az_raw, 2);
-    memcpy(&imuData[12], &mx_raw, 2);
-    memcpy(&imuData[14], &my_raw, 2);
-    memcpy(&imuData[16], &mz_raw, 2);
-    imuData[18] = 0;
-    writePacket(0x0E, imuData, 19);
+    // 2. Battery packet (TYPE_BATTERY = 0x0A) - Throttled to 5 Hz (every 200ms)
+    static unsigned long lastBatteryTxMs = 0;
+    unsigned long nowMs = millis();
+    if (nowMs - lastBatteryTxMs >= 200) {
+        lastBatteryTxMs = nowMs;
+        uint8_t batteryData[7] = {0, 0, 0, 0, 0, 0, 0};
+        writePacket(0x0A, batteryData, 7);
+    }
+    uint64_t t2 = esp_timer_get_time();
+    g_txProf.p0x0A_battery.record((uint32_t)(t2 - t1));
 
     // 3b. Maintenance telemetry status (TYPE_MAINTENANCE_STATUS = 0x35)
     uint8_t maintData[15];
@@ -342,7 +503,6 @@ void SerialProtocol::sendTelemetry(
     maintData[9] = (maintenanceManager.getTestPwm() < 0) ? 1 : 0; // Direction (0=FWD, 1=REV)
     maintData[10] = (uint8_t)abs(maintenanceManager.getTestPwm()); // Requested PWM magnitude
     
-    // Check mode and print actual output if mode matches
     int actualPwm = 0;
     if (motorDriver.getMode() == MotorOutputMode::SINGLE_MOTOR_MAINTENANCE && motorDriver.getAuthorizedMotor() == maintenanceManager.getActiveMotor()) {
         actualPwm = abs(maintenanceManager.getTestPwm());
@@ -354,6 +514,8 @@ void SerialProtocol::sendTelemetry(
     memcpy(&maintData[13], &remTimeout, 2);
     
     writePacket(0x35, maintData, 15);
+    uint64_t t3 = esp_timer_get_time();
+    g_txProf.p0x35_maint.record((uint32_t)(t3 - t2));
 
     // 4. Calibration telemetry packet (TYPE_CALIBRATION_STATUS = 0x30)
     uint8_t calData[55];
@@ -384,26 +546,43 @@ void SerialProtocol::sendTelemetry(
         calData[19 + i] = (uint8_t)calManager.getReverseBreakaway(i);
     }
     
-    // Copy the failure reason (max 32 bytes)
     strncpy((char*)&calData[23], calManager.getFailureReason(), 32);
     
     writePacket(0x30, calData, 55);
+    uint64_t t4 = esp_timer_get_time();
+    g_txProf.p0x30_cal.record((uint32_t)(t4 - t3));
 
-    // 5. Control loop timing telemetry packet (TYPE_LOOP_TIMING = 0x33)
-    uint8_t timingData[24];
+    // 5. Control loop timing telemetry packet (TYPE_LOOP_TIMING = 0x33) - 40 bytes (versioned & backward compatible)
+    uint8_t timingData[40];
     memcpy(&timingData[0],  &stats.lastDurationUs, 4);
     memcpy(&timingData[4],  &stats.minDurationUs, 4);
     memcpy(&timingData[8],  &stats.avgDurationUs, 4);
     memcpy(&timingData[12], &stats.maxDurationUs, 4);
     memcpy(&timingData[16], &stats.missedDeadlines, 4);
     memcpy(&timingData[20], &stats.totalIterations, 4);
-    writePacket(0x33, timingData, 24);
+
+    memcpy(&timingData[24], &stats.lastStartLatenessUs, 4);
+    memcpy(&timingData[28], &stats.maxStartLatenessUs, 4);
+    memcpy(&timingData[32], &stats.missedControlPeriods, 4);
+    memcpy(&timingData[36], &stats.maxConsecutiveMissedPeriods, 4);
+    writePacket(0x33, timingData, 40);
+    uint64_t t5 = esp_timer_get_time();
+    g_txProf.p0x33_timing.record((uint32_t)(t5 - t4));
 
     // 6. Fault report telemetry packet (TYPE_FAULT_REPORT = 0x34)
-    uint8_t faultData[4];
-    memcpy(faultData, &faultFlags, 4);
-    writePacket(0x34, faultData, 4);
-    
+    latchFaultReport(faultFlags);
+    if (_pendingFaultReport) {
+        uint8_t faultData[4];
+        memcpy(faultData, &_pendingFaultFlags, 4);
+        if (canWrite(9)) {
+            writePacket(0x34, faultData, 4);
+            _pendingFaultReport = false;
+            _pendingFaultFlags = 0;
+        }
+    }
+    uint64_t t6 = esp_timer_get_time();
+    g_txProf.p0x34_fault.record((uint32_t)(t6 - t5));
+
     // 7. Normal drive telemetry packet (TYPE_NORMAL_DRIVE_STATUS = 0x36)
     extern CommandManager commandManager;
     extern MotionLimiter motionLimiter;
@@ -434,6 +613,43 @@ void SerialProtocol::sendTelemetry(
     normalData[23] = PHASE4A1_NORMAL_DRIVE_OUTPUT_DISABLED ? 1 : 0;
     
     writePacket(0x36, normalData, 24);
+
+#if !PRODUCTION_BINARY_ONLY_SERIAL
+    // 10-Second Rate-Limited Packet TX Summary Diagnostic Output (non-blocking, capacity checked)
+    if (g_txProf.windowStartMs == 0) {
+        g_txProf.windowStartMs = nowMs;
+    }
+    if (nowMs - g_txProf.windowStartMs >= 10000) {
+        char txBuf[384];
+        int len = snprintf(txBuf, sizeof(txBuf),
+            "[TX PROF 10S] WinMs:%lu | MaxUs(0x0D:%u, 0x0A:%u, 0x35:%u, 0x30:%u, 0x33:%u, 0x34:%u, 0x3A:%u) | >=1ms(0x0D:%u, 0x30:%u, 0x33:%u, 0x3A:%u) | >=5ms(0x30:%u, 0x33:%u, 0x3A:%u) | >=10ms(0x30:%u, 0x33:%u, 0x3A:%u)\n",
+            nowMs - g_txProf.windowStartMs,
+            g_txProf.p0x0D_encoder.maxUs,
+            g_txProf.p0x0A_battery.maxUs,
+            g_txProf.p0x35_maint.maxUs,
+            g_txProf.p0x30_cal.maxUs,
+            g_txProf.p0x33_timing.maxUs,
+            g_txProf.p0x34_fault.maxUs,
+            g_txProf.p0x3A_imu.maxUs,
+            g_txProf.p0x0D_encoder.countGte1ms,
+            g_txProf.p0x30_cal.countGte1ms,
+            g_txProf.p0x33_timing.countGte1ms,
+            g_txProf.p0x3A_imu.countGte1ms,
+            g_txProf.p0x30_cal.countGte5ms,
+            g_txProf.p0x33_timing.countGte5ms,
+            g_txProf.p0x3A_imu.countGte5ms,
+            g_txProf.p0x30_cal.countGte10ms,
+            g_txProf.p0x33_timing.countGte10ms,
+            g_txProf.p0x3A_imu.countGte10ms
+        );
+
+        if (len > 0 && len < (int)sizeof(txBuf) && Serial.availableForWrite() >= len) {
+            Serial.write((const uint8_t*)txBuf, len);
+            g_txProf.reset();
+            g_txProf.windowStartMs = nowMs;
+        }
+    }
+#endif
 }
 
 void SerialProtocol::sendFirmwareInfo() {

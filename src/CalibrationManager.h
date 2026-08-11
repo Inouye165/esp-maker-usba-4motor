@@ -2,6 +2,7 @@
 #define CALIBRATION_MANAGER_H
 
 #include <Arduino.h>
+#include "SerialProtocol.h"
 
 enum CalibrationState {
     CAL_IDLE,
