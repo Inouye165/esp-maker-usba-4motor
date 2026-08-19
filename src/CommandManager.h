@@ -25,8 +25,12 @@ public:
     CommandManager();
     void begin();
     
-    // Set command from a source
-    void setCommand(float linear, float angular, CommandSource source, bool estop = false);
+    // Set command from a source (with optional 2-bit clearance mask: 0x01=FWD_OK, 0x02=REV_OK)
+    void setCommand(float linear, float angular, CommandSource source, bool estop = false, uint8_t clearanceMask = 0x00);
+    
+    // Directional clearance authorization (fail-closed if stale >500ms)
+    uint8_t getClearanceMask() const;
+    uint32_t getClearanceAgeMs() const;
     
     // Trigger an emergency stop immediately
     void triggerEmergencyStop();
@@ -56,6 +60,8 @@ private:
     ChassisCommand currentCmd;
     CommandSource activeSource;
     uint32_t lastCmdReceivedMs;
+    uint8_t currentClearanceMask;
+    uint32_t lastClearanceReceivedMs;
     bool eStopLatched;
     bool timedOut;
     bool normalDriveArmed;

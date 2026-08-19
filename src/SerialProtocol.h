@@ -107,6 +107,9 @@ public:
         uint32_t faultFlags
     );
 
+    // Stream PID & Feedforward per-wheel diagnostic telemetry packet (TYPE_PID_DIAGNOSTIC = 0x37)
+    void sendPidTelemetry(const class WheelController &wheelController);
+
     // Send firmware information packet
     void sendFirmwareInfo();
 

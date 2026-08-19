@@ -4,6 +4,8 @@
 CommandManager::CommandManager() 
     : activeSource(SOURCE_NONE)
     , lastCmdReceivedMs(0)
+    , currentClearanceMask(0)
+    , lastClearanceReceivedMs(0)
     , eStopLatched(false)
     , timedOut(false)
     , normalDriveArmed(false) {
@@ -13,9 +15,11 @@ CommandManager::CommandManager()
 void CommandManager::begin() {
     clearEmergencyStop();
     normalDriveArmed = false;
+    currentClearanceMask = 0;
+    lastClearanceReceivedMs = 0;
 }
 
-void CommandManager::setCommand(float linear, float angular, CommandSource source, bool estop) {
+void CommandManager::setCommand(float linear, float angular, CommandSource source, bool estop, uint8_t clearanceMask) {
     if (estop) {
         triggerEmergencyStop();
         return;
@@ -45,11 +49,30 @@ void CommandManager::setCommand(float linear, float angular, CommandSource sourc
         currentCmd.receivedAtMs = now;
         lastCmdReceivedMs = now;
         timedOut = false;
+
+        // Update clearance mask and freshness
+        currentClearanceMask = clearanceMask;
+        lastClearanceReceivedMs = now;
     }
 }
 
+uint8_t CommandManager::getClearanceMask() const {
+    // Fail-closed (0x00) if clearance has never been received or is stale (> 500 ms)
+    if (lastClearanceReceivedMs == 0 || (millis() - lastClearanceReceivedMs > 500)) {
+        return 0x00;
+    }
+    return currentClearanceMask;
+}
+
+uint32_t CommandManager::getClearanceAgeMs() const {
+    if (lastClearanceReceivedMs == 0) return 999999;
+    return millis() - lastClearanceReceivedMs;
+}
+
 bool CommandManager::armNormalDrive() {
-    if (eStopLatched || timedOut) return false;
+    if (eStopLatched) return false;
+    timedOut = false;
+    lastCmdReceivedMs = millis();
     normalDriveArmed = true;
     currentCmd.linearVelocity = 0.0f;
     currentCmd.angularVelocity = 0.0f;
