@@ -11,6 +11,7 @@
 #include "MaintenanceManager.h"
 #include "MotionLimiter.h"
 #include "ImuManager.h"
+#include "WheelController.h"
 
 extern MotorDriver motorDriver;
 
@@ -110,6 +111,25 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
             }
             break;
         }
+
+        case 0x11: { // CMD_OPEN_LOOP_PWM (Direct open-loop PWM: 4x int16 LE)
+            if (extLen >= 10) {
+                if (maintenanceManager.isActive() || calManager.getState() != CAL_IDLE) break;
+                
+                int16_t p1 = (int16_t)(payloadBuf[1] | (payloadBuf[2] << 8));
+                int16_t p2 = (int16_t)(payloadBuf[3] | (payloadBuf[4] << 8));
+                int16_t p3 = (int16_t)(payloadBuf[5] | (payloadBuf[6] << 8));
+                int16_t p4 = (int16_t)(payloadBuf[7] | (payloadBuf[8] << 8));
+                
+                extern WheelController wheelController;
+                if (p1 == 0 && p2 == 0 && p3 == 0 && p4 == 0) {
+                    wheelController.clearOpenLoop();
+                } else if (cmdManager.isNormalDriveArmed()) {
+                    wheelController.setOpenLoopPwm(p1, p2, p3, p4);
+                }
+            }
+            break;
+        }
         
         case 0x12: { // CMD_MOTION (vx, vy, vz as int16 LE * 1000)
             if (extLen >= 8) {
@@ -122,7 +142,12 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
                 float linear = (float)vx / 1000.0f;
                 float angular = (float)vz / 1000.0f;
                 
-                cmdManager.setCommand(linear, angular, SOURCE_ROS);
+                uint8_t clearance = 0x00; // Default: fail-closed
+                if (extLen >= 9) {
+                    clearance = payloadBuf[7];
+                }
+                
+                cmdManager.setCommand(linear, angular, SOURCE_ROS, false, clearance);
             }
             break;
         }
@@ -611,8 +636,10 @@ void SerialProtocol::sendTelemetry(
     memcpy(&normalData[19], &limAngular, 4);
     
     normalData[23] = PHASE4A1_NORMAL_DRIVE_OUTPUT_DISABLED ? 1 : 0;
+    normalData[24] = commandManager.getClearanceMask();
+    normalData[25] = (uint8_t)min(255UL, (unsigned long)(commandManager.getClearanceAgeMs() / 10));
     
-    writePacket(0x36, normalData, 24);
+    writePacket(0x36, normalData, 26);
 
 #if !PRODUCTION_BINARY_ONLY_SERIAL
     // 10-Second Rate-Limited Packet TX Summary Diagnostic Output (non-blocking, capacity checked)
@@ -650,6 +677,32 @@ void SerialProtocol::sendTelemetry(
         }
     }
 #endif
+}
+
+void SerialProtocol::sendPidTelemetry(const WheelController &wheelController) {
+    uint8_t pidData[64];
+    for (int i = 0; i < 4; i++) {
+        const WheelPidDiag &d = wheelController.getController(i).getDiag();
+        int16_t tVal = (int16_t)(d.targetVel * 100.0f);
+        int16_t mVal = (int16_t)(d.measuredVel * 100.0f);
+        int16_t ffVal = (int16_t)(d.feedforward * 10.0f);
+        int16_t pVal = (int16_t)(d.pTerm * 10.0f);
+        int16_t iVal = (int16_t)(d.iTerm * 10.0f);
+        int16_t dVal = (int16_t)(d.dTerm * 10.0f);
+        int16_t pwmVal = d.finalPwm;
+        int16_t stateVal = (int16_t)d.stictionState;
+
+        uint8_t offset = i * 16;
+        memcpy(&pidData[offset + 0], &tVal, 2);
+        memcpy(&pidData[offset + 2], &mVal, 2);
+        memcpy(&pidData[offset + 4], &ffVal, 2);
+        memcpy(&pidData[offset + 6], &pVal, 2);
+        memcpy(&pidData[offset + 8], &iVal, 2);
+        memcpy(&pidData[offset + 10], &dVal, 2);
+        memcpy(&pidData[offset + 12], &pwmVal, 2);
+        memcpy(&pidData[offset + 14], &stateVal, 2);
+    }
+    writePacket(0x3B, pidData, 64);
 }
 
 void SerialProtocol::sendFirmwareInfo() {

@@ -65,6 +65,8 @@ const float MAX_ANGULAR_JERK_RADPS3 = 200.0f;     // Snappy angular jerk respons
 const float KP_SPEED = 2.2f;
 const float KI_SPEED = 1.2f;
 const float KD_SPEED = 0.05f;
+const float SPIN_PID_KP = 6.0f; // Pure-spin proportional gain (6.0), active strictly during pure-spin maneuvers
+
 
 // Breakaway and Static Friction Compensation Limits (Feedforward Constants)
 // Start with initial approximate breakaway values (will be refined by calibration)
@@ -76,6 +78,21 @@ struct MotorCalibration {
 
 extern MotorCalibration motorCalibrations[4];
 extern bool USE_UNIFORM_BREAKAWAY;
+
+// Dynamic Stiction Breakout Parameters
+const int STICTION_BOOST_PWM = 48;                 // Standard straight/coordinated breakout
+const int SPIN_STICTION_BOOST_PWM = 102;           // Empirically validated pure-spin startup breakout PWM (102 PWM)
+const uint16_t SPIN_BREAKOUT_MIN_CYCLES = 10;      // Minimum breakout dwell duration: 100 ms @ 100 Hz (10 control cycles)
+const uint16_t SPIN_BREAKOUT_MAX_CYCLES = 20;      // Hard max breakout boost duration: 200 ms @ 100 Hz (20 control cycles)
+const uint16_t SPIN_BREAKOUT_SUSTAINED_CYCLES = 3; // Consecutive control cycles of sustained velocity required for early exit
+const float SPIN_BREAKOUT_VELOCITY_THRESHOLD = 0.10f; // Velocity threshold (rad/s) to qualify sustained rear-wheel motion
+const float SPIN_KS_PWM = 58.0f;                   // Empirical pure-spin lateral scrub breakaway base
+const float SPIN_KINETIC_KS_PWM = 75.0f;           // Dedicated pure-spin kinetic feedforward base/intercept (75 PWM)
+const float MIN_SPIN_KINETIC_FF_FLOOR = 80.0f;     // Pure-spin kinetic feedforward floor baseline for non-forward-rear wheels
+
+const float SPIN_FORWARD_REAR_KINETIC_FLOOR = 94.0f; // Empirically validated kinetic floor for forward-driving rear wheel (94 PWM)
+const float SPIN_REVERSE_REAR_KINETIC_FLOOR = 80.0f; // Kinetic floor for reverse-driving rear wheel (80 PWM)
+const float SPIN_MANEUVER_EPSILON = 0.005f;        // Linear velocity threshold for pure spin classification (m/s)
 
 // Watchdog communication timeout
 const uint32_t WATCHDOG_TIMEOUT_MS = 300; // Controlled deceleration trigger

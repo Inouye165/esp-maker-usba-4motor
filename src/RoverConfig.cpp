@@ -19,10 +19,10 @@ bool USE_UNIFORM_BREAKAWAY = true;
 // Default calibrations:
 // SS6625E motor driver board on the Maker Pro generally starts rotating wheels around 40-60 PWM
 MotorCalibration motorCalibrations[4] = {
-    {45, 45, 12.0f}, // M1
-    {45, 45, 12.0f}, // M2
-    {45, 45, 12.0f}, // M3
-    {45, 45, 12.0f}  // M4
+    {40, 40, 6.00f}, // M1
+    {40, 40, 6.00f}, // M2
+    {40, 40, 6.00f}, // M3
+    {40, 40, 6.00f}  // M4
 };
 
 void initConfigStorage() {
@@ -35,9 +35,9 @@ void loadCalibrations() {
     USE_UNIFORM_BREAKAWAY = preferences.getBool("use_uniform", true);
 
     if (USE_UNIFORM_BREAKAWAY) {
-        int uniformFwd = 45;
-        int uniformRev = 45;
-        float uniformKv = 12.0f;
+        int uniformFwd = 40;
+        int uniformRev = 40;
+        float uniformKv = 6.00f;
 
         for (int i = 0; i < 4; i++) {
             motorCalibrations[i].forwardBreakawayPwm = uniformFwd;
@@ -46,21 +46,21 @@ void loadCalibrations() {
         }
     } else {
         // Load custom breakaway calibrations from NVS
-        motorCalibrations[0].forwardBreakawayPwm = preferences.getInt("m1_fwd_break", 45);
-        motorCalibrations[0].reverseBreakawayPwm = preferences.getInt("m1_rev_break", 45);
-        motorCalibrations[0].kV = preferences.getFloat("m1_kv", 12.0f);
+        motorCalibrations[0].forwardBreakawayPwm = preferences.getInt("m1_fwd_break", 40);
+        motorCalibrations[0].reverseBreakawayPwm = preferences.getInt("m1_rev_break", 40);
+        motorCalibrations[0].kV = preferences.getFloat("m1_kv", 6.00f);
 
-        motorCalibrations[1].forwardBreakawayPwm = preferences.getInt("m2_fwd_break", 45);
-        motorCalibrations[1].reverseBreakawayPwm = preferences.getInt("m2_rev_break", 45);
-        motorCalibrations[1].kV = preferences.getFloat("m2_kv", 12.0f);
+        motorCalibrations[1].forwardBreakawayPwm = preferences.getInt("m2_fwd_break", 40);
+        motorCalibrations[1].reverseBreakawayPwm = preferences.getInt("m2_rev_break", 40);
+        motorCalibrations[1].kV = preferences.getFloat("m2_kv", 6.00f);
 
-        motorCalibrations[2].forwardBreakawayPwm = preferences.getInt("m3_fwd_break", 45);
-        motorCalibrations[2].reverseBreakawayPwm = preferences.getInt("m3_rev_break", 45);
-        motorCalibrations[2].kV = preferences.getFloat("m3_kv", 12.0f);
+        motorCalibrations[2].forwardBreakawayPwm = preferences.getInt("m3_fwd_break", 40);
+        motorCalibrations[2].reverseBreakawayPwm = preferences.getInt("m3_rev_break", 40);
+        motorCalibrations[2].kV = preferences.getFloat("m3_kv", 6.00f);
 
-        motorCalibrations[3].forwardBreakawayPwm = preferences.getInt("m4_fwd_break", 45);
-        motorCalibrations[3].reverseBreakawayPwm = preferences.getInt("m4_rev_break", 45);
-        motorCalibrations[3].kV = preferences.getFloat("m4_kv", 12.0f);
+        motorCalibrations[3].forwardBreakawayPwm = preferences.getInt("m4_fwd_break", 40);
+        motorCalibrations[3].reverseBreakawayPwm = preferences.getInt("m4_rev_break", 40);
+        motorCalibrations[3].kV = preferences.getFloat("m4_kv", 6.00f);
     }
     
     LOG_SERIAL_PRINTF("[Config] Loaded breakaway parameters (uniform=%d):\n", USE_UNIFORM_BREAKAWAY);
