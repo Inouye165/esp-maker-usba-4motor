@@ -507,7 +507,7 @@ class PhysicalTestRunner:
                     time.sleep(0.02)  # 50Hz control loop
 
         except Exception as e:
-            abort_reason = f"Exception during motion execution: {e}"
+            abort_reason = f"[{type(e).__name__}] Exception during motion execution: {e}"
 
         # If motion loop aborted, execute disarm_and_stop() immediately and return
         if abort_reason:

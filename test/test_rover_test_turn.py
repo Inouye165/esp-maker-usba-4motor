@@ -13,6 +13,7 @@ import math
 import time
 import sys
 import os
+import itertools
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -570,7 +571,7 @@ class TestLifecycleAndCleanupTiming(unittest.TestCase):
             current_status["cmdSource"] = source
             return {"ok": True}
 
-        mock_cockpit.get_imu.side_effect = [imu_0] * 8 + [imu_target] * 30
+        mock_cockpit.get_imu.side_effect = itertools.chain([imu_0] * 8, itertools.repeat(imu_target))
         mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
         mock_cockpit.get_status.side_effect = lambda: dict(current_status)
         mock_cockpit.enable_autonomy.side_effect = mock_enable_auto
@@ -626,8 +627,11 @@ class TestLifecycleAndCleanupTiming(unittest.TestCase):
             {"state": "READY_ARMED", "zeroHandshakeCount": 3, "cmdSource": "ROS_AUTONOMY"},
             {"state": "READY_ARMED", "zeroHandshakeCount": 3, "cmdSource": "ROS_AUTONOMY"},
             {"state": "ACTIVE", "clampedAngular": 0.8, "cmdSource": "ROS_AUTONOMY"},
-        ] + [{"state": "ACTIVE", "clampedAngular": 0.8, "cmdSource": "ROS_AUTONOMY"}] * 30
-        mock_cockpit.get_autonomy_status.side_effect = auto_states
+        ]
+        mock_cockpit.get_autonomy_status.side_effect = itertools.chain(
+            auto_states,
+            itertools.repeat({"state": "ACTIVE", "clampedAngular": 0.8, "cmdSource": "ROS_AUTONOMY"})
+        )
 
         with patch("time.sleep", return_value=None):
             runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
