@@ -540,8 +540,9 @@ void runMotionControlLoop() {
   static int32_t syncStartTicks[4] = {0, 0, 0, 0};
   static bool wasGoingStraight = false;
   
+  bool isGoingStraight = (activeCmd.linearVelocity != 0.0f) && (activeCmd.angularVelocity == 0.0f);
+
   if (!wheelController.isOpenLoop()) {
-      bool isGoingStraight = (activeCmd.linearVelocity != 0.0f) && (activeCmd.angularVelocity == 0.0f);
       
       if (isGoingStraight) {
           if (!wasGoingStraight) {
@@ -587,7 +588,9 @@ void runMotionControlLoop() {
   }
   
   // Run closed-loop PID, dynamic stiction state machine, and driver output update
-  wheelController.update(measuredVels, rawTicks, dt, motorDriver);
+  uint32_t nowMs = millis();
+  bool encodersFresh = encoderManager.isEncoderDataFresh(nowMs, 200);
+  wheelController.update(measuredVels, rawTicks, dt, motorDriver, isSpinManeuver, isGoingStraight, encodersFresh);
   
   for (int i = 0; i < 4; i++) {
     pwmOutputs[i] = wheelController.getController(i).getPwmOutput();

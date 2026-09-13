@@ -270,6 +270,13 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
     return lastPwm;
 }
 
+void SingleWheelController::setDiagPwmOutputs(int basePwm, int trim, int finalPwm) {
+    diag.basePwm = (int16_t)basePwm;
+    diag.spinSyncTrim = (int16_t)trim;
+    diag.finalPwm = (int16_t)finalPwm;
+    lastPwm = finalPwm;
+}
+
 void SingleWheelController::updateOpenLoop(float measuredRadps, int pwm) {
     measuredVel = measuredRadps;
     lastPwm = pwm;
@@ -280,6 +287,8 @@ void SingleWheelController::updateOpenLoop(float measuredRadps, int pwm) {
     diag.pTerm = 0.0f;
     diag.iTerm = 0.0f;
     diag.dTerm = 0.0f;
+    diag.basePwm = (int16_t)pwm;
+    diag.spinSyncTrim = 0;
     diag.finalPwm = (int16_t)pwm;
     diag.stictionState = STICTION_KINETIC;
 }
@@ -298,13 +307,17 @@ void SingleWheelController::reset() {
 
 WheelController::WheelController() 
     : openLoopActive(false)
-    , spinSustainedVelocityCycles(0) {
+    , spinSustainedVelocityCycles(0)
+    , lastSpinSyncTrimLeft(0)
+    , lastSpinSyncTrimRight(0) {
     for (int i = 0; i < 4; i++) openLoopPwms[i] = 0;
 }
 
 void WheelController::begin() {
     openLoopActive = false;
     spinSustainedVelocityCycles = 0;
+    lastSpinSyncTrimLeft = 0;
+    lastSpinSyncTrimRight = 0;
     for (int i = 0; i < 4; i++) {
         openLoopPwms[i] = 0;
         controllers[i].begin(i);
@@ -352,8 +365,10 @@ void WheelController::clearOpenLoop() {
     }
 }
 
-void WheelController::update(const float *measuredVelocities, const int32_t *ticks, float dt, MotorDriver &driver) {
+void WheelController::update(const float *measuredVelocities, const int32_t *ticks, float dt, MotorDriver &driver, bool isSpinManeuver, bool isGoingStraight, bool encodersFresh) {
     if (openLoopActive) {
+        lastSpinSyncTrimLeft = 0;
+        lastSpinSyncTrimRight = 0;
         for (int i = 0; i < 4; i++) {
             driver.setPWM(i, openLoopPwms[i]);
             controllers[i].updateOpenLoop(measuredVelocities[i], openLoopPwms[i]);
@@ -361,13 +376,121 @@ void WheelController::update(const float *measuredVelocities, const int32_t *tic
         return;
     }
 
-    // 1. Update single wheel controllers first to get current boostTicksCount & state
+    // 1. Calculate base closed-loop PID + Feedforward PWM outputs first
+    int basePwms[4];
     for (int i = 0; i < 4; i++) {
-        int pwmOutput = controllers[i].update(measuredVelocities[i], ticks[i], dt);
-        driver.setPWM(i, pwmOutput);
+        basePwms[i] = controllers[i].update(measuredVelocities[i], ticks[i], dt);
+    }
+
+    // 2. Spin-Only Direct PWM Synchronization Trim
+    int finalPwms[4];
+    for (int i = 0; i < 4; i++) {
+        finalPwms[i] = basePwms[i];
+    }
+
+    // Explicit Spin-Only Gating Checks:
+    bool maxTargetBelowThreshold = true;
+    for (int i = 0; i < 4; i++) {
+        if (abs(controllers[i].getTarget()) >= 0.05f) {
+            maxTargetBelowThreshold = false;
+            break;
+        }
+    }
+
+    bool signOk = true;
+    if (isSpinManeuver && !isGoingStraight) {
+        float t0 = controllers[0].getTarget();
+        float t1 = controllers[1].getTarget();
+        float t2 = controllers[2].getTarget();
+        float t3 = controllers[3].getTarget();
+
+        if (t0 > 0 && (t1 > 0 || t3 > 0)) signOk = false;
+        if (t0 < 0 && (t1 < 0 || t3 < 0)) signOk = false;
+        if (t2 > 0 && (t1 > 0 || t3 > 0)) signOk = false;
+        if (t2 < 0 && (t1 < 0 || t3 < 0)) signOk = false;
+    }
+
+    bool spinSyncActive = isSpinManeuver && !isGoingStraight && encodersFresh && !maxTargetBelowThreshold && signOk;
+
+    if (!spinSyncActive) {
+        lastSpinSyncTrimLeft = 0;
+        lastSpinSyncTrimRight = 0;
+    } else {
+        // --- Left Side Sync Trim (M1 / LF [0] vs M3 / LR [2]) ---
+        float v0 = measuredVelocities[0];
+        float v2 = measuredVelocities[2];
+        float leftDiffMag = abs(v0) - abs(v2);
+
+        float effLeftDiff = 0.0f;
+        if (leftDiffMag > 0.15f) {
+            effLeftDiff = leftDiffMag - 0.15f;
+        } else if (leftDiffMag < -0.15f) {
+            effLeftDiff = leftDiffMag + 0.15f;
+        }
+
+        int rawLeftTrim = (int)round(5.0f * effLeftDiff);
+        rawLeftTrim = constrain(rawLeftTrim, -8, 8);
+
+        int leftDelta = rawLeftTrim - lastSpinSyncTrimLeft;
+        leftDelta = constrain(leftDelta, -1, 1);
+        lastSpinSyncTrimLeft += leftDelta;
+
+        // --- Right Side Sync Trim (M2 / RF [1] vs M4 / RR [3]) ---
+        float v1 = measuredVelocities[1];
+        float v3 = measuredVelocities[3];
+        float rightDiffMag = abs(v1) - abs(v3);
+
+        float effRightDiff = 0.0f;
+        if (rightDiffMag > 0.15f) {
+            effRightDiff = rightDiffMag - 0.15f;
+        } else if (rightDiffMag < -0.15f) {
+            effRightDiff = rightDiffMag + 0.15f;
+        }
+
+        int rawRightTrim = (int)round(5.0f * effRightDiff);
+        rawRightTrim = constrain(rawRightTrim, -8, 8);
+
+        int rightDelta = rawRightTrim - lastSpinSyncTrimRight;
+        rightDelta = constrain(rightDelta, -1, 1);
+        lastSpinSyncTrimRight += rightDelta;
+    }
+
+    // Apply push-pull trim to base PWMs and perform final ±255 clamp
+    if (lastSpinSyncTrimLeft != 0 || lastSpinSyncTrimRight != 0) {
+        float t0 = controllers[0].getTarget();
+        float t2 = controllers[2].getTarget();
+        int s0 = (t0 > 0.0f) ? 1 : ((t0 < 0.0f) ? -1 : 0);
+        int s2 = (t2 > 0.0f) ? 1 : ((t2 < 0.0f) ? -1 : 0);
+
+        finalPwms[0] = constrain(basePwms[0] - s0 * lastSpinSyncTrimLeft, -255, 255);
+        finalPwms[2] = constrain(basePwms[2] + s2 * lastSpinSyncTrimLeft, -255, 255);
+
+        float t1 = controllers[1].getTarget();
+        float t3 = controllers[3].getTarget();
+        int s1 = (t1 > 0.0f) ? 1 : ((t1 < 0.0f) ? -1 : 0);
+        int s3 = (t3 > 0.0f) ? 1 : ((t3 < 0.0f) ? -1 : 0);
+
+        finalPwms[1] = constrain(basePwms[1] - s1 * lastSpinSyncTrimRight, -255, 255);
+        finalPwms[3] = constrain(basePwms[3] + s3 * lastSpinSyncTrimRight, -255, 255);
+    }
+
+    // Write final PWM outputs to driver and set diagnostic telemetry
+    for (int i = 0; i < 4; i++) {
+        driver.setPWM(i, finalPwms[i]);
+
+        int trimForWheel = 0;
+        float t_wh = controllers[i].getTarget();
+        int s_wh = (t_wh > 0.0f) ? 1 : ((t_wh < 0.0f) ? -1 : 0);
+
+        if (i == 0) trimForWheel = -s_wh * lastSpinSyncTrimLeft;
+        if (i == 2) trimForWheel = +s_wh * lastSpinSyncTrimLeft;
+        if (i == 1) trimForWheel = -s_wh * lastSpinSyncTrimRight;
+        if (i == 3) trimForWheel = +s_wh * lastSpinSyncTrimRight;
+
+        controllers[i].setDiagPwmOutputs(basePwms[i], trimForWheel, finalPwms[i]);
     }
     
-    // 2. Coordinated Rear-Pair Breakout Guard for Pure Spin:
+    // 3. Coordinated Rear-Pair Breakout Guard for Pure Spin:
     bool anySpinBoost = false;
     for (int i = 0; i < 4; i++) {
         if (controllers[i].getStictionState() == STICTION_BOOST) {
@@ -418,9 +541,10 @@ void WheelController::transitionAllToKinetic() {
 void WheelController::reset() {
     openLoopActive = false;
     spinSustainedVelocityCycles = 0;
+    lastSpinSyncTrimLeft = 0;
+    lastSpinSyncTrimRight = 0;
     for (int i = 0; i < 4; i++) {
         openLoopPwms[i] = 0;
         controllers[i].reset();
     }
 }
-

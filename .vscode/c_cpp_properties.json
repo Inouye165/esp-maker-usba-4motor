@@ -491,7 +491,7 @@
             "defines": [
                 "WIFI_SSID=\"Dobby\"",
                 "WIFI_PASS=\"sanmina-1\"",
-                "PLATFORMIO=60119",
+                "PLATFORMIO=60200",
                 "ARDUINO_ESP32_DEV",
                 "HAVE_CONFIG_H",
                 "MBEDTLS_CONFIG_FILE=\"mbedtls/esp_config.h\"",

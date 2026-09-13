@@ -18,6 +18,8 @@ struct WheelPidDiag {
     float pTerm;
     float iTerm;
     float dTerm;
+    int16_t basePwm;
+    int16_t spinSyncTrim;
     int16_t finalPwm;
     int16_t stictionState;
 };
@@ -32,6 +34,7 @@ public:
     
     // Update PID and return output PWM value (-255 to 255)
     int update(float measuredRadps, int32_t currentTicks, float dt);
+    void setDiagPwmOutputs(int basePwm, int trim, int finalPwm);
     
     void reset();
     
@@ -88,14 +91,14 @@ public:
     bool isOpenLoop() const { return openLoopActive; }
     
     // Update all 4 wheel speed PID loops and write outputs to MotorDriver
-    // measuredVelocities: array of 4 rad/s velocities from EncoderManager
-    // ticks: array of 4 raw cumulative tick counts from EncoderManager
-    // dt: loop duration in seconds
-    void update(const float *measuredVelocities, const int32_t *ticks, float dt, class MotorDriver &driver);
+    void update(const float *measuredVelocities, const int32_t *ticks, float dt, class MotorDriver &driver, bool isSpinManeuver, bool isGoingStraight, bool encodersFresh);
     
     // Get single controller references
     const SingleWheelController& getController(int index) const { return controllers[index]; }
     
+    int getSpinSyncTrimLeft() const { return lastSpinSyncTrimLeft; }
+    int getSpinSyncTrimRight() const { return lastSpinSyncTrimRight; }
+
     // Coordinated transition of all wheels to STICTION_KINETIC
     void transitionAllToKinetic();
     
@@ -106,6 +109,8 @@ private:
     bool openLoopActive;
     int openLoopPwms[4];
     uint16_t spinSustainedVelocityCycles;
+    int lastSpinSyncTrimLeft;
+    int lastSpinSyncTrimRight;
 };
 
 #endif // WHEEL_CONTROLLER_H

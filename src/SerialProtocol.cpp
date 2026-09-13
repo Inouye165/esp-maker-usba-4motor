@@ -679,8 +679,9 @@ void SerialProtocol::sendTelemetry(
 #endif
 }
 
-void SerialProtocol::sendPidTelemetry(const WheelController &wheelController) {
-    uint8_t pidData[64];
+void SerialProtocol::sendPidTelemetry(const WheelController &wheelController, const YawOuterLoopDiag &outerDiag) {
+    uint8_t pidData[96];
+    memset(pidData, 0, sizeof(pidData));
     for (int i = 0; i < 4; i++) {
         const WheelPidDiag &d = wheelController.getController(i).getDiag();
         int16_t tVal = (int16_t)(d.targetVel * 100.0f);
@@ -692,17 +693,35 @@ void SerialProtocol::sendPidTelemetry(const WheelController &wheelController) {
         int16_t pwmVal = d.finalPwm;
         int16_t stateVal = (int16_t)d.stictionState;
 
-        uint8_t offset = i * 16;
-        memcpy(&pidData[offset + 0], &tVal, 2);
-        memcpy(&pidData[offset + 2], &mVal, 2);
-        memcpy(&pidData[offset + 4], &ffVal, 2);
-        memcpy(&pidData[offset + 6], &pVal, 2);
-        memcpy(&pidData[offset + 8], &iVal, 2);
-        memcpy(&pidData[offset + 10], &dVal, 2);
-        memcpy(&pidData[offset + 12], &pwmVal, 2);
-        memcpy(&pidData[offset + 14], &stateVal, 2);
+        // Extended Versioned Spin Sync Trim Telemetry (Offset 80..95)
+        int16_t basePwmVal = d.basePwm;
+        int16_t syncTrimVal = d.spinSyncTrim;
+        memcpy(&pidData[80 + i * 4 + 0], &basePwmVal, 2);
+        memcpy(&pidData[80 + i * 4 + 2], &syncTrimVal, 2);
     }
-    writePacket(0x3B, pidData, 64);
+
+    // Outer Yaw-Rate Loop Telemetry (16 bytes, offset 64..79)
+    int16_t wzReqVal = (int16_t)(outerDiag.wzRequested * 100.0f);
+    int16_t wzActVal = (int16_t)(outerDiag.wzActual * 100.0f);
+    int16_t errVal   = (int16_t)(outerDiag.yawOuterError * 100.0f);
+    int16_t corrVal  = (int16_t)(outerDiag.yawOuterCorrection * 100.0f);
+    int16_t wzCorrVal= (int16_t)(outerDiag.wzCorrected * 100.0f);
+    uint8_t activeVal= outerDiag.yawOuterActive ? 1 : 0;
+    uint8_t validVal = outerDiag.imuGyroValid ? 1 : 0;
+    uint16_t ageVal  = outerDiag.imuGyroAgeMs;
+    uint16_t rsvdVal = 0;
+
+    memcpy(&pidData[64], &wzReqVal, 2);
+    memcpy(&pidData[66], &wzActVal, 2);
+    memcpy(&pidData[68], &errVal, 2);
+    memcpy(&pidData[70], &corrVal, 2);
+    memcpy(&pidData[72], &wzCorrVal, 2);
+    pidData[74] = activeVal;
+    pidData[75] = validVal;
+    memcpy(&pidData[76], &ageVal, 2);
+    memcpy(&pidData[78], &rsvdVal, 2);
+
+    writePacket(0x3B, pidData, 96);
 }
 
 void SerialProtocol::sendFirmwareInfo() {

@@ -78,6 +78,17 @@ struct TelemetryTxProf {
     }
 };
 
+struct YawOuterLoopDiag {
+    float wzRequested = 0.0f;
+    float wzActual = 0.0f;
+    float yawOuterError = 0.0f;
+    float yawOuterCorrection = 0.0f;
+    float wzCorrected = 0.0f;
+    bool yawOuterActive = false;
+    bool imuGyroValid = false;
+    uint16_t imuGyroAgeMs = 0;
+};
+
 class SerialProtocol {
 public:
     SerialProtocol();
@@ -107,8 +118,8 @@ public:
         uint32_t faultFlags
     );
 
-    // Stream PID & Feedforward per-wheel diagnostic telemetry packet (TYPE_PID_DIAGNOSTIC = 0x37)
-    void sendPidTelemetry(const class WheelController &wheelController);
+    // Stream PID & Feedforward per-wheel diagnostic telemetry packet (TYPE_PID_DIAGNOSTIC = 0x3B)
+    void sendPidTelemetry(const class WheelController &wheelController, const YawOuterLoopDiag &outerDiag = YawOuterLoopDiag());
 
     // Send firmware information packet
     void sendFirmwareInfo();

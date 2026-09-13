@@ -34,7 +34,7 @@ struct ImuData {
   float lin_az = 0.0f;
 
   // Status & Timestamps
-  uint8_t calibrationStatus = 0; // 0=Unreliable, 1=Low, 2=Medium, 3=High (sourced ONLY from SH2_ROTATION_VECTOR)
+  uint8_t calibrationStatus = 0; // 0=Unreliable, 1=Low, 2=Medium, 3=High (sourced ONLY from SH2_GAME_ROTATION_VECTOR)
   uint32_t sampleCount = 0;
   uint32_t resetCount = 0;
 
@@ -45,7 +45,7 @@ struct ImuData {
   int64_t linAccUpdateUs = 0;
 
   // Report enablement status flags
-  bool reportRotVecOk = false;
+  bool reportRotVecOk = false; // Kept as bool flag for binary wire status compatibility (reflects SH2_GAME_ROTATION_VECTOR enablement)
   bool reportGyroOk = false;
   bool reportLinAccOk = false;
   bool reportAccelOk = false;
@@ -60,6 +60,7 @@ public:
   bool isInitialized() const { return _initialized; }
   bool inResetRecovery() const { return _inResetRecovery; }
   const ImuData& getData() const { return _data; }
+  static const char* getOrientationSourceName() { return "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC"; }
 
   // Freshness and age helpers
   uint16_t getRotVecAgeMs(int64_t snapUs) const;

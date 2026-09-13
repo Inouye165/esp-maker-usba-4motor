@@ -36,6 +36,7 @@ void EncoderManager::begin() {
 
 void EncoderManager::update(float dt) {
     if (dt <= 0.0f) return;
+    lastUpdateMs = millis();
     
     // Read raw counts from hardware counters
     int32_t raw0 = (int32_t)encoders[0].getCount();
@@ -65,6 +66,7 @@ void EncoderManager::update(float dt) {
 }
 
 void EncoderManager::reset() {
+    lastUpdateMs = 0;
     for (int i = 0; i < 4; i++) {
         encoders[i].clearCount();
         currentTicks[i] = 0;

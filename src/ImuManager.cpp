@@ -42,8 +42,8 @@ void ImuManager::setReports() {
   _data.lin_ay = 0.0f;
   _data.lin_az = 0.0f;
 
-  _data.reportRotVecOk = _bno.enableReport(SH2_ROTATION_VECTOR, _reportIntervalUs);
-  LOG_SERIAL_PRINTF("  -> SH2_ROTATION_VECTOR: %s\n", _data.reportRotVecOk ? "SUCCESS" : "FAILED");
+  _data.reportRotVecOk = _bno.enableReport(SH2_GAME_ROTATION_VECTOR, _reportIntervalUs);
+  LOG_SERIAL_PRINTF("  -> SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC: %s\n", _data.reportRotVecOk ? "SUCCESS" : "FAILED");
 
   _data.reportGyroOk = _bno.enableReport(SH2_GYROSCOPE_CALIBRATED, _reportIntervalUs);
   LOG_SERIAL_PRINTF("  -> SH2_GYROSCOPE_CALIBRATED: %s\n", _data.reportGyroOk ? "SUCCESS" : "FAILED");
@@ -76,7 +76,7 @@ void ImuManager::update() {
     _diag.totalEvents++;
 
     switch (_sensorValue.sensorId) {
-      case SH2_ROTATION_VECTOR: {
+      case SH2_GAME_ROTATION_VECTOR: {
         _diag.rotVecEvents++;
         if (_diag.lastRotVecEventUs > 0) {
           uint32_t gapMs = (uint32_t)((nowUs - _diag.lastRotVecEventUs) / 1000);
@@ -84,11 +84,10 @@ void ImuManager::update() {
         }
         _diag.lastRotVecEventUs = nowUs;
 
-        float r = _sensorValue.un.rotationVector.real;
-        float i = _sensorValue.un.rotationVector.i;
-        float j = _sensorValue.un.rotationVector.j;
-        float k = _sensorValue.un.rotationVector.k;
-        float acc = _sensorValue.un.rotationVector.accuracy;
+        float r = _sensorValue.un.gameRotationVector.real;
+        float i = _sensorValue.un.gameRotationVector.i;
+        float j = _sensorValue.un.gameRotationVector.j;
+        float k = _sensorValue.un.gameRotationVector.k;
 
         if (!std::isnan(r) && !std::isinf(r) &&
             !std::isnan(i) && !std::isinf(i) &&
@@ -98,8 +97,8 @@ void ImuManager::update() {
           _data.qx = i;
           _data.qy = j;
           _data.qz = k;
-          _data.quatRadAccuracy = (std::isnan(acc) || std::isinf(acc)) ? 0.0f : acc;
-          _data.calibrationStatus = _sensorValue.status & 0x03; // Sourced ONLY from SH2_ROTATION_VECTOR
+          _data.quatRadAccuracy = 0.0f; // 6-DOF non-magnetic orientation
+          _data.calibrationStatus = _sensorValue.status & 0x03; // Sourced ONLY from SH2_GAME_ROTATION_VECTOR
           _data.rotVecUpdateUs = nowUs;
           _rotVecPostReset = true;
         }
