@@ -20,6 +20,7 @@ import urllib.error
 from typing import Optional, Dict, Any, List, Tuple
 
 DEFAULT_OPERATOR_TOKEN = "787f1b987d6295357ff3f664e08b0c96984f4f82a7b1edc17adef2793e64a168"
+DEFAULT_BRIDGE_TOKEN = "effd380c5e7ea570736ddcae531f2a0247dc6012412a6b6e2988bc509a0d612d"
 
 
 def get_default_operator_token() -> str:
@@ -27,19 +28,47 @@ def get_default_operator_token() -> str:
     if token:
         return token
     # Check .env file if available
-    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
-    if os.path.exists(env_path):
-        try:
-            with open(env_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("ROVER_OPERATOR_TOKEN="):
-                        val = line.split("=", 1)[1].strip("\"'")
-                        if val:
-                            return val
-        except Exception:
-            pass
+    candidate_paths = [
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
+        "/home/ron/yahboom-encoder/.env"
+    ]
+    for env_path in candidate_paths:
+        if os.path.exists(env_path):
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("ROVER_OPERATOR_TOKEN="):
+                            val = line.split("=", 1)[1].strip("\"'")
+                            if val:
+                                return val
+            except Exception:
+                pass
     return DEFAULT_OPERATOR_TOKEN
+
+
+def get_default_bridge_token() -> str:
+    token = os.environ.get("ROVER_CMD_VEL_TOKEN", "")
+    if token:
+        return token
+    # Check common .env paths
+    candidate_paths = [
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
+        "/home/ron/yahboom-encoder/.env"
+    ]
+    for env_path in candidate_paths:
+        if os.path.exists(env_path):
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("ROVER_CMD_VEL_TOKEN="):
+                            val = line.split("=", 1)[1].strip("\"'")
+                            if val:
+                                return val
+            except Exception:
+                pass
+    return DEFAULT_BRIDGE_TOKEN
 
 
 class TransportException(Exception):
@@ -266,6 +295,26 @@ class CockpitClient:
     def get_pid_telemetry(self) -> Dict[str, Any]:
         return self._request("/api/pid-telemetry")
 
+    def send_cmd_vel(self, vx: float = 0.0, wz: float = 0.0, bridge_port: int = 3010) -> Dict[str, Any]:
+        """Send velocity command to internal ROS2 command bridge listener (port 3010)."""
+        host = self.base_url.split("://", 1)[1].split(":", 1)[0]
+        url = f"http://{host}:{bridge_port}/api/cmd_vel"
+        headers = {
+            "Content-Type": "application/json",
+            "x-rover-bridge-token": get_default_bridge_token()
+        }
+        payload = json.dumps({
+            "linear": {"x": float(vx)},
+            "angular": {"z": float(wz)}
+        }).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=1.0) as resp:
+                raw = resp.read().decode("utf-8")
+                return json.loads(raw) if raw else {}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
 
 def perform_zero_handshake(
     cockpit: CockpitClient,
@@ -286,9 +335,15 @@ def perform_zero_handshake(
     handshake_success = False
 
     while time.time() - t0 < max_duration_sec:
-        # Send zero command
+        # Send zero command via WebSocket
         if ws and ws.connected:
             ws.send_drive(0.0, 0.0)
+
+        # Also send zero command via internal ROS2 command bridge
+        try:
+            cockpit.send_cmd_vel(0.0, 0.0)
+        except Exception:
+            pass
 
         # Check status
         auto_stat = cockpit.get_autonomy_status()
