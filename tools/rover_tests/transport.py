@@ -1,0 +1,356 @@
+"""
+tools.rover_tests.transport - Authenticated Persistent WebSocket & Cockpit Transport
+
+Authoritative transport implementation for Rover One test harnesses:
+- RFC 6455 persistent native WebSocket client with token authentication.
+- 50Hz watchdog-safe velocity streaming (v, w) without per-frame HTTP overhead.
+- Cockpit autonomy handshake: WAITING_FOR_ZERO -> 3-consecutive-zeros -> READY_DISARMED -> READY_ARMED.
+- Strict command-source ownership management (CALIBRATION_TEST, ROS_AUTONOMY, NONE).
+- Guaranteed zero/disarm cleanup invariant executed across all termination paths.
+"""
+
+import socket
+import base64
+import struct
+import json
+import time
+import os
+import urllib.request
+import urllib.error
+from typing import Optional, Dict, Any, List, Tuple
+
+DEFAULT_OPERATOR_TOKEN = "787f1b987d6295357ff3f664e08b0c96984f4f82a7b1edc17adef2793e64a168"
+
+
+def get_default_operator_token() -> str:
+    token = os.environ.get("ROVER_OPERATOR_TOKEN", "")
+    if token:
+        return token
+    # Check .env file if available
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("ROVER_OPERATOR_TOKEN="):
+                        val = line.split("=", 1)[1].strip("\"'")
+                        if val:
+                            return val
+        except Exception:
+            pass
+    return DEFAULT_OPERATOR_TOKEN
+
+
+class TransportException(Exception):
+    """Raised on connection, authentication, or protocol faults."""
+    pass
+
+
+class HandshakeException(TransportException):
+    """Raised when the 3-consecutive-zero autonomy handshake fails."""
+    pass
+
+
+class NativeWSClient:
+    """
+    Lightweight, dependency-free RFC 6455 WebSocket client using native TCP sockets.
+    Enables low-latency, persistent telemetry ingestion and ~50Hz command streaming.
+    """
+    def __init__(self, host: str = "127.0.0.1", port: int = 3000, path: str = "/ws", timeout: float = 2.0):
+        self.host = host
+        self.port = port
+        self.path = path
+        self.timeout = timeout
+        self.sock: Optional[socket.socket] = None
+        self.connected = False
+        self.authenticated = False
+
+    def connect(self) -> bool:
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.settimeout(self.timeout)
+            self.sock.connect((self.host, self.port))
+
+            key = base64.b64encode(os.urandom(16)).decode("utf-8")
+            handshake = (
+                f"GET {self.path} HTTP/1.1\r\n"
+                f"Host: {self.host}:{self.port}\r\n"
+                f"Upgrade: websocket\r\n"
+                f"Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {key}\r\n"
+                f"Sec-WebSocket-Version: 13\r\n\r\n"
+            )
+            self.sock.sendall(handshake.encode("utf-8"))
+            resp = self.sock.recv(1024)
+            if b"101 Switching Protocols" in resp:
+                self.connected = True
+                self.sock.settimeout(0.002)  # Non-blocking poll mode
+                return True
+        except Exception:
+            self.connected = False
+            self.close()
+        return False
+
+    def send_json(self, obj: Dict[str, Any]) -> bool:
+        if not self.connected or not self.sock:
+            return False
+        try:
+            payload = json.dumps(obj).encode("utf-8")
+            mask_key = os.urandom(4)
+            length = len(payload)
+
+            header = bytearray([0x81])  # FIN + text opcode
+            if length < 126:
+                header.append(0x80 | length)
+            elif length < 65536:
+                header.append(0x80 | 126)
+                header.extend(struct.pack("!H", length))
+            else:
+                header.append(0x80 | 127)
+                header.extend(struct.pack("!Q", length))
+
+            masked_payload = bytearray(length)
+            for i in range(length):
+                masked_payload[i] = payload[i] ^ mask_key[i % 4]
+
+            frame = header + mask_key + masked_payload
+            self.sock.sendall(frame)
+            return True
+        except Exception:
+            self.connected = False
+            return False
+
+    def authenticate(self, token: str, timeout: float = 2.0) -> bool:
+        if not self.send_json({"type": "auth", "token": token}):
+            return False
+
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            msgs = self.recv_frames()
+            for m in msgs:
+                if m.get("type") == "auth_result":
+                    if m.get("ok") is True:
+                        self.authenticated = True
+                        return True
+                    return False
+            time.sleep(0.02)
+        return False
+
+    def send_drive(self, vx: float, wz: float) -> bool:
+        """Stream velocity command via persistent WebSocket keeping deadman/watchdogs alive."""
+        if not self.connected:
+            return False
+        return self.send_json({
+            "type": "test_drive",
+            "v": float(vx),
+            "w": float(wz)
+        })
+
+    def recv_frames(self) -> List[Dict[str, Any]]:
+        if not self.connected or not self.sock:
+            return []
+        messages: List[Dict[str, Any]] = []
+        try:
+            while True:
+                head = self.sock.recv(2)
+                if not head or len(head) < 2:
+                    break
+                b1, b2 = head[0], head[1]
+                opcode = b1 & 0x0F
+                payload_len = b2 & 0x7F
+                if payload_len == 126:
+                    ext = self.sock.recv(2)
+                    if len(ext) < 2:
+                        break
+                    payload_len = struct.unpack("!H", ext)[0]
+                elif payload_len == 127:
+                    ext = self.sock.recv(8)
+                    if len(ext) < 8:
+                        break
+                    payload_len = struct.unpack("!Q", ext)[0]
+
+                payload = b""
+                while len(payload) < payload_len:
+                    chunk = self.sock.recv(payload_len - len(payload))
+                    if not chunk:
+                        break
+                    payload += chunk
+
+                if opcode == 0x01:  # Text frame
+                    try:
+                        text = payload.decode("utf-8", errors="ignore")
+                        messages.append(json.loads(text))
+                    except Exception:
+                        pass
+                elif opcode == 0x08:  # Close frame
+                    self.connected = False
+                    break
+        except (socket.timeout, BlockingIOError):
+            pass
+        except Exception:
+            pass
+        return messages
+
+    def close(self):
+        self.connected = False
+        self.authenticated = False
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            self.sock = None
+
+
+class CockpitClient:
+    """
+    HTTP client for Cockpit Server state, arming, autonomy, encoders, and IMU endpoints.
+    """
+    def __init__(self, host: str = "127.0.0.1", port: int = 3000, token: Optional[str] = None):
+        self.base_url = f"http://{host}:{port}"
+        self.token = token or get_default_operator_token()
+
+    def _request(self, endpoint: str, method: str = "GET", data: Optional[Dict[str, Any]] = None, timeout: float = 2.0) -> Dict[str, Any]:
+        url = f"{self.base_url}{endpoint}"
+        headers = {
+            "User-Agent": "RoverTestFramework/1.0",
+            "x-rover-operator-token": self.token
+        }
+        payload = None
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+            payload = json.dumps(data).encode("utf-8")
+
+        req = urllib.request.Request(url, data=payload, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8")
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as e:
+            try:
+                err_body = json.loads(e.read().decode("utf-8"))
+                return {"ok": False, "http_status": e.code, "error": err_body.get("error", str(e)), "response": err_body}
+            except Exception:
+                return {"ok": False, "http_status": e.code, "error": str(e)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def get_status(self) -> Dict[str, Any]:
+        return self._request("/api/status")
+
+    def get_autonomy_status(self) -> Dict[str, Any]:
+        return self._request("/api/autonomy/status")
+
+    def enable_autonomy(self) -> Dict[str, Any]:
+        return self._request("/api/autonomy/enable", method="POST", data={})
+
+    def disable_autonomy(self) -> Dict[str, Any]:
+        return self._request("/api/autonomy/disable", method="POST", data={})
+
+    def arm_drive(self) -> Dict[str, Any]:
+        return self._request("/api/drive/arm", method="POST", data={})
+
+    def disarm_drive(self) -> Dict[str, Any]:
+        return self._request("/api/drive/disarm", method="POST", data={})
+
+    def set_command_source(self, source: str = "NONE") -> Dict[str, Any]:
+        return self._request("/api/command-source", method="POST", data={"source": source})
+
+    def get_encoders(self) -> Dict[str, Any]:
+        return self._request("/api/encoders")
+
+    def get_imu(self) -> Dict[str, Any]:
+        return self._request("/api/imu")
+
+    def get_pid_telemetry(self) -> Dict[str, Any]:
+        return self._request("/api/pid-telemetry")
+
+
+def perform_zero_handshake(
+    cockpit: CockpitClient,
+    ws: Optional[NativeWSClient],
+    max_duration_sec: float = 4.0
+) -> bool:
+    """
+    Executes the three-consecutive-zero autonomy handshake:
+    1. POST /api/autonomy/enable -> transitions to WAITING_FOR_ZERO.
+    2. Streams zero velocity commands until zeroHandshakeCount >= 3 and state == READY_DISARMED.
+    3. POST /api/drive/arm -> transitions to READY_ARMED.
+    """
+    enable_res = cockpit.enable_autonomy()
+    if not enable_res.get("ok", False):
+        raise HandshakeException(f"Failed to enable autonomy: {enable_res.get('error')}")
+
+    t0 = time.time()
+    handshake_success = False
+
+    while time.time() - t0 < max_duration_sec:
+        # Send zero command
+        if ws and ws.connected:
+            ws.send_drive(0.0, 0.0)
+
+        # Check status
+        auto_stat = cockpit.get_autonomy_status()
+        state = auto_stat.get("state")
+        z_count = auto_stat.get("zeroHandshakeCount", 0)
+
+        if state == "READY_DISARMED" or z_count >= 3:
+            handshake_success = True
+            break
+        elif state == "READY_ARMED" or state == "ACTIVE":
+            handshake_success = True
+            break
+
+        time.sleep(0.05)
+
+    if not handshake_success:
+        raise HandshakeException(f"Zero handshake failed to complete within {max_duration_sec}s")
+
+    # Arm drivetrain
+    arm_res = cockpit.arm_drive()
+    if not arm_res.get("ok", False):
+        raise HandshakeException(f"Failed to arm drivetrain after zero handshake: {arm_res.get('error')}")
+
+    # Confirm armed status
+    for _ in range(10):
+        stat = cockpit.get_status()
+        if stat.get("armed") is True:
+            return True
+        time.sleep(0.05)
+
+    # Secondary check on autonomy state
+    auto_stat_post = cockpit.get_autonomy_status()
+    if auto_stat_post.get("state") in ("READY_ARMED", "ACTIVE"):
+        return True
+
+    return False
+
+
+def disarm_and_stop(
+    cockpit: Optional[CockpitClient] = None,
+    ws: Optional[NativeWSClient] = None
+):
+    """
+    Universal guaranteed zero/disarm cleanup invariant.
+    Must be called on completion, timeouts, watchdog aborts, and in exception finally blocks.
+    """
+    if ws and ws.connected:
+        try:
+            ws.send_drive(0.0, 0.0)
+        except Exception:
+            pass
+
+    if cockpit:
+        try:
+            cockpit.disarm_drive()
+        except Exception:
+            pass
+        try:
+            cockpit.disable_autonomy()
+        except Exception:
+            pass
+        try:
+            cockpit.set_command_source("NONE")
+        except Exception:
+            pass

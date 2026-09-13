@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Rover One Reusable Physical Test Framework CLI Wrapper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH}"
+python3 -m tools.rover_tests.cli "$@"
