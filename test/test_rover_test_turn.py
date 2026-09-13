@@ -246,8 +246,52 @@ class TestThreeConsecutiveZeroHandshake(unittest.TestCase):
         # Stuck in WAITING_FOR_ZERO with count 0
         mock_cockpit.get_autonomy_status.return_value = {"state": "WAITING_FOR_ZERO", "zeroHandshakeCount": 0}
 
-        with self.assertRaises(HandshakeException):
+        with self.assertRaises(HandshakeException) as ctx:
             perform_zero_handshake(mock_cockpit, mock_ws, max_duration_sec=0.1)
+        self.assertEqual(ctx.exception.stage, "WAITING_FOR_ZERO")
+        self.assertEqual(ctx.exception.state, "WAITING_FOR_ZERO")
+        self.assertEqual(ctx.exception.zero_count, 0)
+
+    def test_handshake_failure_before_enable(self):
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+        mock_cockpit.enable_autonomy.return_value = {"ok": False, "error": "Cannot enable autonomy while rover is armed"}
+        mock_cockpit.get_autonomy_status.return_value = {"state": "DISABLED", "zeroHandshakeCount": 0, "cmdSource": "NONE"}
+
+        with self.assertRaises(HandshakeException) as ctx:
+            perform_zero_handshake(mock_cockpit, mock_ws, max_duration_sec=0.5)
+        self.assertEqual(ctx.exception.stage, "ENABLE_AUTONOMY")
+        self.assertIn("Cannot enable autonomy", str(ctx.exception))
+
+    def test_handshake_failure_during_arming(self):
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+        mock_ws.connected = True
+        mock_cockpit.enable_autonomy.return_value = {"ok": True}
+        mock_cockpit.get_autonomy_status.return_value = {"state": "READY_DISARMED", "zeroHandshakeCount": 3}
+        mock_cockpit.arm_drive.return_value = {"ok": False, "error": "Hardware interlock tripped"}
+
+        with self.assertRaises(HandshakeException) as ctx:
+            perform_zero_handshake(mock_cockpit, mock_ws, max_duration_sec=0.5)
+        self.assertEqual(ctx.exception.stage, "ARM_DRIVE")
+        self.assertIn("Hardware interlock tripped", str(ctx.exception))
+
+    def test_handshake_exception_diagnostic_fields(self):
+        exc = HandshakeException(
+            message="Test handshake fault",
+            stage="WAITING_FOR_ZERO",
+            state="WAITING_FOR_ZERO",
+            zero_count=1,
+            cmd_source="NONE",
+            last_rejection_reason="Rate limit",
+            underlying_error="Connection refused"
+        )
+        details = exc.get_details()
+        self.assertEqual(details["stage"], "WAITING_FOR_ZERO")
+        self.assertEqual(details["state"], "WAITING_FOR_ZERO")
+        self.assertEqual(details["zero_count"], 1)
+        self.assertEqual(details["last_rejection_reason"], "Rate limit")
+        self.assertEqual(details["underlying_error"], "Connection refused")
 
 
 class TestAngularApproachDeceleration(unittest.TestCase):
@@ -295,13 +339,18 @@ class TestGuaranteedZeroDisarmCleanup(unittest.TestCase):
         mock_cockpit = MagicMock(spec=CockpitClient)
         mock_ws = MagicMock(spec=NativeWSClient)
         mock_ws.connected = True
+        mock_cockpit.get_status.return_value = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
 
-        disarm_and_stop(mock_cockpit, mock_ws)
+        final_st = disarm_and_stop(mock_cockpit, mock_ws)
 
         mock_ws.send_drive.assert_called_with(0.0, 0.0)
+        mock_cockpit.send_cmd_vel.assert_called_with(0.0, 0.0)
         mock_cockpit.disarm_drive.assert_called_once()
         mock_cockpit.disable_autonomy.assert_called_once()
         mock_cockpit.set_command_source.assert_called_with("NONE")
+        self.assertEqual(final_st["armed"], False)
+        self.assertEqual(final_st["autonomyState"], "DISABLED")
+        self.assertEqual(final_st["cmdSource"], "NONE")
 
     def test_runner_operator_denial_leaves_disarmed(self):
         params = TurnParameters(degrees=180.0, direction="cw", trials=1, dry_run=False, inter_trial_approval=True)
@@ -323,6 +372,94 @@ class TestGuaranteedZeroDisarmCleanup(unittest.TestCase):
 
         # Verify disarmed invariant called
         mock_cockpit.disarm_drive.assert_called()
+
+    def test_regression_runner_catches_handshake_exception_without_name_error(self):
+        """
+        Regression test for: [EXECUTION ERROR] Unexpected fault: name 'HandshakeException' is not defined.
+        Simulates live physical trial encountering HandshakeException and confirms runner handles it cleanly.
+        """
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1, dry_run=False, inter_trial_approval=False)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+        mock_ws.connected = True
+        mock_ws.authenticate.return_value = True
+        mock_cockpit.token = "test-operator-token"
+
+        # Mock healthy sensors
+        mock_cockpit.get_imu.return_value = {
+            "ok": True,
+            "rotVecValid": True,
+            "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "orientation": {"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+            "gyro": {"z": 0.001}
+        }
+        mock_cockpit.get_encoders.return_value = {"encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        mock_cockpit.get_status.return_value = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+
+        # Mock perform_zero_handshake raising HandshakeException with full diagnostic metadata
+        with patch("tools.rover_tests.runner.perform_zero_handshake") as mock_handshake:
+            mock_handshake.side_effect = HandshakeException(
+                "Zero handshake failed to complete within 4.0s",
+                stage="WAITING_FOR_ZERO",
+                state="WAITING_FOR_ZERO",
+                zero_count=0,
+                cmd_source="NONE",
+                underlying_error="Connection refused"
+            )
+
+            # execute_single_trial must NOT raise NameError!
+            trial = runner.execute_single_trial(1)
+
+            self.assertEqual(trial.status, "ABORTED")
+            self.assertIn("HandshakeException", trial.abort_reason)
+            self.assertIn("Stage: WAITING_FOR_ZERO", trial.abort_reason)
+            self.assertIn("ZeroCount: 0", trial.abort_reason)
+            # Confirm cleanup was invoked
+            mock_cockpit.disarm_drive.assert_called()
+            mock_cockpit.disable_autonomy.assert_called()
+
+    def test_guaranteed_cleanup_across_all_failure_stages(self):
+        """
+        Confirms guaranteed cleanup executes after failures occurring:
+        - before autonomy enable (sensor failure)
+        - during WAITING_FOR_ZERO
+        - before arming
+        - after arming
+        """
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1, dry_run=False, inter_trial_approval=False)
+
+        # Case 1: Failure before autonomy enable (bad IMU)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+        mock_ws.connected = True
+        mock_cockpit.get_imu.return_value = {"ok": False}
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        trial1 = runner.execute_single_trial(1)
+        self.assertEqual(trial1.status, "ABORTED")
+        mock_cockpit.disarm_drive.assert_called()
+
+        # Case 2: Failure during WAITING_FOR_ZERO
+        mock_cockpit.reset_mock()
+        mock_cockpit.get_imu.return_value = {
+            "ok": True, "rotVecValid": True, "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "orientation": {"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0}, "gyro": {"z": 0.0}
+        }
+        mock_cockpit.get_encoders.return_value = {"encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        with patch("tools.rover_tests.runner.perform_zero_handshake") as mock_handshake:
+            mock_handshake.side_effect = HandshakeException("Timeout in zero handshake", stage="WAITING_FOR_ZERO")
+            trial2 = runner.execute_single_trial(1)
+            self.assertEqual(trial2.status, "ABORTED")
+            mock_cockpit.disarm_drive.assert_called()
+
+        # Case 3: Failure during arming
+        mock_cockpit.reset_mock()
+        with patch("tools.rover_tests.runner.perform_zero_handshake") as mock_handshake:
+            mock_handshake.side_effect = HandshakeException("Arm failed", stage="ARM_DRIVE")
+            trial3 = runner.execute_single_trial(1)
+            self.assertEqual(trial3.status, "ABORTED")
+            mock_cockpit.disarm_drive.assert_called()
 
 
 class TestInterTrialApprovalAndEstimateCollection(unittest.TestCase):

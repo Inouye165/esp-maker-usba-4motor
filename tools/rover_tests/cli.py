@@ -6,13 +6,22 @@ Usage:
     python -m tools.rover_tests.cli turn --degrees 90 --direction ccw --dry-run
 """
 
+import os
 import sys
 import argparse
+import traceback
 from typing import List, Optional
 
 from .turn import TurnParameters, TurnConfigurationException
 from .runner import PhysicalTestRunner
-from .transport import TransportException
+from .transport import TransportException, HandshakeException
+
+
+def get_default_host() -> str:
+    # If running directly on the rover Pi, default to 127.0.0.1
+    if os.path.exists("/dev/rover-esp32") or os.path.exists("/home/ron/yahboom-encoder"):
+        return "127.0.0.1"
+    return "10.0.0.246"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     turn_parser.add_argument("--inter-trial-approval", action="store_true", help="Prompt operator for approval before every trial and ask for Ron's physical angle estimate after settling")
     turn_parser.add_argument("--dry-run", action="store_true", help="Simulate execution without sending motor power or arming (safe stationary verification)")
     turn_parser.add_argument("--report-directory", type=str, default="reports", help="Directory where JSON and Markdown test reports are saved (default: reports)")
-    turn_parser.add_argument("--host", type=str, default="10.0.0.246", help="Rover Raspberry Pi 5 IP or hostname (default: 10.0.0.246)")
+    turn_parser.add_argument("--host", type=str, default=get_default_host(), help="Rover Raspberry Pi 5 IP or hostname (default: auto-detected)")
     turn_parser.add_argument("--port", type=int, default=3000, help="Cockpit server port (default: 3000)")
 
     return parser
@@ -75,13 +84,21 @@ def main(argv: Optional[List[str]] = None) -> int:
                 return 1
             return 0
         except TransportException as e:
-            print(f"[TRANSPORT ERROR] {e}", file=sys.stderr)
+            tb_str = traceback.format_exc()
+            print(f"\n[TRANSPORT ERROR] [{type(e).__name__}] {e}", file=sys.stderr)
+            print("Traceback:", file=sys.stderr)
+            for line in tb_str.strip().splitlines():
+                print(f"  {line}", file=sys.stderr)
             return 3
         except KeyboardInterrupt:
             print("\n[INTERRUPTED] Operation interrupted by operator. Drivetrain disarmed.", file=sys.stderr)
             return 130
         except Exception as e:
-            print(f"[EXECUTION ERROR] Unexpected fault: {e}", file=sys.stderr)
+            tb_str = traceback.format_exc()
+            print(f"\n[EXECUTION ERROR] Unexpected fault: [{type(e).__name__}] {e}", file=sys.stderr)
+            print("Traceback:", file=sys.stderr)
+            for line in tb_str.strip().splitlines():
+                print(f"  {line}", file=sys.stderr)
             return 4
 
     return 0

@@ -15,6 +15,7 @@ import sys
 import time
 import math
 import statistics
+import traceback
 from typing import Optional, Dict, Any, List, Callable
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -24,7 +25,14 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 
 from .turn import TurnParameters, compute_wheel_speed_targets, verify_wheel_command_symmetry
-from .transport import NativeWSClient, CockpitClient, perform_zero_handshake, disarm_and_stop, TransportException
+from .transport import (
+    NativeWSClient,
+    CockpitClient,
+    perform_zero_handshake,
+    disarm_and_stop,
+    TransportException,
+    HandshakeException
+)
 from .sensors import (
     quat_to_yaw,
     YawUnwrapper,
@@ -174,6 +182,7 @@ class PhysicalTestRunner:
                 trial_report.status = "ABORTED"
                 trial_report.abort_reason = f"IMU Non-Magnetic Check FAILED: {reason}"
                 print(f"[FAIL-CLOSED ERROR] {trial_report.abort_reason}")
+                disarm_and_stop(self.cockpit, self.ws)
                 return trial_report
             print(f"[OK] BNO08x Orientation Verified: {reason}")
         else:
@@ -207,6 +216,7 @@ class PhysicalTestRunner:
                 trial_report.status = "ABORTED"
                 trial_report.abort_reason = f"Stationary gyro bias calibration failed: {e}"
                 print(f"[SENSOR ABORT] {trial_report.abort_reason}")
+                disarm_and_stop(self.cockpit, self.ws)
                 return trial_report
 
         # 5. Three-Consecutive-Zero Autonomy Handshake
@@ -216,9 +226,36 @@ class PhysicalTestRunner:
                 perform_zero_handshake(self.cockpit, self.ws)
                 print("[OK] Autonomy Handshake complete: Drivetrain READY_ARMED.")
             except HandshakeException as e:
+                tb_str = traceback.format_exc()
                 trial_report.status = "ABORTED"
-                trial_report.abort_reason = f"Autonomy zero handshake failed: {e}"
-                print(f"[HANDSHAKE ABORT] {trial_report.abort_reason}")
+                trial_report.abort_reason = (
+                    f"[{type(e).__name__}] {e} | Stage: {e.stage} | State: {e.state} "
+                    f"| ZeroCount: {e.zero_count} | CmdSource: {e.cmd_source}"
+                )
+                print("\n[HANDSHAKE ABORT]")
+                print(f"  • Exception Type:    {type(e).__name__}")
+                print(f"  • Exception Message: {e}")
+                print(f"  • Handshake Stage:   {e.stage}")
+                print(f"  • Handshake State:   state={e.state}, zeroCount={e.zero_count}, cmdSource={e.cmd_source}")
+                if e.last_rejection_reason:
+                    print(f"  • Last Rejection:    {e.last_rejection_reason}")
+                if e.underlying_error:
+                    print(f"  • Underlying Error:  {e.underlying_error}")
+                print("  • Traceback:")
+                for line in tb_str.strip().splitlines():
+                    print(f"      {line}")
+                disarm_and_stop(self.cockpit, self.ws)
+                return trial_report
+            except Exception as e:
+                tb_str = traceback.format_exc()
+                trial_report.status = "ABORTED"
+                trial_report.abort_reason = f"[{type(e).__name__}] Unexpected fault in handshake: {e}"
+                print(f"\n[HANDSHAKE UNEXPECTED FAULT]")
+                print(f"  • Exception Type:    {type(e).__name__}")
+                print(f"  • Exception Message: {e}")
+                print("  • Traceback:")
+                for line in tb_str.strip().splitlines():
+                    print(f"      {line}")
                 disarm_and_stop(self.cockpit, self.ws)
                 return trial_report
         else:

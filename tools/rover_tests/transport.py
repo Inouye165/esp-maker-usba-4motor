@@ -78,7 +78,33 @@ class TransportException(Exception):
 
 class HandshakeException(TransportException):
     """Raised when the 3-consecutive-zero autonomy handshake fails."""
-    pass
+    def __init__(
+        self,
+        message: str,
+        stage: str = "UNKNOWN",
+        state: Optional[str] = None,
+        zero_count: int = 0,
+        cmd_source: Optional[str] = None,
+        last_rejection_reason: Optional[str] = None,
+        underlying_error: Optional[str] = None
+    ):
+        super().__init__(message)
+        self.stage = stage
+        self.state = state
+        self.zero_count = zero_count
+        self.cmd_source = cmd_source
+        self.last_rejection_reason = last_rejection_reason
+        self.underlying_error = underlying_error
+
+    def get_details(self) -> Dict[str, Any]:
+        return {
+            "stage": self.stage,
+            "state": self.state,
+            "zero_count": self.zero_count,
+            "cmd_source": self.cmd_source,
+            "last_rejection_reason": self.last_rejection_reason,
+            "underlying_error": self.underlying_error
+        }
 
 
 class NativeWSClient:
@@ -298,7 +324,12 @@ class CockpitClient:
     def send_cmd_vel(self, vx: float = 0.0, wz: float = 0.0, bridge_port: int = 3010) -> Dict[str, Any]:
         """Send velocity command to internal ROS2 command bridge listener (port 3010)."""
         host = self.base_url.split("://", 1)[1].split(":", 1)[0]
-        url = f"http://{host}:{bridge_port}/api/cmd_vel"
+        # Port 3010 is bound strictly to 127.0.0.1 on the Pi.
+        # If connecting to the rover (by IP, hostname, or localhost), check 127.0.0.1 as well.
+        candidate_hosts = [host]
+        if host != "127.0.0.1":
+            candidate_hosts.append("127.0.0.1")
+
         headers = {
             "Content-Type": "application/json",
             "x-rover-bridge-token": get_default_bridge_token()
@@ -307,13 +338,25 @@ class CockpitClient:
             "linear": {"x": float(vx)},
             "angular": {"z": float(wz)}
         }).encode("utf-8")
-        req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=1.0) as resp:
-                raw = resp.read().decode("utf-8")
-                return json.loads(raw) if raw else {}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+
+        last_error = "Unknown connection failure"
+        for target_host in candidate_hosts:
+            url = f"http://{target_host}:{bridge_port}/api/cmd_vel"
+            req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=1.0) as resp:
+                    raw = resp.read().decode("utf-8")
+                    return json.loads(raw) if raw else {}
+            except urllib.error.HTTPError as e:
+                try:
+                    err_body = json.loads(e.read().decode("utf-8"))
+                    return {"ok": False, "http_status": e.code, "error": err_body.get("error", str(e)), "response": err_body}
+                except Exception:
+                    return {"ok": False, "http_status": e.code, "error": str(e)}
+            except Exception as e:
+                last_error = str(e)
+
+        return {"ok": False, "error": last_error}
 
 
 def perform_zero_handshake(
@@ -329,10 +372,21 @@ def perform_zero_handshake(
     """
     enable_res = cockpit.enable_autonomy()
     if not enable_res.get("ok", False):
-        raise HandshakeException(f"Failed to enable autonomy: {enable_res.get('error')}")
+        err_msg = enable_res.get("error", "Unknown error")
+        stat = cockpit.get_autonomy_status() if hasattr(cockpit, "get_autonomy_status") else {}
+        raise HandshakeException(
+            f"Failed to enable autonomy: {err_msg}",
+            stage="ENABLE_AUTONOMY",
+            state=stat.get("state"),
+            zero_count=stat.get("zeroHandshakeCount", 0),
+            cmd_source=stat.get("cmdSource"),
+            last_rejection_reason=stat.get("lastRejectionReason"),
+            underlying_error=err_msg
+        )
 
     t0 = time.time()
     handshake_success = False
+    last_bridge_error: Optional[str] = None
 
     while time.time() - t0 < max_duration_sec:
         # Send zero command via WebSocket
@@ -341,9 +395,11 @@ def perform_zero_handshake(
 
         # Also send zero command via internal ROS2 command bridge
         try:
-            cockpit.send_cmd_vel(0.0, 0.0)
-        except Exception:
-            pass
+            cmd_res = cockpit.send_cmd_vel(0.0, 0.0)
+            if not cmd_res.get("ok", False):
+                last_bridge_error = cmd_res.get("error")
+        except Exception as e:
+            last_bridge_error = str(e)
 
         # Check status
         auto_stat = cockpit.get_autonomy_status()
@@ -360,52 +416,125 @@ def perform_zero_handshake(
         time.sleep(0.05)
 
     if not handshake_success:
-        raise HandshakeException(f"Zero handshake failed to complete within {max_duration_sec}s")
+        auto_stat = cockpit.get_autonomy_status()
+        state = auto_stat.get("state")
+        z_count = auto_stat.get("zeroHandshakeCount", 0)
+        rejection = auto_stat.get("lastRejectionReason", "")
+        err_details = f"state={state}, zeroCount={z_count}"
+        if rejection:
+            err_details += f", lastRejectionReason='{rejection}'"
+        if last_bridge_error:
+            err_details += f", lastBridgeError='{last_bridge_error}'"
+        raise HandshakeException(
+            f"Zero handshake failed to complete within {max_duration_sec}s ({err_details})",
+            stage="WAITING_FOR_ZERO",
+            state=state,
+            zero_count=z_count,
+            cmd_source=auto_stat.get("cmdSource"),
+            last_rejection_reason=rejection,
+            underlying_error=last_bridge_error
+        )
 
     # Arm drivetrain
     arm_res = cockpit.arm_drive()
     if not arm_res.get("ok", False):
-        raise HandshakeException(f"Failed to arm drivetrain after zero handshake: {arm_res.get('error')}")
+        arm_err = arm_res.get("error", "Unknown arm error")
+        auto_stat = cockpit.get_autonomy_status()
+        raise HandshakeException(
+            f"Failed to arm drivetrain after zero handshake: {arm_err}",
+            stage="ARM_DRIVE",
+            state=auto_stat.get("state"),
+            zero_count=auto_stat.get("zeroHandshakeCount", 0),
+            cmd_source=auto_stat.get("cmdSource"),
+            last_rejection_reason=auto_stat.get("lastRejectionReason"),
+            underlying_error=arm_err
+        )
 
     # Confirm armed status
+    armed_confirmed = False
     for _ in range(10):
         stat = cockpit.get_status()
         if stat.get("armed") is True:
-            return True
+            armed_confirmed = True
+            break
         time.sleep(0.05)
 
-    # Secondary check on autonomy state
-    auto_stat_post = cockpit.get_autonomy_status()
-    if auto_stat_post.get("state") in ("READY_ARMED", "ACTIVE"):
-        return True
+    if not armed_confirmed:
+        # Secondary check on autonomy state
+        auto_stat_post = cockpit.get_autonomy_status()
+        if auto_stat_post.get("state") in ("READY_ARMED", "ACTIVE"):
+            armed_confirmed = True
 
-    return False
+    if not armed_confirmed:
+        stat = cockpit.get_status()
+        auto_stat = cockpit.get_autonomy_status()
+        raise HandshakeException(
+            f"Drivetrain did not report armed within confirmation window (armed={stat.get('armed')}, state={auto_stat.get('state')})",
+            stage="ARM_CONFIRMATION",
+            state=auto_stat.get("state"),
+            zero_count=auto_stat.get("zeroHandshakeCount", 0),
+            cmd_source=stat.get("cmdSource")
+        )
+
+    return True
 
 
 def disarm_and_stop(
     cockpit: Optional[CockpitClient] = None,
-    ws: Optional[NativeWSClient] = None
-):
+    ws: Optional[NativeWSClient] = None,
+    verbose: bool = True
+) -> Dict[str, Any]:
     """
     Universal guaranteed zero/disarm cleanup invariant.
     Must be called on completion, timeouts, watchdog aborts, and in exception finally blocks.
+    Streams zero, disarms drive, disables autonomy, clears command source ownership,
+    and returns & prints the verified final safety state.
     """
+    # 1. Stream zero command via WebSocket
     if ws and ws.connected:
         try:
             ws.send_drive(0.0, 0.0)
         except Exception:
             pass
 
+    # 2. Stream zero command via ROS2 command bridge
     if cockpit:
+        try:
+            cockpit.send_cmd_vel(0.0, 0.0)
+        except Exception:
+            pass
+
+        # 3. Disarm drive
         try:
             cockpit.disarm_drive()
         except Exception:
             pass
+
+        # 4. Disable autonomy
         try:
             cockpit.disable_autonomy()
         except Exception:
             pass
+
+        # 5. Clear command source ownership
         try:
             cockpit.set_command_source("NONE")
         except Exception:
             pass
+
+        # 6. Verify and confirm final safety state
+        final_state = {"armed": None, "autonomyState": None, "cmdSource": None}
+        try:
+            st = cockpit.get_status()
+            final_state["armed"] = st.get("armed")
+            final_state["autonomyState"] = st.get("autonomyState")
+            final_state["cmdSource"] = st.get("cmdSource")
+        except Exception:
+            pass
+
+        if verbose:
+            print(f"[CLEANUP VERIFIED] Final safety state: armed={final_state['armed']} autonomyState={final_state['autonomyState']} cmdSource={final_state['cmdSource']}")
+
+        return final_state
+
+    return {"armed": None, "autonomyState": None, "cmdSource": None}
