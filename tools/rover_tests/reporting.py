@@ -68,6 +68,8 @@ class TrialReport:
     confirmed_final_zero_command: bool = True
     confirmed_final_disarmed_state: bool = True
     telemetry_samples_count: int = 0
+    autonomy_state_transitions: List[Dict[str, Any]] = field(default_factory=list)
+    first_command_response: Dict[str, Any] = field(default_factory=dict)
 
     # Raw telemetry frames (optional / truncated in summary)
     approach_milestones: Dict[str, Any] = field(default_factory=dict)

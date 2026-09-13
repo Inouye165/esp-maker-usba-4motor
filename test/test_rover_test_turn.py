@@ -487,9 +487,17 @@ class TestInterTrialApprovalAndEstimateCollection(unittest.TestCase):
         mock_cockpit.get_imu.side_effect = [imu_0] * 8 + [imu_90] * 20
         mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 100, "m2": 100, "m3": 100, "m4": 100}}
         mock_cockpit.enable_autonomy.return_value = {"ok": True}
-        mock_cockpit.get_autonomy_status.return_value = {"state": "READY_DISARMED", "zeroHandshakeCount": 3}
+        # Transition from READY_DISARMED to READY_ARMED then ACTIVE
+        auto_states = [
+            {"state": "READY_DISARMED", "zeroHandshakeCount": 3},
+            {"state": "READY_ARMED", "zeroHandshakeCount": 3, "cmdSource": "ROS_AUTONOMY"},
+            {"state": "READY_ARMED", "zeroHandshakeCount": 3, "cmdSource": "ROS_AUTONOMY"},
+            {"state": "ACTIVE", "clampedAngular": 0.8, "cmdSource": "ROS_AUTONOMY"}
+        ] + [{"state": "ACTIVE", "clampedAngular": 0.8, "cmdSource": "ROS_AUTONOMY"}] * 30
+        mock_cockpit.get_autonomy_status.side_effect = auto_states
         mock_cockpit.arm_drive.return_value = {"ok": True}
-        mock_cockpit.get_status.return_value = {"armed": True}
+        mock_cockpit.get_status.return_value = {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
         mock_ws.recv_frames.return_value = []
         mock_ws.send_drive.return_value = True
 
@@ -502,6 +510,266 @@ class TestInterTrialApprovalAndEstimateCollection(unittest.TestCase):
             self.assertEqual(trial_report.rons_physical_angle_estimate_deg, 89.5)
             self.assertIsNotNone(trial_report.estimate_vs_gyro_delta_deg)
             self.assertEqual(trial_report.status, "SUCCESS")
+
+
+class TestLifecycleAndCleanupTiming(unittest.TestCase):
+    """
+    Verifies the complete 19-step lifecycle invariants:
+    - Ordered lifecycle: READY_DISARMED -> READY_ARMED -> nonzero command accepted -> motion loop -> zero -> cleanup
+    - Fails if cleanup occurs between READY_ARMED and first nonzero command
+    - Aborts immediately within 500ms if first command rejected or wheel targets remain zero
+    - Confirms transitions and command-response are captured in TrialReport
+    """
+
+    def _create_mock_clients(self, target_deg=90.0):
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+        mock_ws.connected = True
+        mock_ws.authenticate.return_value = True
+        mock_cockpit.token = "test-operator-token"
+
+        base_imu = {
+            "ok": True,
+            "rotVecValid": True,
+            "inResetRecovery": False,
+            "dataAgeMs": 15,
+            "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "gyro": {"z": 0.001}
+        }
+        # Start at 0 deg, then progress to target_deg
+        imu_0 = dict(base_imu, orientation={"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0})
+        rad = math.radians(target_deg)
+        w = math.cos(rad / 2.0)
+        z = math.sin(rad / 2.0)
+        imu_target = dict(base_imu, orientation={"w": w, "x": 0.0, "y": 0.0, "z": z})
+
+        current_status = {
+            "armed": False,
+            "autonomyState": "DISABLED",
+            "cmdSource": "NONE"
+        }
+
+        def mock_arm():
+            current_status["armed"] = True
+            current_status["autonomyState"] = "READY_ARMED"
+            return {"ok": True}
+
+        def mock_disarm():
+            current_status["armed"] = False
+            return {"ok": True}
+
+        def mock_enable_auto():
+            current_status["autonomyState"] = "WAITING_FOR_ZERO"
+            return {"ok": True}
+
+        def mock_disable_auto():
+            current_status["autonomyState"] = "DISABLED"
+            return {"ok": True}
+
+        def mock_set_source(source="NONE"):
+            current_status["cmdSource"] = source
+            return {"ok": True}
+
+        mock_cockpit.get_imu.side_effect = [imu_0] * 8 + [imu_target] * 30
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        mock_cockpit.get_status.side_effect = lambda: dict(current_status)
+        mock_cockpit.enable_autonomy.side_effect = mock_enable_auto
+        mock_cockpit.arm_drive.side_effect = mock_arm
+        mock_cockpit.disarm_drive.side_effect = mock_disarm
+        mock_cockpit.disable_autonomy.side_effect = mock_disable_auto
+        mock_cockpit.set_command_source.side_effect = mock_set_source
+        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
+        mock_ws.recv_frames.return_value = []
+        mock_cockpit._state = current_status
+
+        return mock_cockpit, mock_ws
+
+    def test_ordered_lifecycle_full_sequence(self):
+        """
+        Requirement 14 & 17:
+        Proves: READY_DISARMED -> READY_ARMED -> nonzero command accepted -> motion loop -> zero -> cleanup
+        Verifies autonomy-state transitions and first_command_response in TrialReport.
+        """
+        params = TurnParameters(degrees=90.0, direction="cw", trials=1, dry_run=False, inter_trial_approval=False, settle_seconds=0.5)
+        mock_cockpit, mock_ws = self._create_mock_clients(target_deg=90.0)
+
+        call_sequence = []
+        def do_arm():
+            call_sequence.append("arm_drive")
+            mock_cockpit._state["armed"] = True
+            mock_cockpit._state["autonomyState"] = "READY_ARMED"
+            return {"ok": True}
+
+        def do_disarm():
+            call_sequence.append("disarm_drive")
+            mock_cockpit._state["armed"] = False
+            return {"ok": True}
+
+        def do_disable():
+            mock_cockpit._state["autonomyState"] = "DISABLED"
+            return {"ok": True}
+
+        def do_set_source(source="NONE"):
+            mock_cockpit._state["cmdSource"] = source
+            return {"ok": True}
+
+        mock_cockpit.arm_drive.side_effect = do_arm
+        mock_cockpit.disarm_drive.side_effect = do_disarm
+        mock_cockpit.disable_autonomy.side_effect = do_disable
+        mock_cockpit.set_command_source.side_effect = do_set_source
+        mock_cockpit.send_cmd_vel.side_effect = lambda vx, wz, **kw: (call_sequence.append(f"cmd_vel({vx:.2f},{wz:.2f})"), {"ok": True})[1]
+
+        # Autonomy state transitions
+        auto_states = [
+            {"state": "WAITING_FOR_ZERO", "zeroHandshakeCount": 1},
+            {"state": "READY_DISARMED", "zeroHandshakeCount": 3},
+            {"state": "READY_ARMED", "zeroHandshakeCount": 3, "cmdSource": "ROS_AUTONOMY"},
+            {"state": "READY_ARMED", "zeroHandshakeCount": 3, "cmdSource": "ROS_AUTONOMY"},
+            {"state": "ACTIVE", "clampedAngular": 0.8, "cmdSource": "ROS_AUTONOMY"},
+        ] + [{"state": "ACTIVE", "clampedAngular": 0.8, "cmdSource": "ROS_AUTONOMY"}] * 30
+        mock_cockpit.get_autonomy_status.side_effect = auto_states
+
+        with patch("time.sleep", return_value=None):
+            runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+            trial = runner.execute_single_trial(1)
+
+        self.assertEqual(trial.status, "SUCCESS")
+        self.assertTrue(trial.first_command_response.get("ok"))
+
+        # Verify recorded state transitions in JSON report
+        states_recorded = [t["state"] for t in trial.autonomy_state_transitions]
+        self.assertIn("READY_DISARMED", states_recorded)
+        self.assertIn("READY_ARMED", states_recorded)
+        self.assertIn("ACTIVE", states_recorded)
+        self.assertIn("DISABLED", states_recorded)
+
+        # Verify ordering: READY_DISARMED before READY_ARMED before ACTIVE before DISABLED
+        idx_rd = states_recorded.index("READY_DISARMED")
+        idx_ra = states_recorded.index("READY_ARMED")
+        idx_ac = states_recorded.index("ACTIVE")
+        idx_dis = states_recorded.index("DISABLED")
+        self.assertLess(idx_rd, idx_ra)
+        self.assertLess(idx_ra, idx_ac)
+        self.assertLess(idx_ac, idx_dis)
+
+        # Verify call order: arm_drive occurs before first nonzero cmd_vel,
+        # and disarm_drive only occurs AFTER zero command and settle
+        arm_idx = call_sequence.index("arm_drive")
+        first_nonzero_cmd = [i for i, c in enumerate(call_sequence) if c.startswith("cmd_vel") and not c == "cmd_vel(0.00,0.00)"][0]
+        self.assertLess(arm_idx, first_nonzero_cmd, "arm_drive must precede first nonzero command")
+
+        # disarm_drive must NOT appear between arm_idx and first_nonzero_cmd!
+        disarms_between = [i for i, c in enumerate(call_sequence) if c == "disarm_drive" and arm_idx < i < first_nonzero_cmd]
+        self.assertEqual(len(disarms_between), 0, "Cleanup must not execute between arm_drive and motion!")
+
+        # Last disarm must be after zero command
+        last_disarm = max(i for i, c in enumerate(call_sequence) if c == "disarm_drive")
+        zero_cmds = [i for i, c in enumerate(call_sequence) if c == "cmd_vel(0.00,0.00)"]
+        self.assertGreater(len(zero_cmds), 0)
+        self.assertGreater(last_disarm, zero_cmds[-1], "Final disarm must execute after zero command")
+
+    def test_cleanup_between_ready_armed_and_first_command_fails(self):
+        """
+        Requirement 15:
+        Fails if cleanup occurs between READY_ARMED and the first nonzero command.
+        Simulates unexpected disarm or transition to DISABLED right after handshake.
+        Pre-motion assertion must trip, abort immediately, and prevent any motion.
+        """
+        params = TurnParameters(degrees=90.0, direction="cw", trials=1, dry_run=False, inter_trial_approval=False)
+        mock_cockpit, mock_ws = self._create_mock_clients()
+
+        # Handshake completes, but premature cleanup sets state to DISABLED / disarmed before motion
+        handshake_done = [False]
+        def mock_get_status():
+            if not handshake_done[0]:
+                return {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+            else:
+                return {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+
+        def mock_get_autonomy():
+            if not handshake_done[0]:
+                return {"state": "READY_ARMED", "zeroHandshakeCount": 3, "cmdSource": "ROS_AUTONOMY"}
+            else:
+                return {"state": "DISABLED", "zeroHandshakeCount": 0, "cmdSource": "NONE"}
+
+        mock_cockpit.get_status.side_effect = mock_get_status
+        mock_cockpit.get_autonomy_status.side_effect = mock_get_autonomy
+
+        with patch("tools.rover_tests.runner.perform_zero_handshake") as mock_handshake:
+            def do_handshake(*args, **kwargs):
+                handshake_done[0] = True
+                return True
+            mock_handshake.side_effect = do_handshake
+
+            with patch("time.sleep", return_value=None):
+                runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+                trial = runner.execute_single_trial(1)
+
+        self.assertEqual(trial.status, "ABORTED")
+        self.assertIn("Pre-motion invariant violated", trial.abort_reason)
+        # Ensure no nonzero motion command was sent
+        for call_args in mock_cockpit.send_cmd_vel.call_args_list:
+            args, kwargs = call_args
+            wz = kwargs.get("wz", args[1] if len(args) > 1 else 0.0)
+            self.assertEqual(wz, 0.0, "No nonzero cmd_vel should be sent after premature cleanup")
+
+    def test_first_command_rejected_aborts_immediately(self):
+        """
+        Requirement 16:
+        Aborts immediately if the first nonzero command is rejected.
+        Does not wait for the 15-second turn timeout.
+        """
+        params = TurnParameters(degrees=90.0, direction="cw", trials=1, dry_run=False, inter_trial_approval=False)
+        mock_cockpit, mock_ws = self._create_mock_clients()
+
+        mock_cockpit.get_status.return_value = {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.get_autonomy_status.return_value = {
+            "state": "READY_ARMED",
+            "zeroHandshakeCount": 3,
+            "cmdSource": "ROS_AUTONOMY",
+            "lastRejectionReason": "Autonomy is disabled by operator"
+        }
+
+        # Command is rejected
+        mock_cockpit.send_cmd_vel.return_value = {"ok": False, "error": "Autonomy is disabled by operator"}
+
+        t_start = time.time()
+        with patch("time.sleep", return_value=None):
+            runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+            trial = runner.execute_single_trial(1)
+        elapsed = time.time() - t_start
+
+        self.assertEqual(trial.status, "ABORTED")
+        self.assertIn("First nonzero command rejected", trial.abort_reason)
+        self.assertIn("Autonomy is disabled by operator", trial.abort_reason)
+        self.assertLess(elapsed, 2.0)
+        mock_cockpit.disarm_drive.assert_called()
+
+    def test_wheel_targets_remain_zero_aborts_within_bounded_interval(self):
+        """
+        Requirement 16:
+        Aborts within 500ms bounded interval if commanded wheel targets remain zero or ACTIVE state not achieved.
+        """
+        params = TurnParameters(degrees=90.0, direction="cw", trials=1, dry_run=False, inter_trial_approval=False)
+        mock_cockpit, mock_ws = self._create_mock_clients()
+
+        mock_cockpit.get_status.return_value = {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
+        mock_cockpit.get_autonomy_status.return_value = {
+            "state": "READY_ARMED",
+            "clampedAngular": 0.0,
+            "zeroHandshakeCount": 3,
+            "cmdSource": "ROS_AUTONOMY",
+            "lastRejectionReason": "Targets remained zero"
+        }
+
+        with patch("time.sleep", return_value=None):
+            runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+            trial = runner.execute_single_trial(1)
+
+        self.assertEqual(trial.status, "ABORTED")
+        self.assertIn("Motion startup failed within bounded window", trial.abort_reason)
+        mock_cockpit.disarm_drive.assert_called()
 
 
 class TestPytestExclusion(unittest.TestCase):

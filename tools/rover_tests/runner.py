@@ -137,8 +137,44 @@ class PhysicalTestRunner:
         md_summary = ReportGenerator.format_markdown_summary(suite_report)
         print("\n" + md_summary)
         print(f"\n[REPORT SAVED] Full JSON telemetry report: {json_path}")
-
         return suite_report
+
+    def _assert_pre_motion_invariants(self) -> Optional[str]:
+        """
+        Immediately before the first nonzero command, assert:
+        - armed == true
+        - autonomyState == READY_ARMED
+        - expected command ownership is valid (NONE or ROS_AUTONOMY)
+        - IMU and encoder telemetry are fresh
+        Returns None if valid, or a descriptive failure message if invalid.
+        """
+        drv_stat = self.cockpit.get_status()
+        auto_stat = self.cockpit.get_autonomy_status()
+        imu_stat = self.cockpit.get_imu()
+        enc_stat = self.cockpit.get_encoders()
+
+        if drv_stat.get("armed") is not True:
+            return f"Pre-motion invariant violated: armed is {drv_stat.get('armed')} (expected True)"
+
+        cur_state = auto_stat.get("state")
+        if cur_state != "READY_ARMED":
+            return f"Pre-motion invariant violated: autonomyState is '{cur_state}' (expected READY_ARMED)"
+
+        cmd_source = auto_stat.get("cmdSource") or drv_stat.get("cmdSource")
+        if cmd_source not in ("NONE", "ROS_AUTONOMY"):
+            return f"Pre-motion invariant violated: unexpected cmdSource '{cmd_source}' (expected NONE or ROS_AUTONOMY)"
+
+        if not imu_stat or not imu_stat.get("ok", False):
+            return "Pre-motion invariant violated: IMU telemetry dropped or unreadable"
+
+        data_age_ms = imu_stat.get("dataAgeMs", 0)
+        if data_age_ms > 250:
+            return f"Pre-motion invariant violated: IMU telemetry stale ({data_age_ms}ms > 250ms limit)"
+
+        if not enc_stat or (not enc_stat.get("ok", False) and "encoders" not in enc_stat):
+            return "Pre-motion invariant violated: encoder telemetry dropped or unreadable"
+
+        return None
 
     def execute_single_trial(self, trial_idx: int) -> TrialReport:
         """Executes one physical turn trial adhering to all exact-motion invariants."""
@@ -172,7 +208,12 @@ class PhysicalTestRunner:
         )
 
         t_trial_start = time.time()
-        disarm_and_stop(self.cockpit, self.ws)
+
+        # Step 3: Ensure stationary IMU/gyro calibration and settling while DISARMED
+        if not self.params.dry_run:
+            cur_st = self.cockpit.get_status()
+            if cur_st.get("armed") is True or cur_st.get("autonomyState") != "DISABLED":
+                disarm_and_stop(self.cockpit, self.ws, verbose=False)
 
         # 2. Fresh IMU Snapshot & Non-Magnetic Validation
         imu_snap = self.cockpit.get_imu()
@@ -202,7 +243,7 @@ class PhysicalTestRunner:
         unwrapper = YawUnwrapper(initial_raw_yaw=raw_yaw_0)
         gyro_integrator = BiasCorrectedGyroIntegrator()
 
-        # Gather pre-turn stationary samples for gyro bias calibration
+        # Gather pre-turn stationary samples for gyro bias calibration while DISARMED
         pre_turn_samples = [imu_snap.get("gyro", {}).get("z", 0.0)]
         for _ in range(5):
             time.sleep(0.03)
@@ -219,11 +260,11 @@ class PhysicalTestRunner:
                 disarm_and_stop(self.cockpit, self.ws)
                 return trial_report
 
-        # 5. Three-Consecutive-Zero Autonomy Handshake
+        # 5. Autonomy Enable, Three-Consecutive-Zero Handshake, and Arming
         if not self.params.dry_run:
             try:
                 print("  Executing 3-consecutive-zero autonomy handshake...")
-                perform_zero_handshake(self.cockpit, self.ws)
+                perform_zero_handshake(self.cockpit, self.ws, transitions=trial_report.autonomy_state_transitions)
                 print("[OK] Autonomy Handshake complete: Drivetrain READY_ARMED.")
             except HandshakeException as e:
                 tb_str = traceback.format_exc()
@@ -260,6 +301,27 @@ class PhysicalTestRunner:
                 return trial_report
         else:
             print("[OK] [DRY RUN] 3-consecutive-zero autonomy handshake simulated.")
+            trial_report.autonomy_state_transitions.extend([
+                {"timestamp": time.time(), "state": "WAITING_FOR_ZERO", "trigger": "enable_autonomy (dry run)"},
+                {"timestamp": time.time(), "state": "READY_DISARMED", "trigger": "zero_handshake (dry run)"},
+                {"timestamp": time.time(), "state": "READY_ARMED", "trigger": "arm_drive (dry run)"}
+            ])
+
+        # Step 7: Immediately before first nonzero command, assert pre-motion invariants
+        if not self.params.dry_run:
+            inv_error = self._assert_pre_motion_invariants()
+            if inv_error:
+                trial_report.status = "ABORTED"
+                trial_report.abort_reason = inv_error
+                print(f"[FAIL-CLOSED ASSERTION FAILED] {inv_error}")
+                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                trial_report.autonomy_state_transitions.append({
+                    "timestamp": time.time(),
+                    "state": cleanup_st.get("autonomyState", "DISABLED"),
+                    "trigger": "pre_motion_assertion_failed"
+                })
+                return trial_report
+            print("[OK] Pre-motion invariants verified: armed=True, autonomyState=READY_ARMED, valid cmdSource, fresh IMU & encoders.")
 
         # 6. Motion Controller Execution
         controller = AngularApproachController(
@@ -268,6 +330,69 @@ class PhysicalTestRunner:
             approach_zone_deg=self.params.creep_threshold_deg
         )
         controller.reset(target=self.params.signed_target_deg, start_time=time.time())
+
+        # Step 8: Begin the nonzero motion loop
+        first_cmd_wz = controller.update(current_progress=0.0, current_time=time.time())
+        if abs(first_cmd_wz) < 1e-4:
+            first_cmd_wz = math.copysign(self.params.creep_angular_speed, self.params.signed_target_deg)
+
+        if not self.params.dry_run:
+            first_res = self.cockpit.send_cmd_vel(vx=0.0, wz=first_cmd_wz)
+            trial_report.first_command_response = first_res
+
+            # Step 9: Verify the first nonzero command was accepted
+            if not first_res.get("ok", False):
+                err = first_res.get("error", "Unknown command rejection")
+                rej = self.cockpit.get_autonomy_status().get("lastRejectionReason")
+                fail_reason = f"First nonzero command rejected: {err}" + (f" ({rej})" if rej else "")
+                print(f"[FAIL-FAST ABORT] {fail_reason}")
+                trial_report.status = "ABORTED"
+                trial_report.abort_reason = fail_reason
+                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                trial_report.autonomy_state_transitions.append({
+                    "timestamp": time.time(),
+                    "state": cleanup_st.get("autonomyState", "DISABLED"),
+                    "trigger": "first_cmd_rejected_cleanup"
+                })
+                return trial_report
+
+            # Step 10: Within bounded interval (max 500ms), verify targets become nonzero / state becomes ACTIVE
+            cmd_accepted_active = False
+            t_check_start = time.time()
+            while time.time() - t_check_start < 0.5:
+                a_stat = self.cockpit.get_autonomy_status()
+                if a_stat.get("state") == "ACTIVE" or abs(a_stat.get("clampedAngular", 0.0)) > 1e-4:
+                    cmd_accepted_active = True
+                    trial_report.autonomy_state_transitions.append({
+                        "timestamp": time.time(),
+                        "state": "ACTIVE",
+                        "trigger": "first_nonzero_cmd_accepted"
+                    })
+                    break
+                time.sleep(0.04)
+
+            # Step 11: If command rejected or targets remain zero, abort immediately (do not wait 15s)
+            if not cmd_accepted_active:
+                a_stat = self.cockpit.get_autonomy_status()
+                rejection = a_stat.get("lastRejectionReason") or "Commanded wheel targets remained zero / ACTIVE state not achieved within 500ms"
+                fail_reason = f"Motion startup failed within bounded window: {rejection} (state={a_stat.get('state')})"
+                print(f"[FAIL-FAST ABORT] {fail_reason}")
+                trial_report.status = "ABORTED"
+                trial_report.abort_reason = fail_reason
+                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                trial_report.autonomy_state_transitions.append({
+                    "timestamp": time.time(),
+                    "state": cleanup_st.get("autonomyState", "DISABLED"),
+                    "trigger": "startup_timeout_cleanup"
+                })
+                return trial_report
+        else:
+            trial_report.first_command_response = {"ok": True, "linear": 0.0, "angular": first_cmd_wz, "state": "ACTIVE"}
+            trial_report.autonomy_state_transitions.append({
+                "timestamp": time.time(),
+                "state": "ACTIVE",
+                "trigger": "first_nonzero_cmd_accepted (dry run)"
+            })
 
         # Safety thresholds
         max_duration_sec = 15.0
@@ -348,44 +473,56 @@ class PhysicalTestRunner:
                     # Check completion (zero command issued)
                     if controller.phase == ApproachPhase.ZERO:
                         angle_at_zero_cmd = cur_rel_yaw
-                        self.ws.send_drive(vx=0.0, wz=0.0)
+                        self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
                         break
 
-                    # Stream command to rover
-                    if not self.ws.send_drive(vx=0.0, wz=cmd_wz):
-                        abort_reason = "WebSocket drive command transmission failed"
-                        trial_report.communication_faults.append("WS_SEND_FAILED")
+                    # Stream command to rover via ROS2 bridge
+                    cmd_res = self.cockpit.send_cmd_vel(vx=0.0, wz=cmd_wz)
+                    if not cmd_res.get("ok", False):
+                        abort_reason = f"cmd_vel transmission failed: {cmd_res.get('error')}"
+                        trial_report.communication_faults.append("CMD_VEL_SEND_FAILED")
                         break
 
                     # Ingest PID diagnostics and monitor wheel stalls / breakouts
-                    frames = self.ws.recv_frames()
-                    for f in frames:
-                        if f.get("type") == "pid_diagnostic":
-                            for w_id in ["m1", "m2", "m3", "m4"]:
-                                w_data = f.get(w_id, {})
-                                stiction_state = w_data.get("stictionState", "IDLE")
-                                if stiction_state == "STICTION_BOOST":
-                                    wheel_metrics[w_id].stiction_boost_events += 1
-                                    if breakout_start_time is None:
-                                        breakout_start_time = now
-                                        breakout_count += 1
-                                elif stiction_state == "BLOCKED":
-                                    wheel_metrics[w_id].blocked_state_events += 1
-                                    stalls_detected[w_id] = True
+                    if self.ws and self.ws.connected:
+                        frames = self.ws.recv_frames()
+                        for f in frames:
+                            if f.get("type") == "pid_diagnostic":
+                                for w_id in ["m1", "m2", "m3", "m4"]:
+                                    w_data = f.get(w_id, {})
+                                    stiction_state = w_data.get("stictionState", "IDLE")
+                                    if stiction_state == "STICTION_BOOST":
+                                        wheel_metrics[w_id].stiction_boost_events += 1
+                                        if breakout_start_time is None:
+                                            breakout_start_time = now
+                                            breakout_count += 1
+                                    elif stiction_state == "BLOCKED":
+                                        wheel_metrics[w_id].blocked_state_events += 1
+                                        stalls_detected[w_id] = True
 
-                    if breakout_start_time and any(f.get(w, {}).get("stictionState") != "STICTION_BOOST" for w in ["m1", "m2", "m3", "m4"] for f in frames if f.get("type") == "pid_diagnostic"):
-                        total_breakout_dwell_ms += (now - breakout_start_time) * 1000.0
-                        breakout_start_time = None
+                        if breakout_start_time and any(f.get(w, {}).get("stictionState") != "STICTION_BOOST" for w in ["m1", "m2", "m3", "m4"] for f in frames if f.get("type") == "pid_diagnostic"):
+                            total_breakout_dwell_ms += (now - breakout_start_time) * 1000.0
+                            breakout_start_time = None
 
                     time.sleep(0.02)  # 50Hz control loop
 
         except Exception as e:
             abort_reason = f"Exception during motion execution: {e}"
-        finally:
-            # Immediate zero & disarm cleanup
-            disarm_and_stop(self.cockpit, self.ws)
 
-        # 7. Settle Period
+        # If motion loop aborted, execute disarm_and_stop() immediately and return
+        if abort_reason:
+            trial_report.status = "ABORTED"
+            trial_report.abort_reason = abort_reason
+            print(f"[TRIAL ABORTED] {abort_reason}")
+            cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+            trial_report.autonomy_state_transitions.append({
+                "timestamp": time.time(),
+                "state": cleanup_st.get("autonomyState", "DISABLED"),
+                "trigger": "motion_abort_cleanup"
+            })
+            return trial_report
+
+        # Step 12: Settle Period - zero command was issued upon target arrival
         print(f"  Settling for {self.params.settle_seconds:.1f}s...")
         time.sleep(self.params.settle_seconds)
         if not self.params.dry_run:
@@ -402,13 +539,21 @@ class PhysicalTestRunner:
         controller.mark_settled(final_settled_yaw)
         post_zero_coast = final_settled_yaw - angle_at_zero_cmd
 
-        # Final encoders
+        # Capture final encoders
         enc_final = self.cockpit.get_encoders().get("encoders", enc_start)
         for w_id in ["m1", "m2", "m3", "m4"]:
             w_metric = wheel_metrics[w_id]
             w_metric.encoder_final_ticks = enc_final.get(w_id, w_metric.encoder_start_ticks)
             w_metric.encoder_delta_ticks = w_metric.encoder_final_ticks - w_metric.encoder_start_ticks
             w_metric.stopped_while_commanded = stalls_detected[w_id]
+
+        # Execute disarm_and_stop() ONLY after the target and settling sequence completes!
+        cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+        trial_report.autonomy_state_transitions.append({
+            "timestamp": time.time(),
+            "state": cleanup_st.get("autonomyState", "DISABLED"),
+            "trigger": "trial_settle_complete_cleanup"
+        })
 
         # Populate report metrics
         trial_report.duration_s = time.time() - t_trial_start
@@ -422,20 +567,15 @@ class PhysicalTestRunner:
         trial_report.approach_milestones = controller.get_telemetry_summary()
         trial_report.confirmed_final_zero_command = True
         trial_report.confirmed_final_disarmed_state = True
+        trial_report.status = "DRY_RUN_PASSED" if self.params.dry_run else "SUCCESS"
 
-        if abort_reason:
-            trial_report.status = "ABORTED"
-            trial_report.abort_reason = abort_reason
-            print(f"[TRIAL ABORTED] Reason: {abort_reason}")
-        else:
-            trial_report.status = "DRY_RUN_PASSED" if self.params.dry_run else "SUCCESS"
-            print(f"[OK] Trial Completed ({trial_report.status})")
-            print(f"  • Angle at Zero Cmd: {angle_at_zero_cmd:+.2f}°")
-            print(f"  • Final Settled Yaw: {final_settled_yaw:+.2f}° (Target: {self.params.signed_target_deg:+.2f}°)")
-            print(f"  • Post-Zero Coast:   {post_zero_coast:+.2f}°")
-            print(f"  • Settled Error:     {trial_report.settled_heading_error_deg:+.2f}°")
+        print(f"[OK] Trial Completed ({trial_report.status})")
+        print(f"  • Angle at Zero Cmd: {angle_at_zero_cmd:+.2f}°")
+        print(f"  • Final Settled Yaw: {final_settled_yaw:+.2f}° (Target: {self.params.signed_target_deg:+.2f}°)")
+        print(f"  • Post-Zero Coast:   {post_zero_coast:+.2f}°")
+        print(f"  • Settled Error:     {trial_report.settled_heading_error_deg:+.2f}°")
 
-        # 8. Ingest Ron's Physical Estimate
+        # Ingest Ron's Physical Estimate
         if self.params.inter_trial_approval and not self.params.dry_run:
             print("\n[PHYSICAL ESTIMATE COLLECTION]")
             print(f"  Gyro Measured Settled Angle: {final_settled_yaw:+.2f}°")
@@ -445,7 +585,6 @@ class PhysicalTestRunner:
                     est_val = float(est_input)
                     trial_report.rons_physical_angle_estimate_deg = est_val
                     trial_report.estimate_vs_gyro_delta_deg = final_settled_yaw - est_val
-                    print(f"  Ron's Estimate: {est_val:+.2f}° | Discrepancy (Gyro - Ron): {trial_report.estimate_vs_gyro_delta_deg:+.2f}°")
                 except ValueError:
                     print("  Invalid numeric input for physical estimate. Skipped.")
 

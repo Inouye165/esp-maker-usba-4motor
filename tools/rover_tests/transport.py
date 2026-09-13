@@ -362,7 +362,8 @@ class CockpitClient:
 def perform_zero_handshake(
     cockpit: CockpitClient,
     ws: Optional[NativeWSClient],
-    max_duration_sec: float = 4.0
+    max_duration_sec: float = 4.0,
+    transitions: Optional[List[Dict[str, Any]]] = None
 ) -> bool:
     """
     Executes the three-consecutive-zero autonomy handshake:
@@ -383,6 +384,13 @@ def perform_zero_handshake(
             last_rejection_reason=stat.get("lastRejectionReason"),
             underlying_error=err_msg
         )
+
+    if transitions is not None:
+        transitions.append({
+            "timestamp": time.time(),
+            "state": "WAITING_FOR_ZERO",
+            "trigger": "enable_autonomy"
+        })
 
     t0 = time.time()
     handshake_success = False
@@ -408,9 +416,21 @@ def perform_zero_handshake(
 
         if state == "READY_DISARMED" or z_count >= 3:
             handshake_success = True
+            if transitions is not None:
+                transitions.append({
+                    "timestamp": time.time(),
+                    "state": "READY_DISARMED",
+                    "trigger": "zero_handshake_complete"
+                })
             break
         elif state == "READY_ARMED" or state == "ACTIVE":
             handshake_success = True
+            if transitions is not None:
+                transitions.append({
+                    "timestamp": time.time(),
+                    "state": state,
+                    "trigger": "already_armed"
+                })
             break
 
         time.sleep(0.05)
@@ -475,6 +495,13 @@ def perform_zero_handshake(
             zero_count=auto_stat.get("zeroHandshakeCount", 0),
             cmd_source=stat.get("cmdSource")
         )
+
+    if transitions is not None:
+        transitions.append({
+            "timestamp": time.time(),
+            "state": "READY_ARMED",
+            "trigger": "arm_drive"
+        })
 
     return True
 
