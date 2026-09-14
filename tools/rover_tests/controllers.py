@@ -107,7 +107,7 @@ class AngularApproachController(BaseApproachController):
         remaining_deg = target_mag - signed_progress
 
         # 1. Target Reached or Exceeded -> ZERO phase
-        if signed_progress >= target_mag:
+        if remaining_deg <= 1e-4:
             if self.phase not in (ApproachPhase.ZERO, ApproachPhase.SETTLED):
                 self._set_phase(ApproachPhase.ZERO, current_time, current_progress)
                 rel_t = current_time - self.start_time if self.start_time is not None else 0.0

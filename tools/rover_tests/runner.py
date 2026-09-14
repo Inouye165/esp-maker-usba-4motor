@@ -452,7 +452,6 @@ class PhysicalTestRunner:
                     cur_raw_yaw = quat_to_yaw(latest_imu.get("orientation", {}))
                     unwrapper.update_orientation_yaw(cur_raw_yaw)
                     cur_rel_yaw = unwrapper.relative_yaw_deg
-                    print(f"DEBUG_LOOP: dt={dt_motion:.3f} cur_rel={cur_rel_yaw:.2f} phase={controller.phase}")
 
                     # Max angle safety guard
                     if abs(cur_rel_yaw) > max_angle_limit_deg:
