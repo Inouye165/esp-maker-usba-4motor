@@ -24,16 +24,44 @@ from typing import Dict, Any, List, Optional
 @dataclass
 class WheelTrialMetrics:
     wheel_id: str  # "m1", "m2", "m3", "m4"
-    commanded_speed_radps_mean: float = 0.0
-    commanded_speed_radps_max: float = 0.0
-    measured_speed_radps_mean: float = 0.0
-    measured_speed_radps_max: float = 0.0
+    slot_mapping: str = ""    # "Slot 1" .. "Slot 4"
+    corner: str = ""          # "LF", "RF", "LR", "RR"
+
+    # Commanded speed metrics (None if telemetry unavailable, never false 0.00)
+    commanded_speed_radps_mean: Optional[float] = None
+    commanded_speed_radps_max: Optional[float] = None
+    commanded_speed_source: str = "firmware_pid"  # "firmware_pid", "calculated_expected", "unavailable"
+
+    # Measured speed metrics (None if telemetry unavailable, never false 0.00)
+    measured_speed_radps_mean: Optional[float] = None
+    measured_speed_radps_abs_mean: Optional[float] = None
+    measured_speed_radps_min: Optional[float] = None
+    measured_speed_radps_max: Optional[float] = None
+
     encoder_start_ticks: int = 0
     encoder_final_ticks: int = 0
     encoder_delta_ticks: int = 0
+
     stopped_while_commanded: bool = False
+    stopped_while_commanded_count: int = 0
+    stopped_while_commanded_duration_s: float = 0.0
+
     stiction_boost_events: int = 0
     blocked_state_events: int = 0
+    active_samples_count: int = 0
+
+    def __post_init__(self):
+        canonical_slots = {
+            "m1": ("Slot 1", "LF"),
+            "m2": ("Slot 2", "RF"),
+            "m3": ("Slot 3", "LR"),
+            "m4": ("Slot 4", "RR"),
+        }
+        info = canonical_slots.get(self.wheel_id.lower(), ("Unknown Slot", "Unknown Corner"))
+        if not self.slot_mapping:
+            self.slot_mapping = info[0]
+        if not self.corner:
+            self.corner = info[1]
 
 
 @dataclass
@@ -158,17 +186,50 @@ class ReportGenerator:
 
             md.append(f"| Opposing Polarity Verified | `{'YES' if t.opposite_polarity_maintained else 'NO (VIOLATION)'}` | Left & Right sides opposed |")
             md.append(f"| Breakout Events | `{t.breakout_event_count}` | Stiction boost activations |")
+            md.append(f"| Active Telemetry Samples | `{t.telemetry_samples_count}` | Filtered PID diagnostic packets |")
             md.append(f"| Final Zero & Disarmed Confirmed | `{'YES' if (t.confirmed_final_zero_command and t.confirmed_final_disarmed_state) else 'NO (FAIL-SAFE ERROR)'}` | Drivetrain locked & safe |")
             md.append("")
 
             # Wheel Details
             md.append("#### Wheel Actuation & Encoder Performance")
-            md.append("| Wheel | Commanded Mean (rad/s) | Measured Mean (rad/s) | Encoder Delta (ticks) | Stopped While Commanded? | Stiction Boosts |")
-            md.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
+            md.append("| Wheel (Slot / Corner) | Commanded Target (rad/s) | Measured Mean (rad/s) | Mean Abs Speed (rad/s) | Speed Range [Min, Max] (rad/s) | Encoder Delta (ticks) | Stopped While Commanded | Stiction Boosts |")
+            md.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
             for w_id in ["m1", "m2", "m3", "m4"]:
                 w = t.wheel_metrics.get(w_id, WheelTrialMetrics(wheel_id=w_id))
-                stopped_str = "**YES (STALL)**" if w.stopped_while_commanded else "No"
-                md.append(f"| **{w_id.upper()}** | {w.commanded_speed_radps_mean:+.2f} | {w.measured_speed_radps_mean:+.2f} | {w.encoder_delta_ticks:+d} | {stopped_str} | {w.stiction_boost_events} |")
+                wheel_label = f"**{w_id.upper()}** ({w.slot_mapping} / {w.corner})"
+
+                # Commanded target formatting
+                if w.commanded_speed_radps_mean is not None:
+                    if w.commanded_speed_source == "calculated_expected":
+                        cmd_str = f"`{w.commanded_speed_radps_mean:+.2f}` *(calc)*"
+                    else:
+                        cmd_str = f"`{w.commanded_speed_radps_mean:+.2f}`"
+                else:
+                    cmd_str = "*Unavailable*"
+
+                # Measured speed formatting
+                if w.measured_speed_radps_mean is not None:
+                    meas_str = f"`{w.measured_speed_radps_mean:+.2f}`"
+                else:
+                    meas_str = "*Unavailable*"
+
+                if w.measured_speed_radps_abs_mean is not None:
+                    abs_str = f"`{w.measured_speed_radps_abs_mean:.2f}`"
+                else:
+                    abs_str = "*Unavailable*"
+
+                if w.measured_speed_radps_min is not None and w.measured_speed_radps_max is not None:
+                    range_str = f"`[{w.measured_speed_radps_min:+.2f}, {w.measured_speed_radps_max:+.2f}]`"
+                else:
+                    range_str = "*Unavailable*"
+
+                # Stopped while commanded formatting
+                if w.stopped_while_commanded:
+                    stopped_str = f"**YES ({w.stopped_while_commanded_count} ev / {w.stopped_while_commanded_duration_s:.2f}s)**"
+                else:
+                    stopped_str = "No (0s)"
+
+                md.append(f"| {wheel_label} | {cmd_str} | {meas_str} | {abs_str} | {range_str} | {w.encoder_delta_ticks:+d} | {stopped_str} | {w.stiction_boost_events} |")
             md.append("")
 
         return "\n".join(md)

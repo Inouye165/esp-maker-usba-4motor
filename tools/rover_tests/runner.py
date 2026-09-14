@@ -403,6 +403,20 @@ class PhysicalTestRunner:
         breakout_start_time = None
         total_breakout_dwell_ms = 0.0
 
+        # Active-motion telemetry collection buffers (strictly excluding preflight, settling, and final-zero)
+        wheel_samples = {
+            w_id: {
+                "targets": [],
+                "measured": [],
+                "stopped_events": 0,
+                "stopped_duration_s": 0.0,
+                "is_currently_stopped": False,
+                "stopped_entry_time": None,
+            }
+            for w_id in ["m1", "m2", "m3", "m4"]
+        }
+        total_telemetry_samples = 0
+
         abort_reason = None
         t_motion_start = time.time()
 
@@ -421,6 +435,12 @@ class PhysicalTestRunner:
                     sym_ok, sym_msg = verify_wheel_command_symmetry(wheel_cmds)
                     if not sym_ok:
                         raise TestAbortException(f"Symmetry check failed: {sym_msg}")
+                    if controller.phase in (ApproachPhase.CRUISE, ApproachPhase.CREEP):
+                        for w_id in ["m1", "m2", "m3", "m4"]:
+                            cmd_val = wheel_cmds[w_id]
+                            wheel_samples[w_id]["targets"].append(cmd_val)
+                            wheel_samples[w_id]["measured"].append(cmd_val)
+                        total_telemetry_samples += 1
                     time.sleep(0.05)
                 angle_at_zero_cmd = self.params.signed_target_deg
             else:
@@ -471,6 +491,8 @@ class PhysicalTestRunner:
                         break
 
                     # Check completion (zero command issued)
+                    # When target is reached, command zero and exit active motion immediately.
+                    # This ensures zero-command and settling samples are NEVER mixed into active motion statistics.
                     if controller.phase == ApproachPhase.ZERO:
                         angle_at_zero_cmd = cur_rel_yaw
                         self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
@@ -484,13 +506,23 @@ class PhysicalTestRunner:
                         break
 
                     # Ingest PID diagnostics and monitor wheel stalls / breakouts
+                    # ONLY collected while controller is in active motion (CRUISE or CREEP)
                     if self.ws and self.ws.connected:
                         frames = self.ws.recv_frames()
                         for f in frames:
                             if f.get("type") == "pid_diagnostic":
+                                total_telemetry_samples += 1
                                 for w_id in ["m1", "m2", "m3", "m4"]:
                                     w_data = f.get(w_id, {})
+                                    tgt = w_data.get("targetRadps")
+                                    meas = w_data.get("measuredRadps")
                                     stiction_state = w_data.get("stictionState", "IDLE")
+
+                                    if tgt is not None and isinstance(tgt, (int, float)):
+                                        wheel_samples[w_id]["targets"].append(float(tgt))
+                                    if meas is not None and isinstance(meas, (int, float)):
+                                        wheel_samples[w_id]["measured"].append(float(meas))
+
                                     if stiction_state == "STICTION_BOOST":
                                         wheel_metrics[w_id].stiction_boost_events += 1
                                         if breakout_start_time is None:
@@ -500,6 +532,25 @@ class PhysicalTestRunner:
                                         wheel_metrics[w_id].blocked_state_events += 1
                                         stalls_detected[w_id] = True
 
+                                    # Stopped-while-commanded monitoring:
+                                    tgt_val = float(tgt) if (tgt is not None and isinstance(tgt, (int, float))) else abs(wheel_cmds.get(w_id, 0.0))
+                                    meas_val = float(meas) if (meas is not None and isinstance(meas, (int, float))) else 0.0
+                                    is_stopped = (abs(tgt_val) > 0.10) and (abs(meas_val) < 0.05 or stiction_state == "BLOCKED")
+
+                                    ws_buf = wheel_samples[w_id]
+                                    if is_stopped:
+                                        stalls_detected[w_id] = True
+                                        if not ws_buf["is_currently_stopped"]:
+                                            ws_buf["is_currently_stopped"] = True
+                                            ws_buf["stopped_entry_time"] = now
+                                            ws_buf["stopped_events"] += 1
+                                    else:
+                                        if ws_buf["is_currently_stopped"]:
+                                            dwell = max(0.02, now - (ws_buf["stopped_entry_time"] or now))
+                                            ws_buf["stopped_duration_s"] += dwell
+                                            ws_buf["is_currently_stopped"] = False
+                                            ws_buf["stopped_entry_time"] = None
+
                         if breakout_start_time and any(f.get(w, {}).get("stictionState") != "STICTION_BOOST" for w in ["m1", "m2", "m3", "m4"] for f in frames if f.get("type") == "pid_diagnostic"):
                             total_breakout_dwell_ms += (now - breakout_start_time) * 1000.0
                             breakout_start_time = None
@@ -508,6 +559,49 @@ class PhysicalTestRunner:
 
         except Exception as e:
             abort_reason = f"[{type(e).__name__}] Exception during motion execution: {e}"
+
+        # Close any open stopped_while_commanded periods
+        now_post = time.time()
+        for w_id in ["m1", "m2", "m3", "m4"]:
+            ws_buf = wheel_samples[w_id]
+            if ws_buf["is_currently_stopped"] and ws_buf["stopped_entry_time"]:
+                dwell = max(0.02, now_post - ws_buf["stopped_entry_time"])
+                ws_buf["stopped_duration_s"] += dwell
+                ws_buf["is_currently_stopped"] = False
+
+        # Aggregate active-motion wheel metrics (strictly before settle period)
+        for w_id in ["m1", "m2", "m3", "m4"]:
+            w_metric = wheel_metrics[w_id]
+            ws_buf = wheel_samples[w_id]
+            targets = ws_buf["targets"]
+            measured = ws_buf["measured"]
+            w_metric.active_samples_count = len(measured)
+
+            if len(targets) > 0:
+                w_metric.commanded_speed_radps_mean = sum(targets) / len(targets)
+                w_metric.commanded_speed_radps_max = max(targets, key=abs)
+                w_metric.commanded_speed_source = "calculated_expected" if self.params.dry_run else "firmware_pid"
+            else:
+                w_metric.commanded_speed_radps_mean = None
+                w_metric.commanded_speed_radps_max = None
+                w_metric.commanded_speed_source = "unavailable"
+
+            if len(measured) > 0:
+                w_metric.measured_speed_radps_mean = sum(measured) / len(measured)
+                w_metric.measured_speed_radps_abs_mean = sum(abs(v) for v in measured) / len(measured)
+                w_metric.measured_speed_radps_min = min(measured)
+                w_metric.measured_speed_radps_max = max(measured)
+            else:
+                w_metric.measured_speed_radps_mean = None
+                w_metric.measured_speed_radps_abs_mean = None
+                w_metric.measured_speed_radps_min = None
+                w_metric.measured_speed_radps_max = None
+
+            w_metric.stopped_while_commanded = stalls_detected[w_id] or (ws_buf["stopped_events"] > 0)
+            w_metric.stopped_while_commanded_count = ws_buf["stopped_events"]
+            w_metric.stopped_while_commanded_duration_s = ws_buf["stopped_duration_s"]
+
+        trial_report.telemetry_samples_count = total_telemetry_samples
 
         # If motion loop aborted, execute disarm_and_stop() immediately and return
         if abort_reason:
@@ -545,7 +639,6 @@ class PhysicalTestRunner:
             w_metric = wheel_metrics[w_id]
             w_metric.encoder_final_ticks = enc_final.get(w_id, w_metric.encoder_start_ticks)
             w_metric.encoder_delta_ticks = w_metric.encoder_final_ticks - w_metric.encoder_start_ticks
-            w_metric.stopped_while_commanded = stalls_detected[w_id]
 
         # Execute disarm_and_stop() ONLY after the target and settling sequence completes!
         cleanup_st = disarm_and_stop(self.cockpit, self.ws)

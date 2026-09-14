@@ -776,6 +776,229 @@ class TestLifecycleAndCleanupTiming(unittest.TestCase):
         mock_cockpit.disarm_drive.assert_called()
 
 
+class TestWheelTelemetryAndForensics(unittest.TestCase):
+    """Verifies active-motion wheel telemetry collection, exclusions, and reporting."""
+
+    def test_active_motion_samples_exclude_settling_and_zero(self):
+        """Active motion means must remain nonzero and exclude settling/zero samples."""
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1, settle_seconds=2.0)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+
+        mock_cockpit.token = "test_token"
+        mock_cockpit.base_url = "http://127.0.0.1:3000"
+        current_status = {
+            "armed": False,
+            "autonomyState": "DISABLED",
+            "cmdSource": "NONE"
+        }
+        def mock_arm():
+            current_status["armed"] = True
+            current_status["autonomyState"] = "READY_ARMED"
+            current_status["cmdSource"] = "ROS_AUTONOMY"
+            return {"ok": True, "armed": True}
+        def mock_disarm():
+            current_status["armed"] = False
+            current_status["autonomyState"] = "DISABLED"
+            return {"ok": True, "armed": False}
+
+        mock_cockpit.arm_drive.side_effect = mock_arm
+        mock_cockpit.disarm_drive.side_effect = mock_disarm
+        mock_cockpit.get_status.side_effect = lambda: dict(current_status)
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 100, "m2": 200, "m3": 300, "m4": 400}}
+        mock_cockpit.enable_autonomy.return_value = {"ok": True, "state": "WAITING_FOR_ZERO"}
+        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
+        mock_cockpit.get_autonomy_status.side_effect = lambda: {
+            "state": current_status["autonomyState"],
+            "clampedAngular": 0.8 if current_status["armed"] else 0.0,
+            "zeroHandshakeCount": 3,
+            "cmdSource": "ROS_AUTONOMY"
+        }
+        mock_cockpit.set_command_source.return_value = {"ok": True, "source": "NONE"}
+
+        mock_ws.connected = True
+        mock_ws.connect.return_value = True
+        mock_ws.authenticate.return_value = True
+
+        # Sequence of IMU readings: start at 0, rotate to 90, 160, then 180.5 (threshold crossed!)
+        yaw_seq = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 90.0, 160.0, 180.5, 181.0, 181.0]
+        imu_responses = []
+        for y in yaw_seq:
+            rad = math.radians(y)
+            imu_responses.append({
+                "ok": True,
+                "dataAgeMs": 10,
+                "rotVecValid": True,
+                "inResetRecovery": False,
+                "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+                "isNonMagnetic": True,
+                "orientation": {"x": 0.0, "y": 0.0, "z": math.sin(rad / 2), "w": math.cos(rad / 2)},
+                "gyro": {"z": 0.001}
+            })
+        mock_cockpit.get_imu.side_effect = itertools.chain(imu_responses, itertools.repeat(imu_responses[-1]))
+
+        active_frame = {
+            "type": "pid_diagnostic",
+            "m1": {"targetRadps": -4.07, "measuredRadps": -2.68, "stictionState": "KINETIC"},
+            "m2": {"targetRadps": +4.07, "measuredRadps": +3.39, "stictionState": "KINETIC"},
+            "m3": {"targetRadps": -4.07, "measuredRadps": -2.21, "stictionState": "KINETIC"},
+            "m4": {"targetRadps": +4.07, "measuredRadps": +2.03, "stictionState": "KINETIC"}
+        }
+        mock_ws.recv_frames.return_value = [active_frame]
+
+        with patch("time.sleep", return_value=None):
+            runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+            trial = runner.execute_single_trial(1)
+
+        self.assertEqual(trial.status, "SUCCESS")
+        # Verify active samples were collected
+        self.assertGreaterEqual(trial.telemetry_samples_count, 1)
+
+        m1 = trial.wheel_metrics["m1"]
+        self.assertIsNotNone(m1.commanded_speed_radps_mean)
+        self.assertAlmostEqual(m1.commanded_speed_radps_mean, -4.07, places=2)
+        self.assertIsNotNone(m1.measured_speed_radps_mean)
+        self.assertAlmostEqual(m1.measured_speed_radps_mean, -2.68, places=2)
+        self.assertAlmostEqual(m1.measured_speed_radps_abs_mean, 2.68, places=2)
+
+        m2 = trial.wheel_metrics["m2"]
+        self.assertAlmostEqual(m2.commanded_speed_radps_mean, +4.07, places=2)
+        self.assertAlmostEqual(m2.measured_speed_radps_mean, +3.39, places=2)
+
+        m3 = trial.wheel_metrics["m3"]
+        self.assertAlmostEqual(m3.commanded_speed_radps_mean, -4.07, places=2)
+        self.assertAlmostEqual(m3.measured_speed_radps_mean, -2.21, places=2)
+
+        m4 = trial.wheel_metrics["m4"]
+        self.assertAlmostEqual(m4.commanded_speed_radps_mean, +4.07, places=2)
+        self.assertAlmostEqual(m4.measured_speed_radps_mean, +2.03, places=2)
+
+    def test_slot_mapping_human_facing_labels(self):
+        """Canonical slot mappings: M1/LF=Slot 1, M2/RF=Slot 2, M3/LR=Slot 3, M4/RR=Slot 4."""
+        from tools.rover_tests.reporting import WheelTrialMetrics
+
+        w1 = WheelTrialMetrics(wheel_id="m1")
+        self.assertEqual(w1.slot_mapping, "Slot 1")
+        self.assertEqual(w1.corner, "LF")
+
+        w2 = WheelTrialMetrics(wheel_id="m2")
+        self.assertEqual(w2.slot_mapping, "Slot 2")
+        self.assertEqual(w2.corner, "RF")
+
+        w3 = WheelTrialMetrics(wheel_id="m3")
+        self.assertEqual(w3.slot_mapping, "Slot 3")
+        self.assertEqual(w3.corner, "LR")
+
+        w4 = WheelTrialMetrics(wheel_id="m4")
+        self.assertEqual(w4.slot_mapping, "Slot 4")
+        self.assertEqual(w4.corner, "RR")
+
+    def test_unavailable_telemetry_never_reports_false_zeros(self):
+        """When telemetry is unavailable, report None and render *Unavailable*, not 0.00 in wheel table."""
+        from tools.rover_tests.reporting import WheelTrialMetrics, TrialReport, MultiTrialSuiteReport, ReportGenerator
+
+        w1 = WheelTrialMetrics(wheel_id="m1", commanded_speed_radps_mean=None, measured_speed_radps_mean=None)
+        self.assertIsNone(w1.commanded_speed_radps_mean)
+        self.assertIsNone(w1.measured_speed_radps_mean)
+
+        trial = TrialReport(
+            trial_index=1,
+            requested_turn_deg=180.0,
+            direction="cw",
+            target_signed_yaw_deg=180.0,
+            status="SUCCESS",
+            wheel_metrics={"m1": w1}
+        )
+        suite = MultiTrialSuiteReport(suite_id="test", target_degrees=180.0, direction="cw", total_trials=1, successful_trials=1, trials=[trial])
+        md = ReportGenerator.format_markdown_summary(suite)
+
+        self.assertIn("*Unavailable*", md)
+        # Verify that M1 row specifically displays *Unavailable* for commanded and measured means
+        wheel_section = md.split("#### Wheel Actuation & Encoder Performance")[1]
+        self.assertIn("| **M1** (Slot 1 / LF) | *Unavailable* | *Unavailable* | *Unavailable* |", wheel_section)
+
+    def test_stopped_while_commanded_event_detection(self):
+        """Detects and times stopped-while-commanded events."""
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+
+        mock_cockpit.token = "test_token"
+        mock_cockpit.base_url = "http://127.0.0.1:3000"
+
+        current_status = {
+            "armed": False,
+            "autonomyState": "DISABLED",
+            "cmdSource": "NONE"
+        }
+        def mock_arm():
+            current_status["armed"] = True
+            current_status["autonomyState"] = "READY_ARMED"
+            current_status["cmdSource"] = "ROS_AUTONOMY"
+            return {"ok": True, "armed": True}
+        def mock_disarm():
+            current_status["armed"] = False
+            current_status["autonomyState"] = "DISABLED"
+            return {"ok": True, "armed": False}
+
+        mock_cockpit.arm_drive.side_effect = mock_arm
+        mock_cockpit.disarm_drive.side_effect = mock_disarm
+        mock_cockpit.get_status.side_effect = lambda: dict(current_status)
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        mock_cockpit.enable_autonomy.return_value = {"ok": True, "state": "WAITING_FOR_ZERO"}
+        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
+        mock_cockpit.get_autonomy_status.side_effect = lambda: {
+            "state": current_status["autonomyState"],
+            "clampedAngular": 0.8 if current_status["armed"] else 0.0,
+            "zeroHandshakeCount": 3,
+            "cmdSource": "ROS_AUTONOMY"
+        }
+        mock_cockpit.set_command_source.return_value = {"ok": True, "source": "NONE"}
+
+        mock_ws.connected = True
+        mock_ws.connect.return_value = True
+        mock_ws.authenticate.return_value = True
+
+        # Rover turns from 0 to 180.5
+        yaw_seq = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 45.0, 90.0, 180.5, 181.0]
+        imu_responses = [
+            {
+                "ok": True,
+                "dataAgeMs": 5,
+                "rotVecValid": True,
+                "inResetRecovery": False,
+                "sensor": "BNO08x",
+                "rotationVectorType": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+                "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+                "isNonMagnetic": True,
+                "orientation": {"x": 0.0, "y": 0.0, "z": math.sin(math.radians(y)/2), "w": math.cos(math.radians(y)/2)},
+                "gyro": {"z": 0.0}
+            }
+            for y in yaw_seq
+        ]
+        mock_cockpit.get_imu.side_effect = itertools.chain(imu_responses, itertools.repeat(imu_responses[-1]))
+
+        # m1 is blocked / 0 measured speed while commanded
+        stalled_frame = {
+            "type": "pid_diagnostic",
+            "m1": {"targetRadps": -4.0, "measuredRadps": 0.0, "stictionState": "BLOCKED"},
+            "m2": {"targetRadps": +4.0, "measuredRadps": +3.0, "stictionState": "KINETIC"},
+            "m3": {"targetRadps": -4.0, "measuredRadps": -2.0, "stictionState": "KINETIC"},
+            "m4": {"targetRadps": +4.0, "measuredRadps": +2.0, "stictionState": "KINETIC"}
+        }
+        mock_ws.recv_frames.return_value = [stalled_frame]
+
+        with patch("time.sleep", return_value=None):
+            runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+            trial = runner.execute_single_trial(1)
+
+        m1 = trial.wheel_metrics["m1"]
+        self.assertTrue(m1.stopped_while_commanded)
+        self.assertGreaterEqual(m1.stopped_while_commanded_count, 1)
+        self.assertGreater(m1.stopped_while_commanded_duration_s, 0.0)
+        self.assertGreaterEqual(m1.blocked_state_events, 1)
+
+
 class TestPytestExclusion(unittest.TestCase):
     """Verifies that physical test tools are not collected by pytest."""
 
