@@ -38,6 +38,8 @@ from .sensors import (
     YawUnwrapper,
     BiasCorrectedGyroIntegrator,
     verify_non_magnetic_imu,
+    check_imu_freshness,
+    wait_for_advancing_imu_sample,
     MagneticImuException,
     SensorException
 )
@@ -164,12 +166,9 @@ class PhysicalTestRunner:
         if cmd_source not in ("NONE", "ROS_AUTONOMY"):
             return f"Pre-motion invariant violated: unexpected cmdSource '{cmd_source}' (expected NONE or ROS_AUTONOMY)"
 
-        if not imu_stat or not imu_stat.get("ok", False):
-            return "Pre-motion invariant violated: IMU telemetry dropped or unreadable"
-
-        data_age_ms = imu_stat.get("dataAgeMs", 0)
-        if data_age_ms > 250:
-            return f"Pre-motion invariant violated: IMU telemetry stale ({data_age_ms}ms > 250ms limit)"
+        is_fresh, freshness_msg = check_imu_freshness(imu_stat, max_age_ms=250.0)
+        if not is_fresh:
+            return f"Pre-motion invariant violated: {freshness_msg}"
 
         if not enc_stat or (not enc_stat.get("ok", False) and "encoders" not in enc_stat):
             return "Pre-motion invariant violated: encoder telemetry dropped or unreadable"
@@ -313,6 +312,8 @@ class PhysicalTestRunner:
             if inv_error:
                 trial_report.status = "ABORTED"
                 trial_report.abort_reason = inv_error
+                trial_report.telemetry_samples_count = 0
+                trial_report.wheel_metrics = wheel_metrics
                 print(f"[FAIL-CLOSED ASSERTION FAILED] {inv_error}")
                 cleanup_st = disarm_and_stop(self.cockpit, self.ws)
                 trial_report.autonomy_state_transitions.append({
@@ -322,6 +323,39 @@ class PhysicalTestRunner:
                 })
                 return trial_report
             print("[OK] Pre-motion invariants verified: armed=True, autonomyState=READY_ARMED, valid cmdSource, fresh IMU & encoders.")
+
+            # Step 7b: Wait for a genuinely new, advancing IMU orientation sample before issuing motion command
+            baseline_imu = self.cockpit.get_imu()
+            baseline_seq = baseline_imu.get("sequence") if baseline_imu else None
+            baseline_esp_ts = baseline_imu.get("espTimestampUs") if baseline_imu else None
+
+            adv_ok, fresh_imu, adv_reason = wait_for_advancing_imu_sample(
+                self.cockpit,
+                baseline_seq=baseline_seq,
+                baseline_esp_ts_us=baseline_esp_ts,
+                max_wait_sec=0.50,
+                max_acceptable_age_ms=100.0,
+                watchdog_max_age_ms=250.0
+            )
+            if not adv_ok:
+                fail_reason = f"Pre-motion IMU synchronization failed: {adv_reason}"
+                print(f"[PRE-MOTION ABORT] {fail_reason}")
+                trial_report.status = "ABORTED"
+                trial_report.abort_reason = fail_reason
+                trial_report.telemetry_samples_count = 0
+                trial_report.wheel_metrics = wheel_metrics
+                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                trial_report.autonomy_state_transitions.append({
+                    "timestamp": time.time(),
+                    "state": cleanup_st.get("autonomyState", "DISABLED"),
+                    "trigger": "advancing_imu_sample_timeout"
+                })
+                return trial_report
+
+            if fresh_imu:
+                fresh_raw_yaw = quat_to_yaw(fresh_imu.get("orientation", {}))
+                unwrapper.update_orientation_yaw(fresh_raw_yaw)
+            print(f"[OK] Advancing fresh IMU sample synchronized: {adv_reason}")
 
         # 6. Motion Controller Execution
         controller = AngularApproachController(
@@ -348,6 +382,8 @@ class PhysicalTestRunner:
                 print(f"[FAIL-FAST ABORT] {fail_reason}")
                 trial_report.status = "ABORTED"
                 trial_report.abort_reason = fail_reason
+                trial_report.telemetry_samples_count = 0
+                trial_report.wheel_metrics = wheel_metrics
                 cleanup_st = disarm_and_stop(self.cockpit, self.ws)
                 trial_report.autonomy_state_transitions.append({
                     "timestamp": time.time(),
@@ -379,6 +415,8 @@ class PhysicalTestRunner:
                 print(f"[FAIL-FAST ABORT] {fail_reason}")
                 trial_report.status = "ABORTED"
                 trial_report.abort_reason = fail_reason
+                trial_report.telemetry_samples_count = 0
+                trial_report.wheel_metrics = wheel_metrics
                 cleanup_st = disarm_and_stop(self.cockpit, self.ws)
                 trial_report.autonomy_state_transitions.append({
                     "timestamp": time.time(),
@@ -386,6 +424,10 @@ class PhysicalTestRunner:
                     "trigger": "startup_timeout_cleanup"
                 })
                 return trial_report
+
+            # Step 11b: Drain any stale pre-motion WebSocket frames so telemetry collection starts strictly on ACTIVE motion
+            if self.ws and self.ws.connected:
+                self.ws.recv_frames()
         else:
             trial_report.first_command_response = {"ok": True, "linear": 0.0, "angular": first_cmd_wz, "state": "ACTIVE"}
             trial_report.autonomy_state_transitions.append({
@@ -457,15 +499,9 @@ class PhysicalTestRunner:
 
                     # Ingest latest IMU data
                     latest_imu = self.cockpit.get_imu()
-                    if not latest_imu or not latest_imu.get("ok", False):
-                        abort_reason = "IMU telemetry drop or unreadable"
-                        trial_report.communication_faults.append("IMU_DROP")
-                        break
-
-                    # Stale telemetry watchdog (> 250ms)
-                    imu_age_ms = latest_imu.get("dataAgeMs", 0)
-                    if imu_age_ms > 250:
-                        abort_reason = f"Stale IMU data detected ({imu_age_ms}ms > 250ms limit)"
+                    is_fresh, freshness_msg = check_imu_freshness(latest_imu, max_age_ms=250.0)
+                    if not is_fresh:
+                        abort_reason = f"Stale IMU data detected: {freshness_msg}"
                         trial_report.watchdog_trips.append("STALE_IMU_DATA")
                         break
 
@@ -602,6 +638,7 @@ class PhysicalTestRunner:
             w_metric.stopped_while_commanded_duration_s = ws_buf["stopped_duration_s"]
 
         trial_report.telemetry_samples_count = total_telemetry_samples
+        trial_report.wheel_metrics = wheel_metrics
 
         # If motion loop aborted, execute disarm_and_stop() immediately and return
         if abort_reason:

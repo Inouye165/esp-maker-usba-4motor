@@ -207,3 +207,80 @@ def verify_non_magnetic_imu(imu_snapshot: Dict[str, Any]) -> Tuple[bool, str]:
         return False, f"Degenerate orientation quaternion received: norm^2={norm_sq:.4f}"
 
     return True, "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC verified active and valid"
+
+
+def check_imu_freshness(imu_data: Optional[Dict[str, Any]], max_age_ms: float = 250.0) -> Tuple[bool, str]:
+    """
+    Unified freshness check for BNO08x orientation telemetry.
+    Used consistently by pre-motion invariant assertions and active motion loop watchdog.
+    """
+    if not imu_data or not imu_data.get("ok", False):
+        return False, "IMU telemetry dropped or unreadable"
+    if not imu_data.get("rotVecValid", False):
+        return False, "BNO08x rotation vector validity flag is FALSE"
+    if imu_data.get("inResetRecovery", False):
+        return False, "BNO08x IMU is in reset recovery mode"
+
+    age_ms = imu_data.get("dataAgeMs")
+    if age_ms is None:
+        return False, "IMU dataAgeMs missing"
+    if age_ms > max_age_ms:
+        return False, f"Stale IMU data detected ({age_ms}ms > {max_age_ms:.0f}ms limit)"
+
+    return True, f"Fresh IMU data ({age_ms}ms <= {max_age_ms:.0f}ms)"
+
+
+def wait_for_advancing_imu_sample(
+    cockpit: Any,
+    baseline_seq: Optional[int] = None,
+    baseline_esp_ts_us: Optional[int] = None,
+    max_wait_sec: float = 0.50,
+    poll_interval_sec: float = 0.015,
+    max_acceptable_age_ms: float = 100.0,
+    watchdog_max_age_ms: float = 250.0
+) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+    """
+    Waits for a genuinely new, advancing IMU orientation sample before issuing motion commands.
+    Ensures:
+    1. sequence > baseline_seq (or advances) and/or espTimestampUs > baseline_esp_ts_us.
+    2. Satisfies canonical freshness check (rotVecValid, not in reset recovery).
+    3. dataAgeMs <= max_acceptable_age_ms (strictly fresh at cycle inception, e.g. <= 100ms).
+    Returns (True, fresh_imu_snapshot, "reason") or (False, last_sample, "failure reason").
+    """
+    t_start = time.time()
+    last_sample = None
+
+    while (time.time() - t_start) < max_wait_sec:
+        imu_snap = cockpit.get_imu()
+        last_sample = imu_snap
+
+        if imu_snap and imu_snap.get("ok", False):
+            cur_seq = imu_snap.get("sequence")
+            cur_esp_ts = imu_snap.get("espTimestampUs")
+
+            seq_advanced = False
+            if baseline_seq is not None and cur_seq is not None:
+                if cur_seq != baseline_seq:
+                    seq_advanced = True
+            elif baseline_esp_ts_us is not None and cur_esp_ts is not None:
+                if cur_esp_ts > baseline_esp_ts_us:
+                    seq_advanced = True
+            elif baseline_seq is None and baseline_esp_ts_us is None:
+                seq_advanced = True
+
+            if seq_advanced:
+                is_fresh, freshness_msg = check_imu_freshness(imu_snap, max_age_ms=watchdog_max_age_ms)
+                if is_fresh:
+                    age_ms = imu_snap.get("dataAgeMs", 0)
+                    if age_ms <= max_acceptable_age_ms:
+                        return True, imu_snap, f"Advancing IMU sample verified (seq={cur_seq}, age={age_ms}ms)"
+
+        time.sleep(poll_interval_sec)
+
+    elapsed_ms = (time.time() - t_start) * 1000.0
+    last_seq = last_sample.get("sequence") if last_sample else None
+    last_age = last_sample.get("dataAgeMs") if last_sample else None
+    return False, last_sample, (
+        f"Timed out waiting for advancing fresh IMU sample ({elapsed_ms:.1f}ms > {max_wait_sec*1000.0:.0f}ms limit, "
+        f"baseline_seq={baseline_seq}, last_seq={last_seq}, last_age={last_age}ms)"
+    )

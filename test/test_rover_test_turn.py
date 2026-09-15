@@ -30,6 +30,8 @@ from tools.rover_tests.sensors import (
     YawUnwrapper,
     BiasCorrectedGyroIntegrator,
     verify_non_magnetic_imu,
+    check_imu_freshness,
+    wait_for_advancing_imu_sample,
     SensorException
 )
 from tools.rover_tests.transport import (
@@ -997,6 +999,281 @@ class TestWheelTelemetryAndForensics(unittest.TestCase):
         self.assertGreaterEqual(m1.stopped_while_commanded_count, 1)
         self.assertGreater(m1.stopped_while_commanded_duration_s, 0.0)
         self.assertGreaterEqual(m1.blocked_state_events, 1)
+
+
+class TestIMUFreshnessAndPreMotionGate(unittest.TestCase):
+    """
+    Regression tests for:
+    - pre-motion check passes but same sample becomes stale before first command
+    - waiting for the next advancing fresh sample
+    - bounded abort when sequence does not advance
+    - consistent freshness calculation
+    - pre-motion packets excluded from active-motion metrics
+    """
+
+    def test_consistent_freshness_calculation(self):
+        """Unified check_imu_freshness correctly validates or rejects samples."""
+        valid_sample = {
+            "ok": True,
+            "rotVecValid": True,
+            "inResetRecovery": False,
+            "dataAgeMs": 25,
+            "sequence": 100
+        }
+        ok, msg = check_imu_freshness(valid_sample, max_age_ms=250.0)
+        self.assertTrue(ok)
+        self.assertIn("Fresh", msg)
+
+        # Stale sample (> 250ms)
+        stale_sample = dict(valid_sample, dataAgeMs=251)
+        ok, msg = check_imu_freshness(stale_sample, max_age_ms=250.0)
+        self.assertFalse(ok)
+        self.assertIn("Stale", msg)
+
+        # RotVec invalid
+        invalid_rot = dict(valid_sample, rotVecValid=False)
+        ok, msg = check_imu_freshness(invalid_rot)
+        self.assertFalse(ok)
+
+        # In reset recovery
+        reset_rec = dict(valid_sample, inResetRecovery=True)
+        ok, msg = check_imu_freshness(reset_rec)
+        self.assertFalse(ok)
+
+        # Telemetry dropped
+        dropped = {"ok": False}
+        ok, msg = check_imu_freshness(dropped)
+        self.assertFalse(ok)
+
+    def test_waiting_for_advancing_fresh_sample(self):
+        """wait_for_advancing_imu_sample waits for sequence advancement and low age."""
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        samples = [
+            {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 100, "dataAgeMs": 120},
+            {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 100, "dataAgeMs": 130},
+            {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 101, "dataAgeMs": 15},
+        ]
+        mock_cockpit.get_imu.side_effect = samples
+
+        ok, fresh, reason = wait_for_advancing_imu_sample(
+            mock_cockpit,
+            baseline_seq=100,
+            max_wait_sec=0.5,
+            poll_interval_sec=0.001,
+            max_acceptable_age_ms=100.0
+        )
+        self.assertTrue(ok)
+        self.assertEqual(fresh["sequence"], 101)
+        self.assertEqual(fresh["dataAgeMs"], 15)
+
+    def test_bounded_abort_when_sequence_does_not_advance(self):
+        """Runner aborts while disarmed if IMU sequence stalls during pre-motion wait."""
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+
+        current_status = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+        def mock_arm():
+            current_status["armed"] = True
+            current_status["autonomyState"] = "READY_ARMED"
+            current_status["cmdSource"] = "ROS_AUTONOMY"
+            return {"ok": True, "armed": True}
+        def mock_disarm():
+            current_status["armed"] = False
+            current_status["autonomyState"] = "DISABLED"
+            return {"ok": True, "armed": False}
+
+        mock_cockpit.token = "test"
+        mock_cockpit.get_status.side_effect = lambda: dict(current_status)
+        mock_cockpit.disarm_drive.side_effect = mock_disarm
+        mock_cockpit.arm_drive.side_effect = mock_arm
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        mock_cockpit.enable_autonomy.return_value = {"ok": True, "state": "WAITING_FOR_ZERO"}
+        mock_cockpit.get_autonomy_status.side_effect = lambda: {
+            "state": current_status["autonomyState"],
+            "zeroHandshakeCount": 3,
+            "cmdSource": "ROS_AUTONOMY"
+        }
+        mock_cockpit.set_command_source.return_value = {"ok": True, "source": "NONE"}
+
+        mock_ws.connected = True
+        mock_ws.connect.return_value = True
+        mock_ws.authenticate.return_value = True
+
+        stalled_imu = {
+            "ok": True,
+            "dataAgeMs": 30,
+            "sequence": 100,
+            "rotVecValid": True,
+            "inResetRecovery": False,
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+            "gyro": {"z": 0.0}
+        }
+        mock_cockpit.get_imu.return_value = stalled_imu
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        with patch("tools.rover_tests.runner.wait_for_advancing_imu_sample", return_value=(False, stalled_imu, "Timed out (500ms limit, baseline_seq=100)")):
+            with patch.object(PhysicalTestRunner, "_assert_pre_motion_invariants", return_value=None):
+                trial = runner.execute_single_trial(1)
+
+        self.assertEqual(trial.status, "ABORTED")
+        self.assertIn("Pre-motion IMU synchronization failed", trial.abort_reason)
+        self.assertEqual(trial.telemetry_samples_count, 0)
+        self.assertFalse(current_status["armed"])
+        # Verify no nonzero motion command was ever issued
+        for c in mock_cockpit.send_cmd_vel.call_args_list:
+            wz = c.kwargs.get("wz") or (c.args[1] if len(c.args) > 1 else 0.0)
+            vx = c.kwargs.get("vx") or (c.args[0] if len(c.args) > 0 else 0.0)
+            self.assertEqual(wz, 0.0)
+            self.assertEqual(vx, 0.0)
+
+    def test_pre_motion_passes_but_sample_becomes_stale_before_first_command(self):
+        """Pre-motion check passes, but sample becomes stale (>250ms) during wait -> safe disarm abort."""
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+
+        current_status = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+        def mock_arm():
+            current_status["armed"] = True
+            current_status["autonomyState"] = "READY_ARMED"
+            current_status["cmdSource"] = "ROS_AUTONOMY"
+            return {"ok": True, "armed": True}
+        def mock_disarm():
+            current_status["armed"] = False
+            current_status["autonomyState"] = "DISABLED"
+            return {"ok": True, "armed": False}
+
+        mock_cockpit.token = "test"
+        mock_cockpit.get_status.side_effect = lambda: dict(current_status)
+        mock_cockpit.disarm_drive.side_effect = mock_disarm
+        mock_cockpit.arm_drive.side_effect = mock_arm
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        mock_cockpit.enable_autonomy.return_value = {"ok": True, "state": "WAITING_FOR_ZERO"}
+        mock_cockpit.get_autonomy_status.side_effect = lambda: {
+            "state": current_status["autonomyState"],
+            "zeroHandshakeCount": 3,
+            "cmdSource": "ROS_AUTONOMY"
+        }
+        mock_cockpit.set_command_source.return_value = {"ok": True, "source": "NONE"}
+
+        mock_ws.connected = True
+        mock_ws.connect.return_value = True
+        mock_ws.authenticate.return_value = True
+
+        stale_imu = {
+            "ok": True,
+            "dataAgeMs": 260,
+            "sequence": 101,
+            "rotVecValid": True,
+            "inResetRecovery": False,
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+            "gyro": {"z": 0.0}
+        }
+        mock_cockpit.get_imu.return_value = stale_imu
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        with patch("tools.rover_tests.runner.wait_for_advancing_imu_sample", return_value=(False, stale_imu, "Stale IMU data detected (260ms > 250ms limit)")):
+            with patch.object(PhysicalTestRunner, "_assert_pre_motion_invariants", return_value=None):
+                trial = runner.execute_single_trial(1)
+
+        self.assertEqual(trial.status, "ABORTED")
+        self.assertIn("Stale IMU data detected", trial.abort_reason)
+        self.assertEqual(trial.telemetry_samples_count, 0)
+        self.assertFalse(current_status["armed"])
+        # Verify no nonzero motion command was ever issued
+        for c in mock_cockpit.send_cmd_vel.call_args_list:
+            wz = c.kwargs.get("wz") or (c.args[1] if len(c.args) > 1 else 0.0)
+            vx = c.kwargs.get("vx") or (c.args[0] if len(c.args) > 0 else 0.0)
+            self.assertEqual(wz, 0.0)
+            self.assertEqual(vx, 0.0)
+
+    def test_pre_motion_packets_excluded_from_active_metrics(self):
+        """Packets received prior to first nonzero command being accepted and ACTIVE are excluded."""
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+
+        current_status = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+        def mock_arm():
+            current_status["armed"] = True
+            current_status["autonomyState"] = "READY_ARMED"
+            current_status["cmdSource"] = "ROS_AUTONOMY"
+            return {"ok": True, "armed": True}
+        def mock_disarm():
+            current_status["armed"] = False
+            current_status["autonomyState"] = "DISABLED"
+            return {"ok": True, "armed": False}
+
+        mock_cockpit.token = "test"
+        mock_cockpit.arm_drive.side_effect = mock_arm
+        mock_cockpit.disarm_drive.side_effect = mock_disarm
+        mock_cockpit.get_status.side_effect = lambda: dict(current_status)
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        mock_cockpit.enable_autonomy.return_value = {"ok": True, "state": "WAITING_FOR_ZERO"}
+        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
+        mock_cockpit.get_autonomy_status.side_effect = lambda: {
+            "state": "ACTIVE" if current_status["armed"] else "DISABLED",
+            "clampedAngular": 0.8 if current_status["armed"] else 0.0,
+            "zeroHandshakeCount": 3,
+            "cmdSource": "ROS_AUTONOMY"
+        }
+        mock_cockpit.set_command_source.return_value = {"ok": True, "source": "NONE"}
+
+        mock_ws.connected = True
+        mock_ws.connect.return_value = True
+        mock_ws.authenticate.return_value = True
+
+        # Pre-motion frames queued
+        pre_motion_call_count = 0
+        def mock_recv():
+            nonlocal pre_motion_call_count
+            pre_motion_call_count += 1
+            if pre_motion_call_count == 1:
+                # Returned during step 11b (drained before motion loop)
+                return [
+                    {"type": "pid_diagnostic", "m1": {"targetRadps": 0.0, "measuredRadps": 0.0}},
+                    {"type": "pid_diagnostic", "m1": {"targetRadps": 0.0, "measuredRadps": 0.0}}
+                ]
+            elif pre_motion_call_count == 2:
+                # Active motion frame in first iteration of motion loop
+                return [{"type": "pid_diagnostic", "m1": {"targetRadps": -3.0, "measuredRadps": -2.8}}]
+            return []
+
+        mock_ws.recv_frames.side_effect = mock_recv
+
+        # Incremental yaw progression in small increments so unwrapper tracks smoothly
+        current_deg = 0.0
+        active_motion_entered = False
+        def get_fresh_imu():
+            nonlocal current_deg, active_motion_entered
+            if active_motion_entered:
+                current_deg += 45.0
+            y = min(180.5, current_deg)
+            return {
+                "ok": True,
+                "dataAgeMs": 10,
+                "sequence": 100,
+                "rotVecValid": True,
+                "inResetRecovery": False,
+                "orientation": {"x": 0.0, "y": 0.0, "z": math.sin(math.radians(y)/2), "w": math.cos(math.radians(y)/2)},
+                "gyro": {"z": 0.0}
+            }
+        mock_cockpit.get_imu.side_effect = get_fresh_imu
+
+        with patch("time.sleep", return_value=None):
+            runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+            # Patch wait_for_advancing_imu_sample to trigger active_motion_entered = True
+            def mock_wait(*args, **kwargs):
+                nonlocal active_motion_entered
+                active_motion_entered = True
+                return True, get_fresh_imu(), "ok"
+            with patch("tools.rover_tests.runner.wait_for_advancing_imu_sample", side_effect=mock_wait):
+                with patch.object(PhysicalTestRunner, "_assert_pre_motion_invariants", return_value=None):
+                    trial = runner.execute_single_trial(1)
+
+        # Pre-motion frames were drained; only active frames counted (1 frame)
+        self.assertEqual(trial.telemetry_samples_count, 1)
 
 
 class TestPytestExclusion(unittest.TestCase):
