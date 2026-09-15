@@ -359,9 +359,9 @@ class CockpitClient:
         return {"ok": False, "error": last_error}
 
 
-def perform_zero_handshake(
+def complete_zero_handshake(
     cockpit: CockpitClient,
-    ws: Optional[NativeWSClient],
+    ws: Optional[NativeWSClient] = None,
     max_duration_sec: float = 4.0,
     transitions: Optional[List[Dict[str, Any]]] = None
 ) -> bool:
@@ -369,7 +369,6 @@ def perform_zero_handshake(
     Executes the three-consecutive-zero autonomy handshake:
     1. POST /api/autonomy/enable -> transitions to WAITING_FOR_ZERO.
     2. Streams zero velocity commands until zeroHandshakeCount >= 3 and state == READY_DISARMED.
-    3. POST /api/drive/arm -> transitions to READY_ARMED.
     """
     enable_res = cockpit.enable_autonomy()
     if not enable_res.get("ok", False):
@@ -455,7 +454,17 @@ def perform_zero_handshake(
             underlying_error=last_bridge_error
         )
 
-    # Arm drivetrain
+    return True
+
+
+def arm_and_verify_ready_armed(
+    cockpit: CockpitClient,
+    max_duration_sec: float = 2.0,
+    transitions: Optional[List[Dict[str, Any]]] = None
+) -> bool:
+    """
+    Arms drivetrain and confirms that both Cockpit and ESP32 report READY_ARMED and armed=True stably.
+    """
     arm_res = cockpit.arm_drive()
     if not arm_res.get("ok", False):
         arm_err = arm_res.get("error", "Unknown arm error")
@@ -470,39 +479,49 @@ def perform_zero_handshake(
             underlying_error=arm_err
         )
 
-    # Confirm armed status
-    armed_confirmed = False
-    for _ in range(10):
-        stat = cockpit.get_status()
-        if stat.get("armed") is True:
-            armed_confirmed = True
-            break
-        time.sleep(0.05)
-
-    if not armed_confirmed:
-        # Secondary check on autonomy state
-        auto_stat_post = cockpit.get_autonomy_status()
-        if auto_stat_post.get("state") in ("READY_ARMED", "ACTIVE"):
-            armed_confirmed = True
-
-    if not armed_confirmed:
+    # Confirm armed status: confirm that both Cockpit and ESP32 report READY_ARMED and armed=True
+    t0 = time.time()
+    while time.time() - t0 < max_duration_sec:
         stat = cockpit.get_status()
         auto_stat = cockpit.get_autonomy_status()
-        raise HandshakeException(
-            f"Drivetrain did not report armed within confirmation window (armed={stat.get('armed')}, state={auto_stat.get('state')})",
-            stage="ARM_CONFIRMATION",
-            state=auto_stat.get("state"),
-            zero_count=auto_stat.get("zeroHandshakeCount", 0),
-            cmd_source=stat.get("cmdSource")
-        )
+        is_armed = stat.get("armed") is True
+        is_ready = auto_stat.get("state") in ("READY_ARMED", "ACTIVE")
 
-    if transitions is not None:
-        transitions.append({
-            "timestamp": time.time(),
-            "state": "READY_ARMED",
-            "trigger": "arm_drive"
-        })
+        if is_armed and is_ready:
+            if transitions is not None:
+                transitions.append({
+                    "timestamp": time.time(),
+                    "state": "READY_ARMED",
+                    "trigger": "arm_drive"
+                })
+            return True
 
+        time.sleep(0.04)
+
+    stat = cockpit.get_status()
+    auto_stat = cockpit.get_autonomy_status()
+    raise HandshakeException(
+        f"Drivetrain did not report armed within confirmation window (armed={stat.get('armed')}, state={auto_stat.get('state')})",
+        stage="ARM_CONFIRMATION",
+        state=auto_stat.get("state"),
+        zero_count=auto_stat.get("zeroHandshakeCount", 0),
+        cmd_source=stat.get("cmdSource")
+    )
+
+
+def perform_zero_handshake(
+    cockpit: CockpitClient,
+    ws: Optional[NativeWSClient] = None,
+    max_duration_sec: float = 4.0,
+    transitions: Optional[List[Dict[str, Any]]] = None,
+    arm: bool = True
+) -> bool:
+    """
+    Executes the three-consecutive-zero autonomy handshake, and optionally arms.
+    """
+    complete_zero_handshake(cockpit, ws=ws, max_duration_sec=max_duration_sec, transitions=transitions)
+    if arm:
+        arm_and_verify_ready_armed(cockpit, max_duration_sec=max_duration_sec, transitions=transitions)
     return True
 
 
@@ -513,10 +532,13 @@ def disarm_and_stop(
 ) -> Dict[str, Any]:
     """
     Universal guaranteed zero/disarm cleanup invariant.
-    Must be called on completion, timeouts, watchdog aborts, and in exception finally blocks.
+    Idempotent: safe to call repeatedly without causing state oscillations or double executions.
     Streams zero, disarms drive, disables autonomy, clears command source ownership,
-    and returns & prints the verified final safety state.
+    verifies confirmed disarmed state, and returns the verified final safety state.
     """
+    if not cockpit and not ws:
+        return {"armed": None, "autonomyState": None, "cmdSource": None}
+
     # 1. Stream zero command via WebSocket
     if ws and ws.connected:
         try:
@@ -549,19 +571,35 @@ def disarm_and_stop(
         except Exception:
             pass
 
-        # 6. Verify and confirm final safety state
-        final_state = {"armed": None, "autonomyState": None, "cmdSource": None}
-        try:
-            st = cockpit.get_status()
-            final_state["armed"] = st.get("armed")
-            final_state["autonomyState"] = st.get("autonomyState")
-            final_state["cmdSource"] = st.get("cmdSource")
-        except Exception:
-            pass
+    # 6. Verify and confirm final safety state in a bounded confirmation loop
+    final_state = {"armed": None, "autonomyState": None, "cmdSource": None}
+    if cockpit:
+        t0 = time.time()
+        while time.time() - t0 < 0.60:
+            try:
+                st = cockpit.get_status()
+                final_state["armed"] = st.get("armed")
+                final_state["autonomyState"] = st.get("autonomyState")
+                final_state["cmdSource"] = st.get("cmdSource")
+                if final_state["armed"] is False and final_state["autonomyState"] == "DISABLED":
+                    break
+            except Exception:
+                pass
+            time.sleep(0.04)
+
+        # Fallback if still reported armed: send one more explicit disarm call
+        if final_state["armed"] is True:
+            try:
+                cockpit.disarm_drive()
+                time.sleep(0.05)
+                st = cockpit.get_status()
+                final_state["armed"] = st.get("armed")
+                final_state["autonomyState"] = st.get("autonomyState")
+                final_state["cmdSource"] = st.get("cmdSource")
+            except Exception:
+                pass
 
         if verbose:
             print(f"[CLEANUP VERIFIED] Final safety state: armed={final_state['armed']} autonomyState={final_state['autonomyState']} cmdSource={final_state['cmdSource']}")
 
-        return final_state
-
-    return {"armed": None, "autonomyState": None, "cmdSource": None}
+    return final_state

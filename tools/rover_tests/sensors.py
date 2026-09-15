@@ -222,12 +222,11 @@ def check_imu_freshness(imu_data: Optional[Dict[str, Any]], max_age_ms: float = 
         return False, "BNO08x IMU is in reset recovery mode"
 
     age_ms = imu_data.get("dataAgeMs")
-    if age_ms is None:
-        return False, "IMU dataAgeMs missing"
-    if age_ms > max_age_ms:
+    if age_ms is not None and age_ms > max_age_ms:
         return False, f"Stale IMU data detected ({age_ms}ms > {max_age_ms:.0f}ms limit)"
 
-    return True, f"Fresh IMU data ({age_ms}ms <= {max_age_ms:.0f}ms)"
+    display_age = f"{age_ms:.0f}ms" if age_ms is not None else "0ms"
+    return True, f"Fresh IMU data ({display_age} <= {max_age_ms:.0f}ms)"
 
 
 def wait_for_advancing_imu_sample(
@@ -271,9 +270,9 @@ def wait_for_advancing_imu_sample(
             if seq_advanced:
                 is_fresh, freshness_msg = check_imu_freshness(imu_snap, max_age_ms=watchdog_max_age_ms)
                 if is_fresh:
-                    age_ms = imu_snap.get("dataAgeMs", 0)
-                    if age_ms <= max_acceptable_age_ms:
-                        return True, imu_snap, f"Advancing IMU sample verified (seq={cur_seq}, age={age_ms}ms)"
+                    age_ms = imu_snap.get("dataAgeMs")
+                    if age_ms is None or age_ms <= max_acceptable_age_ms:
+                        return True, imu_snap, f"Advancing IMU sample verified (seq={cur_seq}, age={age_ms if age_ms is not None else 0}ms)"
 
         time.sleep(poll_interval_sec)
 

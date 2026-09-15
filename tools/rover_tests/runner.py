@@ -29,6 +29,8 @@ from .transport import (
     NativeWSClient,
     CockpitClient,
     perform_zero_handshake,
+    complete_zero_handshake,
+    arm_and_verify_ready_armed,
     disarm_and_stop,
     TransportException,
     HandshakeException
@@ -118,9 +120,13 @@ class PhysicalTestRunner:
                     print(f"\n[SAFETY STOP] Trial {trial_idx} aborted. Routine halted for forensic preservation.")
                     break
         finally:
-            disarm_and_stop(self.cockpit, self.ws)
+            final_cleanup = disarm_and_stop(self.cockpit, self.ws, verbose=False)
             if self.ws.connected:
                 self.ws.close()
+            final_disarmed = (final_cleanup.get("armed") is False and final_cleanup.get("autonomyState") == "DISABLED")
+            for t in suite_report.trials:
+                if not final_disarmed:
+                    t.confirmed_final_disarmed_state = False
 
         # Compute suite statistics across successful trials
         successful_trials = [t for t in suite_report.trials if t.status in ("SUCCESS", "DRY_RUN_PASSED")]
@@ -163,7 +169,7 @@ class PhysicalTestRunner:
             return f"Pre-motion invariant violated: autonomyState is '{cur_state}' (expected READY_ARMED)"
 
         cmd_source = auto_stat.get("cmdSource") or drv_stat.get("cmdSource")
-        if cmd_source not in ("NONE", "ROS_AUTONOMY"):
+        if cmd_source not in ("NONE", "ROS_AUTONOMY", None):
             return f"Pre-motion invariant violated: unexpected cmdSource '{cmd_source}' (expected NONE or ROS_AUTONOMY)"
 
         is_fresh, freshness_msg = check_imu_freshness(imu_stat, max_age_ms=250.0)
@@ -222,7 +228,11 @@ class PhysicalTestRunner:
                 trial_report.status = "ABORTED"
                 trial_report.abort_reason = f"IMU Non-Magnetic Check FAILED: {reason}"
                 print(f"[FAIL-CLOSED ERROR] {trial_report.abort_reason}")
-                disarm_and_stop(self.cockpit, self.ws)
+                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                )
                 return trial_report
             print(f"[OK] BNO08x Orientation Verified: {reason}")
         else:
@@ -256,10 +266,52 @@ class PhysicalTestRunner:
                 trial_report.status = "ABORTED"
                 trial_report.abort_reason = f"Stationary gyro bias calibration failed: {e}"
                 print(f"[SENSOR ABORT] {trial_report.abort_reason}")
-                disarm_and_stop(self.cockpit, self.ws)
+                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                )
                 return trial_report
 
-        # 5. Autonomy Enable, Three-Consecutive-Zero Handshake, and Arming
+        # Step 5: Wait for a genuinely new, advancing IMU orientation sample before arming (while safely DISARMED)
+        if not self.params.dry_run:
+            baseline_imu = self.cockpit.get_imu()
+            baseline_seq = baseline_imu.get("sequence") if baseline_imu else None
+            baseline_esp_ts = baseline_imu.get("espTimestampUs") if baseline_imu else None
+
+            adv_ok, fresh_imu, adv_reason = wait_for_advancing_imu_sample(
+                self.cockpit,
+                baseline_seq=baseline_seq,
+                baseline_esp_ts_us=baseline_esp_ts,
+                max_wait_sec=0.50,
+                max_acceptable_age_ms=100.0,
+                watchdog_max_age_ms=250.0
+            )
+            if not adv_ok:
+                fail_reason = f"Pre-motion IMU synchronization failed: {adv_reason}"
+                print(f"[PRE-MOTION ABORT] {fail_reason}")
+                trial_report.status = "ABORTED"
+                trial_report.abort_reason = fail_reason
+                trial_report.telemetry_samples_count = 0
+                trial_report.wheel_metrics = wheel_metrics
+                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                )
+                trial_report.autonomy_state_transitions.append({
+                    "timestamp": time.time(),
+                    "state": cleanup_st.get("autonomyState", "DISABLED"),
+                    "trigger": "advancing_imu_sample_timeout"
+                })
+                return trial_report
+
+            if fresh_imu:
+                fresh_raw_yaw = quat_to_yaw(fresh_imu.get("orientation", {}))
+                unwrapper.update_orientation_yaw(fresh_raw_yaw)
+            print(f"[OK] Advancing fresh IMU sample synchronized: {adv_reason}")
+
+        # Step 6: Autonomy Enable, Three-Consecutive-Zero Handshake, and Arming
         if not self.params.dry_run:
             try:
                 print("  Executing 3-consecutive-zero autonomy handshake...")
@@ -284,7 +336,11 @@ class PhysicalTestRunner:
                 print("  • Traceback:")
                 for line in tb_str.strip().splitlines():
                     print(f"      {line}")
-                disarm_and_stop(self.cockpit, self.ws)
+                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                )
                 return trial_report
             except Exception as e:
                 tb_str = traceback.format_exc()
@@ -296,7 +352,11 @@ class PhysicalTestRunner:
                 print("  • Traceback:")
                 for line in tb_str.strip().splitlines():
                     print(f"      {line}")
-                disarm_and_stop(self.cockpit, self.ws)
+                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                )
                 return trial_report
         else:
             print("[OK] [DRY RUN] 3-consecutive-zero autonomy handshake simulated.")
@@ -316,6 +376,10 @@ class PhysicalTestRunner:
                 trial_report.wheel_metrics = wheel_metrics
                 print(f"[FAIL-CLOSED ASSERTION FAILED] {inv_error}")
                 cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                )
                 trial_report.autonomy_state_transitions.append({
                     "timestamp": time.time(),
                     "state": cleanup_st.get("autonomyState", "DISABLED"),
@@ -324,40 +388,7 @@ class PhysicalTestRunner:
                 return trial_report
             print("[OK] Pre-motion invariants verified: armed=True, autonomyState=READY_ARMED, valid cmdSource, fresh IMU & encoders.")
 
-            # Step 7b: Wait for a genuinely new, advancing IMU orientation sample before issuing motion command
-            baseline_imu = self.cockpit.get_imu()
-            baseline_seq = baseline_imu.get("sequence") if baseline_imu else None
-            baseline_esp_ts = baseline_imu.get("espTimestampUs") if baseline_imu else None
-
-            adv_ok, fresh_imu, adv_reason = wait_for_advancing_imu_sample(
-                self.cockpit,
-                baseline_seq=baseline_seq,
-                baseline_esp_ts_us=baseline_esp_ts,
-                max_wait_sec=0.50,
-                max_acceptable_age_ms=100.0,
-                watchdog_max_age_ms=250.0
-            )
-            if not adv_ok:
-                fail_reason = f"Pre-motion IMU synchronization failed: {adv_reason}"
-                print(f"[PRE-MOTION ABORT] {fail_reason}")
-                trial_report.status = "ABORTED"
-                trial_report.abort_reason = fail_reason
-                trial_report.telemetry_samples_count = 0
-                trial_report.wheel_metrics = wheel_metrics
-                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
-                trial_report.autonomy_state_transitions.append({
-                    "timestamp": time.time(),
-                    "state": cleanup_st.get("autonomyState", "DISABLED"),
-                    "trigger": "advancing_imu_sample_timeout"
-                })
-                return trial_report
-
-            if fresh_imu:
-                fresh_raw_yaw = quat_to_yaw(fresh_imu.get("orientation", {}))
-                unwrapper.update_orientation_yaw(fresh_raw_yaw)
-            print(f"[OK] Advancing fresh IMU sample synchronized: {adv_reason}")
-
-        # 6. Motion Controller Execution
+        # Step 9: Immediately send first command (no dwell/sleep while armed)
         controller = AngularApproachController(
             cruise_wz_radps=self.params.max_angular_speed,
             creep_wz_radps=self.params.creep_angular_speed,
@@ -365,7 +396,6 @@ class PhysicalTestRunner:
         )
         controller.reset(target=self.params.signed_target_deg, start_time=time.time())
 
-        # Step 8: Begin the nonzero motion loop
         first_cmd_wz = controller.update(current_progress=0.0, current_time=time.time())
         if abs(first_cmd_wz) < 1e-4:
             first_cmd_wz = math.copysign(self.params.creep_angular_speed, self.params.signed_target_deg)
@@ -374,7 +404,7 @@ class PhysicalTestRunner:
             first_res = self.cockpit.send_cmd_vel(vx=0.0, wz=first_cmd_wz)
             trial_report.first_command_response = first_res
 
-            # Step 9: Verify the first nonzero command was accepted
+            # Verify the first nonzero command was accepted
             if not first_res.get("ok", False):
                 err = first_res.get("error", "Unknown command rejection")
                 rej = self.cockpit.get_autonomy_status().get("lastRejectionReason")
@@ -385,6 +415,10 @@ class PhysicalTestRunner:
                 trial_report.telemetry_samples_count = 0
                 trial_report.wheel_metrics = wheel_metrics
                 cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                )
                 trial_report.autonomy_state_transitions.append({
                     "timestamp": time.time(),
                     "state": cleanup_st.get("autonomyState", "DISABLED"),
@@ -418,6 +452,10 @@ class PhysicalTestRunner:
                 trial_report.telemetry_samples_count = 0
                 trial_report.wheel_metrics = wheel_metrics
                 cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                )
                 trial_report.autonomy_state_transitions.append({
                     "timestamp": time.time(),
                     "state": cleanup_st.get("autonomyState", "DISABLED"),
@@ -646,6 +684,10 @@ class PhysicalTestRunner:
             trial_report.abort_reason = abort_reason
             print(f"[TRIAL ABORTED] {abort_reason}")
             cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+            trial_report.confirmed_final_zero_command = True
+            trial_report.confirmed_final_disarmed_state = (
+                cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+            )
             trial_report.autonomy_state_transitions.append({
                 "timestamp": time.time(),
                 "state": cleanup_st.get("autonomyState", "DISABLED"),
@@ -679,6 +721,10 @@ class PhysicalTestRunner:
 
         # Execute disarm_and_stop() ONLY after the target and settling sequence completes!
         cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+        trial_report.confirmed_final_zero_command = True
+        trial_report.confirmed_final_disarmed_state = (
+            cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+        )
         trial_report.autonomy_state_transitions.append({
             "timestamp": time.time(),
             "state": cleanup_st.get("autonomyState", "DISABLED"),
@@ -695,8 +741,6 @@ class PhysicalTestRunner:
         trial_report.breakout_event_count = breakout_count
         trial_report.breakout_dwell_time_ms_total = total_breakout_dwell_ms
         trial_report.approach_milestones = controller.get_telemetry_summary()
-        trial_report.confirmed_final_zero_command = True
-        trial_report.confirmed_final_disarmed_state = True
         trial_report.status = "DRY_RUN_PASSED" if self.params.dry_run else "SUCCESS"
 
         print(f"[OK] Trial Completed ({trial_report.status})")

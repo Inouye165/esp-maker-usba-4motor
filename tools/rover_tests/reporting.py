@@ -93,8 +93,8 @@ class TrialReport:
     # Safety & State Confirmation
     watchdog_trips: List[str] = field(default_factory=list)
     communication_faults: List[str] = field(default_factory=list)
-    confirmed_final_zero_command: bool = True
-    confirmed_final_disarmed_state: bool = True
+    confirmed_final_zero_command: bool = False
+    confirmed_final_disarmed_state: bool = False
     telemetry_samples_count: int = 0
     autonomy_state_transitions: List[Dict[str, Any]] = field(default_factory=list)
     first_command_response: Dict[str, Any] = field(default_factory=dict)

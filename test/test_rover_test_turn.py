@@ -1276,6 +1276,97 @@ class TestIMUFreshnessAndPreMotionGate(unittest.TestCase):
         self.assertEqual(trial.telemetry_samples_count, 1)
 
 
+class TestStateSequencingAndIdempotentCleanup(unittest.TestCase):
+    """
+    Focused regressions for suite 1789475780:
+    1. Synchronize fresh IMU before arming (while safely DISARMED).
+    2. Cleanup is idempotent and does not toggle or oscillate states.
+    3. Final JSON report never reports confirmed_final_disarmed_state=True if final cleanup reports armed=True.
+    4. First nonzero command immediately follows READY_ARMED and verifies ACTIVE.
+    """
+
+    def test_imu_sync_occurs_before_arming_while_disarmed(self):
+        """Validates that wait_for_advancing_imu_sample is invoked while rover is DISARMED before perform_zero_handshake."""
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+        mock_ws.connected = True
+
+        status_at_imu_sync = []
+        def mock_wait_imu(*args, **kwargs):
+            status_at_imu_sync.append(mock_cockpit.get_status())
+            return True, {"ok": True, "rotVecValid": True, "orientation": {"w": 1, "x": 0, "y": 0, "z": 0}, "gyro": {"z": 0.0}}, "ok"
+
+        mock_cockpit.get_status.return_value = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        mock_cockpit.get_imu.return_value = {
+            "ok": True, "rotVecValid": True,
+            "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "orientation": {"w": 1, "x": 0, "y": 0, "z": 0},
+            "gyro": {"z": 0.0}
+        }
+        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
+        mock_cockpit.get_autonomy_status.return_value = {
+            "state": "ACTIVE",
+            "clampedAngular": 0.8,
+            "zeroHandshakeCount": 3,
+            "cmdSource": "ROS_AUTONOMY"
+        }
+
+        with patch("tools.rover_tests.runner.wait_for_advancing_imu_sample", side_effect=mock_wait_imu):
+            with patch("tools.rover_tests.runner.perform_zero_handshake", return_value=True):
+                with patch("time.sleep", return_value=None):
+                    runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+                    trial = runner.execute_single_trial(1)
+
+        self.assertTrue(len(status_at_imu_sync) > 0)
+        self.assertFalse(status_at_imu_sync[0]["armed"], "Rover must be DISARMED when synchronizing fresh IMU sample")
+
+    def test_cleanup_idempotency_multiple_invocations(self):
+        """Calling disarm_and_stop repeatedly safely maintains stopped, disarmed, disabled state."""
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+        mock_ws.connected = True
+        mock_cockpit.get_status.return_value = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+
+        res1 = disarm_and_stop(mock_cockpit, mock_ws, verbose=False)
+        res2 = disarm_and_stop(mock_cockpit, mock_ws, verbose=False)
+
+        self.assertFalse(res1["armed"])
+        self.assertFalse(res2["armed"])
+        self.assertEqual(res1["autonomyState"], "DISABLED")
+        self.assertEqual(res2["autonomyState"], "DISABLED")
+
+    def test_report_never_claims_disarm_success_when_final_armed_true(self):
+        """Guarantees that confirmed_final_disarmed_state is False in JSON and Trial if rover remains armed."""
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_cockpit.token = "test-token"
+        mock_ws = MagicMock(spec=NativeWSClient)
+        mock_ws.connected = True
+        mock_ws.authenticate.return_value = True
+
+        # Rover gets stuck in armed state despite cleanup
+        mock_cockpit.get_status.return_value = {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.get_autonomy_status.return_value = {"state": "READY_ARMED", "zeroHandshakeCount": 3, "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        mock_cockpit.get_imu.return_value = {
+            "ok": True, "rotVecValid": True,
+            "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "orientation": {"w": 1, "x": 0, "y": 0, "z": 0},
+            "gyro": {"z": 0.0}
+        }
+        mock_cockpit.send_cmd_vel.return_value = {"ok": False, "error": "Simulated hardware fault"}
+
+        with patch("time.sleep", return_value=None):
+            runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+            suite = runner.execute_suite()
+
+        self.assertEqual(len(suite.trials), 1)
+        trial = suite.trials[0]
+        self.assertFalse(trial.confirmed_final_disarmed_state, "Report must NEVER report confirmed_final_disarmed_state=True when final armed=True")
+
+
 class TestPytestExclusion(unittest.TestCase):
     """Verifies that physical test tools are not collected by pytest."""
 
