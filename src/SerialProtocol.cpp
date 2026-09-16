@@ -693,6 +693,16 @@ void SerialProtocol::sendPidTelemetry(const WheelController &wheelController, co
         int16_t pwmVal = d.finalPwm;
         int16_t stateVal = (int16_t)d.stictionState;
 
+        int off = i * 16;
+        memcpy(&pidData[off + 0],  &tVal, 2);
+        memcpy(&pidData[off + 2],  &mVal, 2);
+        memcpy(&pidData[off + 4],  &ffVal, 2);
+        memcpy(&pidData[off + 6],  &pVal, 2);
+        memcpy(&pidData[off + 8],  &iVal, 2);
+        memcpy(&pidData[off + 10], &dVal, 2);
+        memcpy(&pidData[off + 12], &pwmVal, 2);
+        memcpy(&pidData[off + 14], &stateVal, 2);
+
         // Extended Versioned Spin Sync Trim Telemetry (Offset 80..95)
         int16_t basePwmVal = d.basePwm;
         int16_t syncTrimVal = d.spinSyncTrim;

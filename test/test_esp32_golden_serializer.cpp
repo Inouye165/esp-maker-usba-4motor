@@ -202,6 +202,119 @@ int main() {
     assert(encoderFrame[3] == 0x0D);
     printf(" -> PASS 3: 0x0D Encoder 21-byte complete frame (extLen=19, checksum=0x%02X)\n", encoderFrame[20]);
 
-    printf("\nALL C++ PRODUCTION SERIALIZER GOLDEN TESTS PASSED 100%!\n");
+    // 4. Golden Test for 0x3B PID Diagnostic 101-byte complete frame (96-byte payload)
+    struct TestWheelDiag {
+        float targetVel;
+        float measuredVel;
+        float feedforward;
+        float pTerm;
+        float iTerm;
+        float dTerm;
+        int16_t finalPwm;
+        int16_t stictionState;
+        int16_t basePwm;
+        int16_t spinSyncTrim;
+    };
+    struct TestOuterDiag {
+        float wzRequested;
+        float wzActual;
+        float yawOuterError;
+        float yawOuterCorrection;
+        float wzCorrected;
+        bool yawOuterActive;
+        bool imuGyroValid;
+        uint16_t imuGyroAgeMs;
+    };
+
+    TestWheelDiag testWheels[4] = {
+        {-4.25f, -4.12f, -15.2f, -8.4f, -1.5f, -0.6f, -185, 2, -190, 5},
+        { 3.80f,  3.65f,  12.6f,  7.1f,  2.3f,  1.1f,  160, 1,  150, -10},
+        {-2.75f, -0.02f,  -9.8f, -14.5f, -4.2f,  0.8f, -240, 3, -230, -10},
+        { 1.50f,  1.48f,   5.4f,  3.2f, -0.8f, -1.4f,   95, 0,   90, 5}
+    };
+    TestOuterDiag testOuter = {0.80f, 0.76f, 0.04f, -0.12f, 0.68f, true, true, 12};
+
+    uint8_t pidPayload[96];
+    memset(pidPayload, 0, 96);
+    for (int i = 0; i < 4; i++) {
+        const TestWheelDiag &d = testWheels[i];
+        int16_t tVal = (int16_t)(d.targetVel * 100.0f);
+        int16_t mVal = (int16_t)(d.measuredVel * 100.0f);
+        int16_t ffVal = (int16_t)(d.feedforward * 10.0f);
+        int16_t pVal = (int16_t)(d.pTerm * 10.0f);
+        int16_t iVal = (int16_t)(d.iTerm * 10.0f);
+        int16_t dVal = (int16_t)(d.dTerm * 10.0f);
+        int16_t pwmVal = d.finalPwm;
+        int16_t stateVal = d.stictionState;
+
+        int off = i * 16;
+        memcpy(&pidPayload[off + 0],  &tVal, 2);
+        memcpy(&pidPayload[off + 2],  &mVal, 2);
+        memcpy(&pidPayload[off + 4],  &ffVal, 2);
+        memcpy(&pidPayload[off + 6],  &pVal, 2);
+        memcpy(&pidPayload[off + 8],  &iVal, 2);
+        memcpy(&pidPayload[off + 10], &dVal, 2);
+        memcpy(&pidPayload[off + 12], &pwmVal, 2);
+        memcpy(&pidPayload[off + 14], &stateVal, 2);
+
+        int16_t basePwmVal = d.basePwm;
+        int16_t syncTrimVal = d.spinSyncTrim;
+        memcpy(&pidPayload[80 + i * 4 + 0], &basePwmVal, 2);
+        memcpy(&pidPayload[80 + i * 4 + 2], &syncTrimVal, 2);
+    }
+    int16_t wzReqVal = (int16_t)(testOuter.wzRequested * 100.0f);
+    int16_t wzActVal = (int16_t)(testOuter.wzActual * 100.0f);
+    int16_t errVal   = (int16_t)(testOuter.yawOuterError * 100.0f);
+    int16_t corrVal  = (int16_t)(testOuter.yawOuterCorrection * 100.0f);
+    int16_t wzCorrVal= (int16_t)(testOuter.wzCorrected * 100.0f);
+    uint8_t activeVal= testOuter.yawOuterActive ? 1 : 0;
+    uint8_t validVal = testOuter.imuGyroValid ? 1 : 0;
+    uint16_t ageVal  = testOuter.imuGyroAgeMs;
+    uint16_t rsvdVal = 0;
+
+    memcpy(&pidPayload[64], &wzReqVal, 2);
+    memcpy(&pidPayload[66], &wzActVal, 2);
+    memcpy(&pidPayload[68], &errVal, 2);
+    memcpy(&pidPayload[70], &corrVal, 2);
+    memcpy(&pidPayload[72], &wzCorrVal, 2);
+    pidPayload[74] = activeVal;
+    pidPayload[75] = validVal;
+    memcpy(&pidPayload[76], &ageVal, 2);
+    memcpy(&pidPayload[78], &rsvdVal, 2);
+
+    // Verify wheel 0 values
+    int16_t m1_tgt, m1_meas, m1_pwm, m1_stiction;
+    memcpy(&m1_tgt, &pidPayload[0], 2);
+    memcpy(&m1_meas, &pidPayload[2], 2);
+    memcpy(&m1_pwm, &pidPayload[12], 2);
+    memcpy(&m1_stiction, &pidPayload[14], 2);
+    assert(m1_tgt == -425);
+    assert(m1_meas == -412);
+    assert(m1_pwm == -185);
+    assert(m1_stiction == 2);
+
+    // Verify wheel 1 values
+    int16_t m2_tgt, m2_meas;
+    memcpy(&m2_tgt, &pidPayload[16], 2);
+    memcpy(&m2_meas, &pidPayload[18], 2);
+    assert(m2_tgt == 380);
+    assert(m2_meas == 365);
+
+    // Verify extended trim at offset 80
+    int16_t m1_base, m1_trim;
+    memcpy(&m1_base, &pidPayload[80], 2);
+    memcpy(&m1_trim, &pidPayload[82], 2);
+    assert(m1_base == -190);
+    assert(m1_trim == 5);
+
+    uint8_t pidFrame[128];
+    size_t pidFrameLen = buildPacketFrame(pidFrame, sizeof(pidFrame), 0x3B, pidPayload, 96);
+    assert(pidFrameLen == 101);
+    assert(pidFrame[0] == 0xFF && pidFrame[1] == 0xFB);
+    assert(pidFrame[2] == 99); // extLen = 96 + 3 = 99 (0x63)
+    assert(pidFrame[3] == 0x3B);
+    printf(" -> PASS 4: 0x3B PID Diagnostic 101-byte complete frame (extLen=99, checksum=0x%02X)\n", pidFrame[100]);
+
+    printf("\nALL C++ PRODUCTION SERIALIZER GOLDEN TESTS PASSED 100%%!\n");
     return 0;
 }
