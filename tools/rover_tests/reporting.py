@@ -26,13 +26,14 @@ class WheelTrialMetrics:
     wheel_id: str  # "m1", "m2", "m3", "m4"
     slot_mapping: str = ""    # "Slot 1" .. "Slot 4"
     corner: str = ""          # "LF", "RF", "LR", "RR"
+    validity: str = "VALID"   # "VALID", "INVALID"
 
-    # Commanded speed metrics (None if telemetry unavailable, never false 0.00)
+    # Commanded speed metrics (None if telemetry unavailable or invalid, never false 0.00)
     commanded_speed_radps_mean: Optional[float] = None
     commanded_speed_radps_max: Optional[float] = None
-    commanded_speed_source: str = "firmware_pid"  # "firmware_pid", "calculated_expected", "unavailable"
+    commanded_speed_source: str = "firmware_pid"  # "firmware_pid", "calculated_expected", "unavailable", "INVALID_ZERO_TELEMETRY"
 
-    # Measured speed metrics (None if telemetry unavailable, never false 0.00)
+    # Measured speed metrics (None if telemetry unavailable or invalid, never false 0.00)
     measured_speed_radps_mean: Optional[float] = None
     measured_speed_radps_abs_mean: Optional[float] = None
     measured_speed_radps_min: Optional[float] = None
@@ -42,7 +43,7 @@ class WheelTrialMetrics:
     encoder_final_ticks: int = 0
     encoder_delta_ticks: int = 0
 
-    stopped_while_commanded: bool = False
+    stopped_while_commanded: Optional[bool] = None  # None = Unknown, True = Stalled while commanded, False = Commanded and moving
     stopped_while_commanded_count: int = 0
     stopped_while_commanded_duration_s: float = 0.0
 
@@ -84,6 +85,7 @@ class TrialReport:
 
     # Wheel & Actuation Metrics
     wheel_metrics: Dict[str, WheelTrialMetrics] = field(default_factory=dict)
+    wheel_forensics_valid: bool = True
     opposite_polarity_maintained: bool = True
     intentional_asymmetry_reported: bool = False
     breakout_assistance_active: bool = False
@@ -199,7 +201,9 @@ class ReportGenerator:
                 wheel_label = f"**{w_id.upper()}** ({w.slot_mapping} / {w.corner})"
 
                 # Commanded target formatting
-                if w.commanded_speed_radps_mean is not None:
+                if w.validity == "INVALID" or w.commanded_speed_source == "INVALID_ZERO_TELEMETRY":
+                    cmd_str = "*INVALID*"
+                elif w.commanded_speed_radps_mean is not None:
                     if w.commanded_speed_source == "calculated_expected":
                         cmd_str = f"`{w.commanded_speed_radps_mean:+.2f}` *(calc)*"
                     else:
@@ -208,26 +212,33 @@ class ReportGenerator:
                     cmd_str = "*Unavailable*"
 
                 # Measured speed formatting
-                if w.measured_speed_radps_mean is not None:
-                    meas_str = f"`{w.measured_speed_radps_mean:+.2f}`"
+                if w.validity == "INVALID":
+                    meas_str = "*INVALID*"
+                    abs_str = "*INVALID*"
+                    range_str = "*INVALID*"
                 else:
-                    meas_str = "*Unavailable*"
+                    if w.measured_speed_radps_mean is not None:
+                        meas_str = f"`{w.measured_speed_radps_mean:+.2f}`"
+                    else:
+                        meas_str = "*Unavailable*"
 
-                if w.measured_speed_radps_abs_mean is not None:
-                    abs_str = f"`{w.measured_speed_radps_abs_mean:.2f}`"
-                else:
-                    abs_str = "*Unavailable*"
+                    if w.measured_speed_radps_abs_mean is not None:
+                        abs_str = f"`{w.measured_speed_radps_abs_mean:.2f}`"
+                    else:
+                        abs_str = "*Unavailable*"
 
-                if w.measured_speed_radps_min is not None and w.measured_speed_radps_max is not None:
-                    range_str = f"`[{w.measured_speed_radps_min:+.2f}, {w.measured_speed_radps_max:+.2f}]`"
-                else:
-                    range_str = "*Unavailable*"
+                    if w.measured_speed_radps_min is not None and w.measured_speed_radps_max is not None:
+                        range_str = f"`[{w.measured_speed_radps_min:+.2f}, {w.measured_speed_radps_max:+.2f}]`"
+                    else:
+                        range_str = "*Unavailable*"
 
                 # Stopped while commanded formatting
-                if w.stopped_while_commanded:
+                if w.stopped_while_commanded is True:
                     stopped_str = f"**YES ({w.stopped_while_commanded_count} ev / {w.stopped_while_commanded_duration_s:.2f}s)**"
-                else:
+                elif w.stopped_while_commanded is False:
                     stopped_str = "No (0s)"
+                else:
+                    stopped_str = "Unknown"
 
                 md.append(f"| {wheel_label} | {cmd_str} | {meas_str} | {abs_str} | {range_str} | {w.encoder_delta_ticks:+d} | {stopped_str} | {w.stiction_boost_events} |")
             md.append("")

@@ -232,6 +232,42 @@ class PhysicalTestRunner:
 
         return None
 
+    @staticmethod
+    def _validate_wheel_forensics_consistency(
+        trial_report: TrialReport,
+        wheel_metrics: Dict[str, WheelTrialMetrics],
+        wheel_samples: Dict[str, Dict[str, Any]],
+    ) -> None:
+        """
+        Validates telemetry consistency against physical encoder feedback.
+        If encoder deltas are nonzero (indicating physical motion) but every active
+        target and measured speed is zero, mark wheel forensics INVALID rather than
+        reporting misleading valid zero values.
+        """
+        any_nonzero_encoder = any(abs(wheel_metrics[w].encoder_delta_ticks) > 50 for w in ["m1", "m2", "m3", "m4"])
+
+        for w_id in ["m1", "m2", "m3", "m4"]:
+            w_metric = wheel_metrics[w_id]
+            ws_buf = wheel_samples.get(w_id, {})
+            targets = ws_buf.get("targets", [])
+            measured = ws_buf.get("measured", [])
+
+            has_encoder_motion = (abs(w_metric.encoder_delta_ticks) > 50) or (any_nonzero_encoder and abs(w_metric.encoder_delta_ticks) > 0)
+            all_targets_zero = len(targets) > 0 and all(abs(t) < 1e-4 for t in targets)
+            all_measured_zero = len(measured) > 0 and all(abs(m) < 1e-4 for m in measured)
+
+            if has_encoder_motion and all_targets_zero and all_measured_zero:
+                w_metric.validity = "INVALID"
+                w_metric.commanded_speed_source = "INVALID_ZERO_TELEMETRY"
+                w_metric.commanded_speed_radps_mean = None
+                w_metric.commanded_speed_radps_max = None
+                w_metric.measured_speed_radps_mean = None
+                w_metric.measured_speed_radps_abs_mean = None
+                w_metric.measured_speed_radps_min = None
+                w_metric.measured_speed_radps_max = None
+                w_metric.stopped_while_commanded = None
+                trial_report.wheel_forensics_valid = False
+
     def execute_single_trial(self, trial_idx: int) -> TrialReport:
         """Executes one physical turn trial adhering to all exact-motion invariants."""
         print(f"\n--- Starting Trial {trial_idx}/{self.params.trials} ---")
@@ -792,15 +828,27 @@ class PhysicalTestRunner:
                 w_metric.measured_speed_radps_min = None
                 w_metric.measured_speed_radps_max = None
 
-            w_metric.stopped_while_commanded = stalls_detected[w_id] or (ws_buf["stopped_events"] > 0)
-            w_metric.stopped_while_commanded_count = ws_buf["stopped_events"]
-            w_metric.stopped_while_commanded_duration_s = ws_buf["stopped_duration_s"]
+            observed_nonzero_target = any(abs(t) >= 0.05 for t in targets)
+            if observed_nonzero_target:
+                w_metric.stopped_while_commanded = bool(stalls_detected[w_id] or (ws_buf["stopped_events"] > 0))
+                w_metric.stopped_while_commanded_count = ws_buf["stopped_events"]
+                w_metric.stopped_while_commanded_duration_s = ws_buf["stopped_duration_s"]
+            else:
+                w_metric.stopped_while_commanded = None
+                w_metric.stopped_while_commanded_count = 0
+                w_metric.stopped_while_commanded_duration_s = 0.0
 
         trial_report.telemetry_samples_count = total_telemetry_samples
         trial_report.wheel_metrics = wheel_metrics
 
         # If motion loop aborted, execute self.cleanup() immediately and return
         if abort_reason:
+            enc_final = self.cockpit.get_encoders().get("encoders", enc_start)
+            for w_id in ["m1", "m2", "m3", "m4"]:
+                w_metric = wheel_metrics[w_id]
+                w_metric.encoder_final_ticks = enc_final.get(w_id, w_metric.encoder_start_ticks)
+                w_metric.encoder_delta_ticks = w_metric.encoder_final_ticks - w_metric.encoder_start_ticks
+            self._validate_wheel_forensics_consistency(trial_report, wheel_metrics, wheel_samples)
             trial_report.status = "ABORTED"
             trial_report.abort_reason = abort_reason
             print(f"[TRIAL ABORTED] {abort_reason}")
@@ -841,6 +889,8 @@ class PhysicalTestRunner:
             w_metric = wheel_metrics[w_id]
             w_metric.encoder_final_ticks = enc_final.get(w_id, w_metric.encoder_start_ticks)
             w_metric.encoder_delta_ticks = w_metric.encoder_final_ticks - w_metric.encoder_start_ticks
+
+        self._validate_wheel_forensics_consistency(trial_report, wheel_metrics, wheel_samples)
 
         # Execute self.cleanup() ONLY after the target and settling sequence completes!
         cleanup_st = self.cleanup()

@@ -42,6 +42,12 @@ from tools.rover_tests.transport import (
     HandshakeException
 )
 from tools.rover_tests.runner import PhysicalTestRunner
+from tools.rover_tests.reporting import (
+    WheelTrialMetrics,
+    TrialReport,
+    MultiTrialSuiteReport,
+    ReportGenerator,
+)
 
 
 class TestParameterValidation(unittest.TestCase):
@@ -1448,6 +1454,221 @@ class TestStateSequencingAndIdempotentCleanup(unittest.TestCase):
         self.assertEqual(len(suite.trials), 1)
         trial = suite.trials[0]
         self.assertFalse(trial.confirmed_final_disarmed_state, "Report must NEVER report confirmed_final_disarmed_state=True when final armed=True")
+
+
+class TestProductionPidDiagnosticFrameRegression(unittest.TestCase):
+    """
+    Regression tests verifying that exact production pid_diagnostic frames
+    with zero target/measured values trigger consistency failure (INVALID forensics)
+    when physical encoder deltas are nonzero, and that stopped-while-commanded is
+    Unknown unless a nonzero target was actually observed.
+    """
+
+    EXACT_PROD_PID_DIAGNOSTIC_FRAME = {
+        "type": "pid_diagnostic",
+        "timestamp": 1789562117051,
+        "sequence": 34550,
+        "m1": {
+            "targetRadps": 0,
+            "measuredRadps": 0,
+            "feedforward": 0,
+            "pTerm": 0,
+            "iTerm": 0,
+            "dTerm": 0,
+            "basePwm": 0,
+            "spinSyncTrim": 0,
+            "finalPwm": 0,
+            "stictionCode": 0,
+            "stictionState": "IDLE"
+        },
+        "m2": {
+            "targetRadps": 0,
+            "measuredRadps": 0,
+            "feedforward": 0,
+            "pTerm": 0,
+            "iTerm": 0,
+            "dTerm": 0,
+            "basePwm": 0,
+            "spinSyncTrim": 0,
+            "finalPwm": 0,
+            "stictionCode": 0,
+            "stictionState": "IDLE"
+        },
+        "m3": {
+            "targetRadps": 0,
+            "measuredRadps": 0,
+            "feedforward": 0,
+            "pTerm": 0,
+            "iTerm": 0,
+            "dTerm": 0,
+            "basePwm": 0,
+            "spinSyncTrim": 0,
+            "finalPwm": 0,
+            "stictionCode": 0,
+            "stictionState": "IDLE"
+        },
+        "m4": {
+            "targetRadps": 0,
+            "measuredRadps": 0,
+            "feedforward": 0,
+            "pTerm": 0,
+            "iTerm": 0,
+            "dTerm": 0,
+            "basePwm": 0,
+            "spinSyncTrim": 0,
+            "finalPwm": 0,
+            "stictionCode": 0,
+            "stictionState": "IDLE"
+        },
+        "outerYaw": {
+            "wzRequested": 0,
+            "wzActual": 0,
+            "yawOuterError": 0,
+            "yawOuterCorrection": 0,
+            "wzCorrected": 0,
+            "yawOuterActive": False,
+            "imuGyroValid": False,
+            "imuGyroAgeMs": 0
+        }
+    }
+
+    def test_exact_production_frame_zero_telemetry_consistency_failure(self):
+        """When rover physically turns (large encoder deltas) but exact production frames contain zeros, mark INVALID."""
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+
+        mock_cockpit.token = "test_token"
+        mock_cockpit.base_url = "http://127.0.0.1:3000"
+
+        current_status = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+        def mock_arm():
+            current_status["armed"] = True
+            current_status["autonomyState"] = "READY_ARMED"
+            current_status["cmdSource"] = "ROS_AUTONOMY"
+            return {"ok": True, "armed": True}
+        def mock_disarm():
+            current_status["armed"] = False
+            current_status["autonomyState"] = "DISABLED"
+            return {"ok": True, "armed": False}
+
+        mock_cockpit.arm_drive.side_effect = mock_arm
+        mock_cockpit.disarm_drive.side_effect = mock_disarm
+        mock_cockpit.get_status.side_effect = lambda: dict(current_status)
+
+        # Start with 0 ticks, end with trial 2 encoder deltas: m1=-5168, m2=6630, m3=-4375, m4=3985
+        enc_seq = [
+            {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}},
+            {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}},
+            {"ok": True, "encoders": {"m1": -5168, "m2": 6630, "m3": -4375, "m4": 3985}}
+        ]
+        mock_cockpit.get_encoders.side_effect = itertools.chain(enc_seq, itertools.repeat(enc_seq[-1]))
+
+        mock_cockpit.enable_autonomy.return_value = {"ok": True, "state": "WAITING_FOR_ZERO"}
+        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
+        mock_cockpit.get_autonomy_status.side_effect = lambda: {
+            "state": current_status["autonomyState"],
+            "clampedAngular": 0.8 if current_status["armed"] else 0.0,
+            "zeroHandshakeCount": 3,
+            "cmdSource": "ROS_AUTONOMY"
+        }
+        mock_cockpit.set_command_source.return_value = {"ok": True, "source": "NONE"}
+
+        mock_ws.connected = True
+        mock_ws.connect.return_value = True
+        mock_ws.authenticate.return_value = True
+
+        # Ingest exact production frame on every recv_frames call
+        mock_ws.recv_frames.return_value = [dict(self.EXACT_PROD_PID_DIAGNOSTIC_FRAME)]
+
+        # Rover turns from 0 to 180.5
+        yaw_seq = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 30.0, 90.0, 150.0, 180.5, 181.5]
+        imu_responses = [
+            {
+                "ok": True,
+                "dataAgeMs": 5,
+                "rotVecValid": True,
+                "inResetRecovery": False,
+                "sensor": "BNO08x",
+                "rotationVectorType": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+                "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+                "isNonMagnetic": True,
+                "orientation": {"x": 0.0, "y": 0.0, "z": math.sin(math.radians(y)/2), "w": math.cos(math.radians(y)/2)},
+                "gyro": {"z": 0.0}
+            }
+            for y in yaw_seq
+        ]
+        mock_cockpit.get_imu.side_effect = itertools.chain(imu_responses, itertools.repeat(imu_responses[-1]))
+
+        with patch("time.sleep", return_value=None):
+            runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+            trial = runner.execute_single_trial(1)
+
+        # Consistency failure assertion:
+        self.assertFalse(trial.wheel_forensics_valid, "Trial wheel forensics must be marked INVALID")
+        self.assertEqual(trial.telemetry_samples_count, trial.wheel_metrics["m1"].active_samples_count)
+        self.assertGreater(trial.wheel_metrics["m1"].active_samples_count, 0)
+
+        for w_id in ["m1", "m2", "m3", "m4"]:
+            w = trial.wheel_metrics[w_id]
+            self.assertEqual(w.validity, "INVALID", f"Wheel {w_id} validity must be INVALID")
+            self.assertEqual(w.commanded_speed_source, "INVALID_ZERO_TELEMETRY")
+            self.assertIsNone(w.commanded_speed_radps_mean, "Commanded mean must not report misleading 0.00")
+            self.assertIsNone(w.commanded_speed_radps_max)
+            self.assertIsNone(w.measured_speed_radps_mean, "Measured mean must not report misleading 0.00")
+            self.assertIsNone(w.measured_speed_radps_abs_mean)
+            self.assertIsNone(w.measured_speed_radps_min)
+            self.assertIsNone(w.measured_speed_radps_max)
+            self.assertIsNone(w.stopped_while_commanded, "Stopped while commanded must be Unknown (None) when target was 0")
+
+        # Verify markdown report formatting displays *INVALID* and Unknown
+        suite = MultiTrialSuiteReport(
+            suite_id="1789561848",
+            target_degrees=180.0,
+            direction="cw",
+            total_trials=1,
+            successful_trials=1,
+            trials=[trial]
+        )
+        md = ReportGenerator.format_markdown_summary(suite)
+        self.assertIn("*INVALID*", md)
+        self.assertIn("Unknown", md)
+        # Verify wheel rows show INVALID and Unknown
+        wheel_section = md.split("#### Wheel Actuation & Encoder Performance")[1]
+        self.assertIn("| **M1** (Slot 1 / LF) | *INVALID* | *INVALID* | *INVALID* | *INVALID* | -5168 | Unknown |", wheel_section)
+        self.assertIn("| **M2** (Slot 2 / RF) | *INVALID* | *INVALID* | *INVALID* | *INVALID* | +6630 | Unknown |", wheel_section)
+
+    def test_stopped_while_commanded_unknown_unless_nonzero_target_observed(self):
+        """Stopped while commanded must be Unknown unless a nonzero target was actually observed."""
+        from tools.rover_tests.reporting import WheelTrialMetrics, TrialReport, ReportGenerator, MultiTrialSuiteReport
+
+        # Case 1: No nonzero target observed -> Unknown
+        w_unknown = WheelTrialMetrics(wheel_id="m1", stopped_while_commanded=None)
+        self.assertIsNone(w_unknown.stopped_while_commanded)
+
+        # Case 2: Nonzero target observed and did not stall -> False (No)
+        w_moving = WheelTrialMetrics(wheel_id="m1", stopped_while_commanded=False)
+        self.assertFalse(w_moving.stopped_while_commanded)
+
+        # Case 3: Nonzero target observed and stalled -> True (YES)
+        w_stalled = WheelTrialMetrics(
+            wheel_id="m1",
+            stopped_while_commanded=True,
+            stopped_while_commanded_count=2,
+            stopped_while_commanded_duration_s=0.45
+        )
+        self.assertTrue(w_stalled.stopped_while_commanded)
+
+        trial1 = TrialReport(trial_index=1, requested_turn_deg=180.0, direction="cw", target_signed_yaw_deg=180.0, status="SUCCESS", wheel_metrics={"m1": w_unknown})
+        trial2 = TrialReport(trial_index=2, requested_turn_deg=180.0, direction="cw", target_signed_yaw_deg=180.0, status="SUCCESS", wheel_metrics={"m1": w_moving})
+        trial3 = TrialReport(trial_index=3, requested_turn_deg=180.0, direction="cw", target_signed_yaw_deg=180.0, status="SUCCESS", wheel_metrics={"m1": w_stalled})
+
+        suite = MultiTrialSuiteReport(suite_id="test_suite", target_degrees=180.0, direction="cw", total_trials=3, successful_trials=3, trials=[trial1, trial2, trial3])
+        md = ReportGenerator.format_markdown_summary(suite)
+
+        self.assertIn("Unknown", md)
+        self.assertIn("No (0s)", md)
+        self.assertIn("**YES (2 ev / 0.45s)**", md)
 
 
 class TestPytestExclusion(unittest.TestCase):
