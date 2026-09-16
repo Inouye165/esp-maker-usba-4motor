@@ -75,6 +75,53 @@ class PhysicalTestRunner:
         self.prompt_fn = prompt_fn or input
         self.cockpit = cockpit_client or CockpitClient(host=params.host, port=params.port)
         self.ws = ws_client or NativeWSClient(host=params.host, port=params.port)
+        self._cleaned_up = False
+        self._last_cleanup_state: Dict[str, Any] = {"armed": None, "autonomyState": None, "cmdSource": None}
+
+    def cleanup(self, verbose: bool = True) -> Dict[str, Any]:
+        """
+        Idempotent cleanup for test runner.
+        - If cleanup was previously confirmed (self._cleaned_up is True), safely reverifies
+          the final state against the live endpoint. If still confirmed safe (armed=False,
+          autonomyState=DISABLED, cmdSource in ("NONE", None)), returns the verified state.
+        - If reverification reveals an unconfirmed/unsafe state or query fails, clears
+          self._cleaned_up and actively executes the disarm and stop routine.
+        - Does NOT mark self._cleaned_up = True unless confirmed:
+          armed=False, autonomyState=DISABLED, cmdSource=NONE.
+        - Does not suppress a retry after a failed or unverified cleanup.
+        """
+        if self._cleaned_up:
+            try:
+                st = self.cockpit.get_status()
+                is_safe = (
+                    st.get("armed") is False
+                    and st.get("autonomyState") == "DISABLED"
+                    and st.get("cmdSource") in ("NONE", None)
+                )
+                if is_safe:
+                    self._last_cleanup_state = {
+                        "armed": False,
+                        "autonomyState": "DISABLED",
+                        "cmdSource": st.get("cmdSource") or "NONE"
+                    }
+                    if verbose:
+                        print(f"[CLEANUP REVERIFIED] Safety state confirmed: armed={self._last_cleanup_state['armed']} autonomyState={self._last_cleanup_state['autonomyState']} cmdSource={self._last_cleanup_state['cmdSource']}")
+                    return self._last_cleanup_state
+                else:
+                    self._cleaned_up = False
+            except Exception:
+                self._cleaned_up = False
+
+        cleanup_st = disarm_and_stop(self.cockpit, self.ws, verbose=verbose)
+        self._last_cleanup_state = cleanup_st
+
+        confirmed = (
+            cleanup_st.get("armed") is False
+            and cleanup_st.get("autonomyState") == "DISABLED"
+            and cleanup_st.get("cmdSource") in ("NONE", None)
+        )
+        self._cleaned_up = confirmed
+        return cleanup_st
 
     def execute_suite(self) -> MultiTrialSuiteReport:
         """Executes the full suite of trials."""
@@ -120,10 +167,14 @@ class PhysicalTestRunner:
                     print(f"\n[SAFETY STOP] Trial {trial_idx} aborted. Routine halted for forensic preservation.")
                     break
         finally:
-            final_cleanup = disarm_and_stop(self.cockpit, self.ws, verbose=False)
+            final_cleanup = self.cleanup(verbose=False)
             if self.ws.connected:
                 self.ws.close()
-            final_disarmed = (final_cleanup.get("armed") is False and final_cleanup.get("autonomyState") == "DISABLED")
+            final_disarmed = (
+                final_cleanup.get("armed") is False
+                and final_cleanup.get("autonomyState") == "DISABLED"
+                and final_cleanup.get("cmdSource") in ("NONE", None)
+            )
             for t in suite_report.trials:
                 if not final_disarmed:
                     t.confirmed_final_disarmed_state = False
@@ -218,7 +269,7 @@ class PhysicalTestRunner:
         if not self.params.dry_run:
             cur_st = self.cockpit.get_status()
             if cur_st.get("armed") is True or cur_st.get("autonomyState") != "DISABLED":
-                disarm_and_stop(self.cockpit, self.ws, verbose=False)
+                self.cleanup(verbose=False)
 
         # 2. Fresh IMU Snapshot & Non-Magnetic Validation
         imu_snap = self.cockpit.get_imu()
@@ -228,10 +279,12 @@ class PhysicalTestRunner:
                 trial_report.status = "ABORTED"
                 trial_report.abort_reason = f"IMU Non-Magnetic Check FAILED: {reason}"
                 print(f"[FAIL-CLOSED ERROR] {trial_report.abort_reason}")
-                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                cleanup_st = self.cleanup()
                 trial_report.confirmed_final_zero_command = True
                 trial_report.confirmed_final_disarmed_state = (
-                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                    cleanup_st.get("armed") is False
+                    and cleanup_st.get("autonomyState") == "DISABLED"
+                    and cleanup_st.get("cmdSource") in ("NONE", None)
                 )
                 return trial_report
             print(f"[OK] BNO08x Orientation Verified: {reason}")
@@ -266,57 +319,21 @@ class PhysicalTestRunner:
                 trial_report.status = "ABORTED"
                 trial_report.abort_reason = f"Stationary gyro bias calibration failed: {e}"
                 print(f"[SENSOR ABORT] {trial_report.abort_reason}")
-                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                cleanup_st = self.cleanup()
                 trial_report.confirmed_final_zero_command = True
                 trial_report.confirmed_final_disarmed_state = (
-                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                    cleanup_st.get("armed") is False
+                    and cleanup_st.get("autonomyState") == "DISABLED"
+                    and cleanup_st.get("cmdSource") in ("NONE", None)
                 )
                 return trial_report
 
-        # Step 5: Wait for a genuinely new, advancing IMU orientation sample before arming (while safely DISARMED)
-        if not self.params.dry_run:
-            baseline_imu = self.cockpit.get_imu()
-            baseline_seq = baseline_imu.get("sequence") if baseline_imu else None
-            baseline_esp_ts = baseline_imu.get("espTimestampUs") if baseline_imu else None
-
-            adv_ok, fresh_imu, adv_reason = wait_for_advancing_imu_sample(
-                self.cockpit,
-                baseline_seq=baseline_seq,
-                baseline_esp_ts_us=baseline_esp_ts,
-                max_wait_sec=0.50,
-                max_acceptable_age_ms=100.0,
-                watchdog_max_age_ms=250.0
-            )
-            if not adv_ok:
-                fail_reason = f"Pre-motion IMU synchronization failed: {adv_reason}"
-                print(f"[PRE-MOTION ABORT] {fail_reason}")
-                trial_report.status = "ABORTED"
-                trial_report.abort_reason = fail_reason
-                trial_report.telemetry_samples_count = 0
-                trial_report.wheel_metrics = wheel_metrics
-                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
-                trial_report.confirmed_final_zero_command = True
-                trial_report.confirmed_final_disarmed_state = (
-                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
-                )
-                trial_report.autonomy_state_transitions.append({
-                    "timestamp": time.time(),
-                    "state": cleanup_st.get("autonomyState", "DISABLED"),
-                    "trigger": "advancing_imu_sample_timeout"
-                })
-                return trial_report
-
-            if fresh_imu:
-                fresh_raw_yaw = quat_to_yaw(fresh_imu.get("orientation", {}))
-                unwrapper.update_orientation_yaw(fresh_raw_yaw)
-            print(f"[OK] Advancing fresh IMU sample synchronized: {adv_reason}")
-
-        # Step 6: Autonomy Enable, Three-Consecutive-Zero Handshake, and Arming
+        # Step 5: Autonomy Enable and Three-Consecutive-Zero Handshake -> READY_DISARMED
         if not self.params.dry_run:
             try:
                 print("  Executing 3-consecutive-zero autonomy handshake...")
-                perform_zero_handshake(self.cockpit, self.ws, transitions=trial_report.autonomy_state_transitions)
-                print("[OK] Autonomy Handshake complete: Drivetrain READY_ARMED.")
+                perform_zero_handshake(self.cockpit, ws=self.ws, transitions=trial_report.autonomy_state_transitions, arm=False)
+                print("[OK] Autonomy Handshake complete: Drivetrain READY_DISARMED.")
             except HandshakeException as e:
                 tb_str = traceback.format_exc()
                 trial_report.status = "ABORTED"
@@ -336,37 +353,135 @@ class PhysicalTestRunner:
                 print("  • Traceback:")
                 for line in tb_str.strip().splitlines():
                     print(f"      {line}")
-                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                cleanup_st = self.cleanup()
                 trial_report.confirmed_final_zero_command = True
                 trial_report.confirmed_final_disarmed_state = (
-                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                    cleanup_st.get("armed") is False
+                    and cleanup_st.get("autonomyState") == "DISABLED"
+                    and cleanup_st.get("cmdSource") in ("NONE", None)
                 )
                 return trial_report
             except Exception as e:
                 tb_str = traceback.format_exc()
                 trial_report.status = "ABORTED"
-                trial_report.abort_reason = f"[{type(e).__name__}] Unexpected fault in handshake: {e}"
+                trial_report.abort_reason = f"[{type(e).__name__}] Unexpected fault in zero handshake: {e}"
                 print(f"\n[HANDSHAKE UNEXPECTED FAULT]")
                 print(f"  • Exception Type:    {type(e).__name__}")
                 print(f"  • Exception Message: {e}")
                 print("  • Traceback:")
                 for line in tb_str.strip().splitlines():
                     print(f"      {line}")
-                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                cleanup_st = self.cleanup()
                 trial_report.confirmed_final_zero_command = True
                 trial_report.confirmed_final_disarmed_state = (
-                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                    cleanup_st.get("armed") is False
+                    and cleanup_st.get("autonomyState") == "DISABLED"
+                    and cleanup_st.get("cmdSource") in ("NONE", None)
                 )
                 return trial_report
         else:
             print("[OK] [DRY RUN] 3-consecutive-zero autonomy handshake simulated.")
             trial_report.autonomy_state_transitions.extend([
                 {"timestamp": time.time(), "state": "WAITING_FOR_ZERO", "trigger": "enable_autonomy (dry run)"},
-                {"timestamp": time.time(), "state": "READY_DISARMED", "trigger": "zero_handshake (dry run)"},
-                {"timestamp": time.time(), "state": "READY_ARMED", "trigger": "arm_drive (dry run)"}
+                {"timestamp": time.time(), "state": "READY_DISARMED", "trigger": "zero_handshake (dry run)"}
             ])
 
-        # Step 7: Immediately before first nonzero command, assert pre-motion invariants
+        # Step 6: Acquire an advancing fresh IMU orientation sample after zero handshake (while safely READY_DISARMED)
+        if not self.params.dry_run:
+            baseline_imu = self.cockpit.get_imu()
+            baseline_seq = baseline_imu.get("sequence") if baseline_imu else None
+            baseline_esp_ts = baseline_imu.get("espTimestampUs") if baseline_imu else None
+
+            adv_ok, fresh_imu, adv_reason = wait_for_advancing_imu_sample(
+                self.cockpit,
+                baseline_seq=baseline_seq,
+                baseline_esp_ts_us=baseline_esp_ts,
+                max_wait_sec=0.50,
+                max_acceptable_age_ms=100.0,
+                watchdog_max_age_ms=250.0
+            )
+            if not adv_ok:
+                fail_reason = f"Pre-motion IMU synchronization failed in READY_DISARMED: {adv_reason}"
+                print(f"[PRE-MOTION ABORT] {fail_reason}")
+                trial_report.status = "ABORTED"
+                trial_report.abort_reason = fail_reason
+                trial_report.telemetry_samples_count = 0
+                trial_report.wheel_metrics = wheel_metrics
+                cleanup_st = self.cleanup()
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False
+                    and cleanup_st.get("autonomyState") == "DISABLED"
+                    and cleanup_st.get("cmdSource") in ("NONE", None)
+                )
+                trial_report.autonomy_state_transitions.append({
+                    "timestamp": time.time(),
+                    "state": cleanup_st.get("autonomyState", "DISABLED"),
+                    "trigger": "advancing_imu_sample_timeout"
+                })
+                return trial_report
+
+            if fresh_imu:
+                fresh_raw_yaw = quat_to_yaw(fresh_imu.get("orientation", {}))
+                unwrapper.update_orientation_yaw(fresh_raw_yaw)
+            print(f"[OK] Advancing fresh IMU sample synchronized in READY_DISARMED: {adv_reason}")
+
+        # Step 7: Arm Drivetrain and Verify READY_ARMED
+        if not self.params.dry_run:
+            try:
+                arm_and_verify_ready_armed(self.cockpit, transitions=trial_report.autonomy_state_transitions)
+                print("[OK] Drivetrain armed: READY_ARMED verified.")
+            except HandshakeException as e:
+                tb_str = traceback.format_exc()
+                trial_report.status = "ABORTED"
+                trial_report.abort_reason = (
+                    f"[{type(e).__name__}] {e} | Stage: {e.stage} | State: {e.state} "
+                    f"| ZeroCount: {e.zero_count} | CmdSource: {e.cmd_source}"
+                )
+                print("\n[ARMING ABORT]")
+                print(f"  • Exception Type:    {type(e).__name__}")
+                print(f"  • Exception Message: {e}")
+                print(f"  • Handshake Stage:   {e.stage}")
+                print(f"  • Handshake State:   state={e.state}, zeroCount={e.zero_count}, cmdSource={e.cmd_source}")
+                if e.last_rejection_reason:
+                    print(f"  • Last Rejection:    {e.last_rejection_reason}")
+                if e.underlying_error:
+                    print(f"  • Underlying Error:  {e.underlying_error}")
+                print("  • Traceback:")
+                for line in tb_str.strip().splitlines():
+                    print(f"      {line}")
+                cleanup_st = self.cleanup()
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False
+                    and cleanup_st.get("autonomyState") == "DISABLED"
+                    and cleanup_st.get("cmdSource") in ("NONE", None)
+                )
+                return trial_report
+            except Exception as e:
+                tb_str = traceback.format_exc()
+                trial_report.status = "ABORTED"
+                trial_report.abort_reason = f"[{type(e).__name__}] Unexpected fault in arming: {e}"
+                print(f"\n[ARMING UNEXPECTED FAULT]")
+                print(f"  • Exception Type:    {type(e).__name__}")
+                print(f"  • Exception Message: {e}")
+                print("  • Traceback:")
+                for line in tb_str.strip().splitlines():
+                    print(f"      {line}")
+                cleanup_st = self.cleanup()
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False
+                    and cleanup_st.get("autonomyState") == "DISABLED"
+                    and cleanup_st.get("cmdSource") in ("NONE", None)
+                )
+                return trial_report
+        else:
+            trial_report.autonomy_state_transitions.append(
+                {"timestamp": time.time(), "state": "READY_ARMED", "trigger": "arm_drive (dry run)"}
+            )
+
+        # Step 8: Immediately before first nonzero command, assert pre-motion invariants
         if not self.params.dry_run:
             inv_error = self._assert_pre_motion_invariants()
             if inv_error:
@@ -375,10 +490,12 @@ class PhysicalTestRunner:
                 trial_report.telemetry_samples_count = 0
                 trial_report.wheel_metrics = wheel_metrics
                 print(f"[FAIL-CLOSED ASSERTION FAILED] {inv_error}")
-                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                cleanup_st = self.cleanup()
                 trial_report.confirmed_final_zero_command = True
                 trial_report.confirmed_final_disarmed_state = (
-                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                    cleanup_st.get("armed") is False
+                    and cleanup_st.get("autonomyState") == "DISABLED"
+                    and cleanup_st.get("cmdSource") in ("NONE", None)
                 )
                 trial_report.autonomy_state_transitions.append({
                     "timestamp": time.time(),
@@ -414,10 +531,12 @@ class PhysicalTestRunner:
                 trial_report.abort_reason = fail_reason
                 trial_report.telemetry_samples_count = 0
                 trial_report.wheel_metrics = wheel_metrics
-                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                cleanup_st = self.cleanup()
                 trial_report.confirmed_final_zero_command = True
                 trial_report.confirmed_final_disarmed_state = (
-                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                    cleanup_st.get("armed") is False
+                    and cleanup_st.get("autonomyState") == "DISABLED"
+                    and cleanup_st.get("cmdSource") in ("NONE", None)
                 )
                 trial_report.autonomy_state_transitions.append({
                     "timestamp": time.time(),
@@ -451,10 +570,12 @@ class PhysicalTestRunner:
                 trial_report.abort_reason = fail_reason
                 trial_report.telemetry_samples_count = 0
                 trial_report.wheel_metrics = wheel_metrics
-                cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+                cleanup_st = self.cleanup()
                 trial_report.confirmed_final_zero_command = True
                 trial_report.confirmed_final_disarmed_state = (
-                    cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                    cleanup_st.get("armed") is False
+                    and cleanup_st.get("autonomyState") == "DISABLED"
+                    and cleanup_st.get("cmdSource") in ("NONE", None)
                 )
                 trial_report.autonomy_state_transitions.append({
                     "timestamp": time.time(),
@@ -678,15 +799,17 @@ class PhysicalTestRunner:
         trial_report.telemetry_samples_count = total_telemetry_samples
         trial_report.wheel_metrics = wheel_metrics
 
-        # If motion loop aborted, execute disarm_and_stop() immediately and return
+        # If motion loop aborted, execute self.cleanup() immediately and return
         if abort_reason:
             trial_report.status = "ABORTED"
             trial_report.abort_reason = abort_reason
             print(f"[TRIAL ABORTED] {abort_reason}")
-            cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+            cleanup_st = self.cleanup()
             trial_report.confirmed_final_zero_command = True
             trial_report.confirmed_final_disarmed_state = (
-                cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+                cleanup_st.get("armed") is False
+                and cleanup_st.get("autonomyState") == "DISABLED"
+                and cleanup_st.get("cmdSource") in ("NONE", None)
             )
             trial_report.autonomy_state_transitions.append({
                 "timestamp": time.time(),
@@ -719,11 +842,13 @@ class PhysicalTestRunner:
             w_metric.encoder_final_ticks = enc_final.get(w_id, w_metric.encoder_start_ticks)
             w_metric.encoder_delta_ticks = w_metric.encoder_final_ticks - w_metric.encoder_start_ticks
 
-        # Execute disarm_and_stop() ONLY after the target and settling sequence completes!
-        cleanup_st = disarm_and_stop(self.cockpit, self.ws)
+        # Execute self.cleanup() ONLY after the target and settling sequence completes!
+        cleanup_st = self.cleanup()
         trial_report.confirmed_final_zero_command = True
         trial_report.confirmed_final_disarmed_state = (
-            cleanup_st.get("armed") is False and cleanup_st.get("autonomyState") == "DISABLED"
+            cleanup_st.get("armed") is False
+            and cleanup_st.get("autonomyState") == "DISABLED"
+            and cleanup_st.get("cmdSource") in ("NONE", None)
         )
         trial_report.autonomy_state_transitions.append({
             "timestamp": time.time(),

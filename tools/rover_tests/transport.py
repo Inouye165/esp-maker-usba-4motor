@@ -581,16 +581,26 @@ def disarm_and_stop(
                 final_state["armed"] = st.get("armed")
                 final_state["autonomyState"] = st.get("autonomyState")
                 final_state["cmdSource"] = st.get("cmdSource")
-                if final_state["armed"] is False and final_state["autonomyState"] == "DISABLED":
+                if (
+                    final_state["armed"] is False
+                    and final_state["autonomyState"] == "DISABLED"
+                    and final_state["cmdSource"] in ("NONE", None)
+                ):
                     break
             except Exception:
                 pass
             time.sleep(0.04)
 
-        # Fallback if still reported armed: send one more explicit disarm call
-        if final_state["armed"] is True:
+        # Fallback if still reported armed, not disabled, or cmdSource not NONE: send explicit disarm & disable calls
+        if (
+            final_state["armed"] is not False
+            or final_state["autonomyState"] != "DISABLED"
+            or final_state["cmdSource"] not in ("NONE", None)
+        ):
             try:
                 cockpit.disarm_drive()
+                cockpit.disable_autonomy()
+                cockpit.set_command_source("NONE")
                 time.sleep(0.05)
                 st = cockpit.get_status()
                 final_state["armed"] = st.get("armed")

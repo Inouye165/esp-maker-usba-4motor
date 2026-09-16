@@ -701,15 +701,16 @@ class TestLifecycleAndCleanupTiming(unittest.TestCase):
         mock_cockpit.get_status.side_effect = mock_get_status
         mock_cockpit.get_autonomy_status.side_effect = mock_get_autonomy
 
-        with patch("tools.rover_tests.runner.perform_zero_handshake") as mock_handshake:
-            def do_handshake(*args, **kwargs):
-                handshake_done[0] = True
-                return True
-            mock_handshake.side_effect = do_handshake
+        with patch("tools.rover_tests.runner.perform_zero_handshake", return_value=True):
+            with patch("tools.rover_tests.runner.arm_and_verify_ready_armed") as mock_arm:
+                def do_arm(*args, **kwargs):
+                    handshake_done[0] = True
+                    return True
+                mock_arm.side_effect = do_arm
 
-            with patch("time.sleep", return_value=None):
-                runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
-                trial = runner.execute_single_trial(1)
+                with patch("time.sleep", return_value=None):
+                    runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+                    trial = runner.execute_single_trial(1)
 
         self.assertEqual(trial.status, "ABORTED")
         self.assertIn("Pre-motion invariant violated", trial.abort_reason)
@@ -1285,17 +1286,50 @@ class TestStateSequencingAndIdempotentCleanup(unittest.TestCase):
     4. First nonzero command immediately follows READY_ARMED and verifies ACTIVE.
     """
 
-    def test_imu_sync_occurs_before_arming_while_disarmed(self):
-        """Validates that wait_for_advancing_imu_sample is invoked while rover is DISARMED before perform_zero_handshake."""
+    def test_ordered_lifecycle_zero_handshake_then_imu_sync_then_arm_then_first_cmd(self):
+        """
+        Guarantees the strict lifecycle sequence:
+        1. complete_zero_handshake -> READY_DISARMED
+        2. wait_for_advancing_imu_sample (while in READY_DISARMED, armed=False)
+        3. arm_and_verify_ready_armed -> READY_ARMED
+        4. send_cmd_vel (first nonzero command immediately dispatched)
+        """
         params = TurnParameters(degrees=180.0, direction="cw", trials=1)
         mock_cockpit = MagicMock(spec=CockpitClient)
         mock_ws = MagicMock(spec=NativeWSClient)
         mock_ws.connected = True
 
-        status_at_imu_sync = []
+        call_order = []
+
+        def mock_zero_handshake(*args, **kwargs):
+            call_order.append(("zero_handshake", mock_cockpit.get_status()))
+            # Transitions rover to READY_DISARMED
+            mock_cockpit.get_status.return_value = {"armed": False, "autonomyState": "READY_DISARMED", "cmdSource": "NONE"}
+            mock_cockpit.get_autonomy_status.return_value = {"state": "READY_DISARMED", "zeroHandshakeCount": 3, "cmdSource": "NONE"}
+            return True
+
         def mock_wait_imu(*args, **kwargs):
-            status_at_imu_sync.append(mock_cockpit.get_status())
-            return True, {"ok": True, "rotVecValid": True, "orientation": {"w": 1, "x": 0, "y": 0, "z": 0}, "gyro": {"z": 0.0}}, "ok"
+            call_order.append(("wait_imu", mock_cockpit.get_status()))
+            return True, {"ok": True, "rotVecValid": True, "orientation": {"w": 1, "x": 0, "y": 0, "z": 0}, "gyro": {"z": 0.0}}, "advancing_fresh"
+
+        def mock_arm(*args, **kwargs):
+            call_order.append(("arm_drive", mock_cockpit.get_status()))
+            # Transitions rover to READY_ARMED
+            mock_cockpit.get_status.return_value = {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "NONE"}
+            mock_cockpit.get_autonomy_status.return_value = {"state": "READY_ARMED", "zeroHandshakeCount": 3, "cmdSource": "NONE"}
+            return True
+
+        def mock_send_cmd(*args, **kwargs):
+            call_order.append(("send_cmd", mock_cockpit.get_status()))
+            mock_cockpit.get_autonomy_status.return_value = {"state": "ACTIVE", "clampedAngular": 0.8}
+            # Return target-reached orientation so motion loop finishes cleanly
+            mock_cockpit.get_imu.return_value = {
+                "ok": True, "rotVecValid": True,
+                "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+                "orientation": {"w": 0, "x": 0, "y": 0, "z": 1},
+                "gyro": {"z": 0.0}
+            }
+            return {"ok": True}
 
         mock_cockpit.get_status.return_value = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
         mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
@@ -1305,37 +1339,86 @@ class TestStateSequencingAndIdempotentCleanup(unittest.TestCase):
             "orientation": {"w": 1, "x": 0, "y": 0, "z": 0},
             "gyro": {"z": 0.0}
         }
-        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
-        mock_cockpit.get_autonomy_status.return_value = {
-            "state": "ACTIVE",
-            "clampedAngular": 0.8,
-            "zeroHandshakeCount": 3,
-            "cmdSource": "ROS_AUTONOMY"
-        }
+        mock_cockpit.send_cmd_vel.side_effect = mock_send_cmd
 
-        with patch("tools.rover_tests.runner.wait_for_advancing_imu_sample", side_effect=mock_wait_imu):
-            with patch("tools.rover_tests.runner.perform_zero_handshake", return_value=True):
-                with patch("time.sleep", return_value=None):
-                    runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
-                    trial = runner.execute_single_trial(1)
+        with patch("tools.rover_tests.runner.perform_zero_handshake", side_effect=mock_zero_handshake):
+            with patch("tools.rover_tests.runner.wait_for_advancing_imu_sample", side_effect=mock_wait_imu):
+                with patch("tools.rover_tests.runner.arm_and_verify_ready_armed", side_effect=mock_arm):
+                    with patch("time.sleep", return_value=None):
+                        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+                        trial = runner.execute_single_trial(1)
 
-        self.assertTrue(len(status_at_imu_sync) > 0)
-        self.assertFalse(status_at_imu_sync[0]["armed"], "Rover must be DISARMED when synchronizing fresh IMU sample")
+        names = [call[0] for call in call_order[:4]]
+        self.assertEqual(names, ["zero_handshake", "wait_imu", "arm_drive", "send_cmd"],
+                         f"Unexpected lifecycle order: {names}")
 
-    def test_cleanup_idempotency_multiple_invocations(self):
-        """Calling disarm_and_stop repeatedly safely maintains stopped, disarmed, disabled state."""
+        # Verify IMU sync occurred strictly while armed=False and in READY_DISARMED
+        imu_sync_status = call_order[1][1]
+        self.assertFalse(imu_sync_status["armed"], "IMU sync must occur while DISARMED")
+        self.assertEqual(imu_sync_status["autonomyState"], "READY_DISARMED", "IMU sync must occur in READY_DISARMED state")
+
+        # Verify arming occurred after IMU sync
+        arm_status = call_order[2][1]
+        self.assertFalse(arm_status["armed"], "Arming must be initiated from DISARMED state")
+
+        # Verify first command was sent while armed
+        send_status = call_order[3][1]
+        self.assertTrue(send_status["armed"], "First motion command must be sent while ARMED")
+
+    def test_cleanup_idempotency_and_retry_behavior(self):
+        """
+        Verifies:
+        - _cleaned_up must not suppress a retry after failed or unverified cleanup.
+        - Mark cleanup complete only after confirmed: armed=false, autonomyState=DISABLED, cmdSource=NONE.
+        - Repeated cleanup calls safely reverify the final state.
+        - If state reverts to armed/unsafe, reverification resets flag and triggers active cleanup.
+        """
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1)
         mock_cockpit = MagicMock(spec=CockpitClient)
         mock_ws = MagicMock(spec=NativeWSClient)
         mock_ws.connected = True
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        self.assertFalse(runner._cleaned_up)
+
+        # 1. Unsuccessful/unverified cleanup (e.g. rover still reports armed=True)
+        mock_cockpit.get_status.return_value = {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+        st1 = runner.cleanup(verbose=False)
+        self.assertFalse(runner._cleaned_up, "_cleaned_up must NOT be marked True if armed is still True")
+        self.assertTrue(st1["armed"])
+
+        # 2. Subsequent call must NOT be suppressed - it must actively retry
+        mock_cockpit.disarm_drive.reset_mock()
+        mock_cockpit.disable_autonomy.reset_mock()
+        # Rover now successfully disarms
         mock_cockpit.get_status.return_value = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+        st2 = runner.cleanup(verbose=False)
+        self.assertTrue(runner._cleaned_up, "_cleaned_up must be marked True after confirmed disarm, disabled, and cmdSource=NONE")
+        self.assertFalse(st2["armed"])
+        self.assertEqual(st2["autonomyState"], "DISABLED")
+        self.assertEqual(st2["cmdSource"], "NONE")
+        self.assertTrue(mock_cockpit.disarm_drive.called, "Disarm must have been retried")
 
-        res1 = disarm_and_stop(mock_cockpit, mock_ws, verbose=False)
-        res2 = disarm_and_stop(mock_cockpit, mock_ws, verbose=False)
+        # 3. Repeated cleanup call while still safe: safely reverifies without redundant mutating commands
+        mock_cockpit.disarm_drive.reset_mock()
+        mock_cockpit.disable_autonomy.reset_mock()
+        st3 = runner.cleanup(verbose=False)
+        self.assertTrue(runner._cleaned_up)
+        self.assertFalse(st3["armed"])
+        self.assertEqual(st3["autonomyState"], "DISABLED")
+        self.assertEqual(st3["cmdSource"], "NONE")
+        # Mutating endpoints not spammed when state is already verified safe
+        self.assertFalse(mock_cockpit.disarm_drive.called)
 
-        self.assertFalse(res1["armed"])
-        self.assertFalse(res2["armed"])
-        self.assertEqual(res1["autonomyState"], "DISABLED")
-        self.assertEqual(res2["autonomyState"], "DISABLED")
+        # 4. State reverts to unsafe between calls (e.g. armed=True): reverification catches it and re-runs active cleanup
+        mock_cockpit.get_status.side_effect = [
+            {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"},  # Reverification check fails!
+            {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}               # Active cleanup succeeds
+        ]
+        st4 = runner.cleanup(verbose=False)
+        self.assertTrue(runner._cleaned_up)
+        self.assertFalse(st4["armed"])
+        self.assertTrue(mock_cockpit.disarm_drive.called, "Active cleanup must be re-triggered when reverification fails")
 
     def test_report_never_claims_disarm_success_when_final_armed_true(self):
         """Guarantees that confirmed_final_disarmed_state is False in JSON and Trial if rover remains armed."""
