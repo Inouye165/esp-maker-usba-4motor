@@ -479,12 +479,13 @@ def arm_and_verify_ready_armed(
             underlying_error=arm_err
         )
 
-    # Confirm armed status: confirm that both Cockpit and ESP32 report READY_ARMED and armed=True
+    # Confirm armed status: require hardware confirmation (armed=True, mode=3) and READY_ARMED state
+    # Explicitly reported mode of 3 is strictly required (missing/null/wrong mode fails)
     t0 = time.time()
     while time.time() - t0 < max_duration_sec:
         stat = cockpit.get_status()
         auto_stat = cockpit.get_autonomy_status()
-        is_armed = stat.get("armed") is True
+        is_armed = stat.get("armed") is True and stat.get("mode") == 3
         is_ready = auto_stat.get("state") in ("READY_ARMED", "ACTIVE")
 
         if is_armed and is_ready:
@@ -501,7 +502,7 @@ def arm_and_verify_ready_armed(
     stat = cockpit.get_status()
     auto_stat = cockpit.get_autonomy_status()
     raise HandshakeException(
-        f"Drivetrain did not report armed within confirmation window (armed={stat.get('armed')}, state={auto_stat.get('state')})",
+        f"Drivetrain did not report armed within confirmation window (armed={stat.get('armed')}, mode={stat.get('mode')}, state={auto_stat.get('state')})",
         stage="ARM_CONFIRMATION",
         state=auto_stat.get("state"),
         zero_count=auto_stat.get("zeroHandshakeCount", 0),

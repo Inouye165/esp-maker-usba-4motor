@@ -38,6 +38,7 @@ from tools.rover_tests.transport import (
     CockpitClient,
     NativeWSClient,
     perform_zero_handshake,
+    arm_and_verify_ready_armed,
     disarm_and_stop,
     HandshakeException
 )
@@ -239,7 +240,7 @@ class TestThreeConsecutiveZeroHandshake(unittest.TestCase):
             {"state": "READY_ARMED", "zeroHandshakeCount": 3}
         ]
         mock_cockpit.arm_drive.return_value = {"ok": True}
-        mock_cockpit.get_status.return_value = {"armed": True}
+        mock_cockpit.get_status.return_value = {"armed": True, "mode": 3}
 
         success = perform_zero_handshake(mock_cockpit, mock_ws, max_duration_sec=2.0)
         self.assertTrue(success)
@@ -505,7 +506,7 @@ class TestInterTrialApprovalAndEstimateCollection(unittest.TestCase):
         ] + [{"state": "ACTIVE", "clampedAngular": 0.8, "cmdSource": "ROS_AUTONOMY"}] * 30
         mock_cockpit.get_autonomy_status.side_effect = auto_states
         mock_cockpit.arm_drive.return_value = {"ok": True}
-        mock_cockpit.get_status.return_value = {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.get_status.return_value = {"armed": True, "mode": 3, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
         mock_cockpit.send_cmd_vel.return_value = {"ok": True}
         mock_ws.recv_frames.return_value = []
         mock_ws.send_drive.return_value = True
@@ -554,17 +555,20 @@ class TestLifecycleAndCleanupTiming(unittest.TestCase):
 
         current_status = {
             "armed": False,
+            "mode": 0,
             "autonomyState": "DISABLED",
             "cmdSource": "NONE"
         }
 
         def mock_arm():
             current_status["armed"] = True
+            current_status["mode"] = 3
             current_status["autonomyState"] = "READY_ARMED"
             return {"ok": True}
 
         def mock_disarm():
             current_status["armed"] = False
+            current_status["mode"] = 0
             return {"ok": True}
 
         def mock_enable_auto():
@@ -606,12 +610,14 @@ class TestLifecycleAndCleanupTiming(unittest.TestCase):
         def do_arm():
             call_sequence.append("arm_drive")
             mock_cockpit._state["armed"] = True
+            mock_cockpit._state["mode"] = 3
             mock_cockpit._state["autonomyState"] = "READY_ARMED"
             return {"ok": True}
 
         def do_disarm():
             call_sequence.append("disarm_drive")
             mock_cockpit._state["armed"] = False
+            mock_cockpit._state["mode"] = 0
             return {"ok": True}
 
         def do_disable():
@@ -694,9 +700,9 @@ class TestLifecycleAndCleanupTiming(unittest.TestCase):
         handshake_done = [False]
         def mock_get_status():
             if not handshake_done[0]:
-                return {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+                return {"armed": True, "mode": 3, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
             else:
-                return {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+                return {"armed": False, "mode": 0, "autonomyState": "DISABLED", "cmdSource": "NONE"}
 
         def mock_get_autonomy():
             if not handshake_done[0]:
@@ -766,7 +772,7 @@ class TestLifecycleAndCleanupTiming(unittest.TestCase):
         params = TurnParameters(degrees=90.0, direction="cw", trials=1, dry_run=False, inter_trial_approval=False)
         mock_cockpit, mock_ws = self._create_mock_clients()
 
-        mock_cockpit.get_status.return_value = {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.get_status.return_value = {"armed": True, "mode": 3, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
         mock_cockpit.send_cmd_vel.return_value = {"ok": True}
         mock_cockpit.get_autonomy_status.return_value = {
             "state": "READY_ARMED",
@@ -798,16 +804,19 @@ class TestWheelTelemetryAndForensics(unittest.TestCase):
         mock_cockpit.base_url = "http://127.0.0.1:3000"
         current_status = {
             "armed": False,
+            "mode": 0,
             "autonomyState": "DISABLED",
             "cmdSource": "NONE"
         }
         def mock_arm():
             current_status["armed"] = True
+            current_status["mode"] = 3
             current_status["autonomyState"] = "READY_ARMED"
             current_status["cmdSource"] = "ROS_AUTONOMY"
             return {"ok": True, "armed": True}
         def mock_disarm():
             current_status["armed"] = False
+            current_status["mode"] = 0
             current_status["autonomyState"] = "DISABLED"
             return {"ok": True, "armed": False}
 
@@ -937,16 +946,19 @@ class TestWheelTelemetryAndForensics(unittest.TestCase):
 
         current_status = {
             "armed": False,
+            "mode": 0,
             "autonomyState": "DISABLED",
             "cmdSource": "NONE"
         }
         def mock_arm():
             current_status["armed"] = True
+            current_status["mode"] = 3
             current_status["autonomyState"] = "READY_ARMED"
             current_status["cmdSource"] = "ROS_AUTONOMY"
             return {"ok": True, "armed": True}
         def mock_disarm():
             current_status["armed"] = False
+            current_status["mode"] = 0
             current_status["autonomyState"] = "DISABLED"
             return {"ok": True, "armed": False}
 
@@ -1079,14 +1091,16 @@ class TestIMUFreshnessAndPreMotionGate(unittest.TestCase):
         mock_cockpit = MagicMock(spec=CockpitClient)
         mock_ws = MagicMock(spec=NativeWSClient)
 
-        current_status = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+        current_status = {"armed": False, "mode": 0, "autonomyState": "DISABLED", "cmdSource": "NONE"}
         def mock_arm():
             current_status["armed"] = True
+            current_status["mode"] = 3
             current_status["autonomyState"] = "READY_ARMED"
             current_status["cmdSource"] = "ROS_AUTONOMY"
             return {"ok": True, "armed": True}
         def mock_disarm():
             current_status["armed"] = False
+            current_status["mode"] = 0
             current_status["autonomyState"] = "DISABLED"
             return {"ok": True, "armed": False}
 
@@ -1140,14 +1154,16 @@ class TestIMUFreshnessAndPreMotionGate(unittest.TestCase):
         mock_cockpit = MagicMock(spec=CockpitClient)
         mock_ws = MagicMock(spec=NativeWSClient)
 
-        current_status = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+        current_status = {"armed": False, "mode": 0, "autonomyState": "DISABLED", "cmdSource": "NONE"}
         def mock_arm():
             current_status["armed"] = True
+            current_status["mode"] = 3
             current_status["autonomyState"] = "READY_ARMED"
             current_status["cmdSource"] = "ROS_AUTONOMY"
             return {"ok": True, "armed": True}
         def mock_disarm():
             current_status["armed"] = False
+            current_status["mode"] = 0
             current_status["autonomyState"] = "DISABLED"
             return {"ok": True, "armed": False}
 
@@ -1201,14 +1217,16 @@ class TestIMUFreshnessAndPreMotionGate(unittest.TestCase):
         mock_cockpit = MagicMock(spec=CockpitClient)
         mock_ws = MagicMock(spec=NativeWSClient)
 
-        current_status = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+        current_status = {"armed": False, "mode": 0, "autonomyState": "DISABLED", "cmdSource": "NONE"}
         def mock_arm():
             current_status["armed"] = True
+            current_status["mode"] = 3
             current_status["autonomyState"] = "READY_ARMED"
             current_status["cmdSource"] = "ROS_AUTONOMY"
             return {"ok": True, "armed": True}
         def mock_disarm():
             current_status["armed"] = False
+            current_status["mode"] = 0
             current_status["autonomyState"] = "DISABLED"
             return {"ok": True, "armed": False}
 
@@ -1321,7 +1339,7 @@ class TestStateSequencingAndIdempotentCleanup(unittest.TestCase):
         def mock_arm(*args, **kwargs):
             call_order.append(("arm_drive", mock_cockpit.get_status()))
             # Transitions rover to READY_ARMED
-            mock_cockpit.get_status.return_value = {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "NONE"}
+            mock_cockpit.get_status.return_value = {"armed": True, "mode": 3, "autonomyState": "READY_ARMED", "cmdSource": "NONE"}
             mock_cockpit.get_autonomy_status.return_value = {"state": "READY_ARMED", "zeroHandshakeCount": 3, "cmdSource": "NONE"}
             return True
 
@@ -1388,7 +1406,7 @@ class TestStateSequencingAndIdempotentCleanup(unittest.TestCase):
         self.assertFalse(runner._cleaned_up)
 
         # 1. Unsuccessful/unverified cleanup (e.g. rover still reports armed=True)
-        mock_cockpit.get_status.return_value = {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.get_status.return_value = {"armed": True, "mode": 3, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
         st1 = runner.cleanup(verbose=False)
         self.assertFalse(runner._cleaned_up, "_cleaned_up must NOT be marked True if armed is still True")
         self.assertTrue(st1["armed"])
@@ -1418,8 +1436,8 @@ class TestStateSequencingAndIdempotentCleanup(unittest.TestCase):
 
         # 4. State reverts to unsafe between calls (e.g. armed=True): reverification catches it and re-runs active cleanup
         mock_cockpit.get_status.side_effect = [
-            {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"},  # Reverification check fails!
-            {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}               # Active cleanup succeeds
+            {"armed": True, "mode": 3, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"},  # Reverification check fails!
+            {"armed": False, "mode": 0, "autonomyState": "DISABLED", "cmdSource": "NONE"}               # Active cleanup succeeds
         ]
         st4 = runner.cleanup(verbose=False)
         self.assertTrue(runner._cleaned_up)
@@ -1436,7 +1454,7 @@ class TestStateSequencingAndIdempotentCleanup(unittest.TestCase):
         mock_ws.authenticate.return_value = True
 
         # Rover gets stuck in armed state despite cleanup
-        mock_cockpit.get_status.return_value = {"armed": True, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.get_status.return_value = {"armed": True, "mode": 3, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
         mock_cockpit.get_autonomy_status.return_value = {"state": "READY_ARMED", "zeroHandshakeCount": 3, "cmdSource": "ROS_AUTONOMY"}
         mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
         mock_cockpit.get_imu.return_value = {
@@ -1541,14 +1559,16 @@ class TestProductionPidDiagnosticFrameRegression(unittest.TestCase):
         mock_cockpit.token = "test_token"
         mock_cockpit.base_url = "http://127.0.0.1:3000"
 
-        current_status = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+        current_status = {"armed": False, "mode": 0, "autonomyState": "DISABLED", "cmdSource": "NONE"}
         def mock_arm():
             current_status["armed"] = True
+            current_status["mode"] = 3
             current_status["autonomyState"] = "READY_ARMED"
             current_status["cmdSource"] = "ROS_AUTONOMY"
             return {"ok": True, "armed": True}
         def mock_disarm():
             current_status["armed"] = False
+            current_status["mode"] = 0
             current_status["autonomyState"] = "DISABLED"
             return {"ok": True, "armed": False}
 
@@ -1691,5 +1711,92 @@ class TestPytestExclusion(unittest.TestCase):
         self.assertIn("test", testpaths)
 
 
+class TestArmConfirmationRegression(unittest.TestCase):
+    """
+    Regression tests verifying that arm_and_verify_ready_armed strictly accepts only
+    hardware-confirmed arming (armed=True, mode=3) and handles stale packets and timeouts.
+    """
+
+    def test_arm_and_verify_accepts_mode_3(self):
+        mock_cockpit = MagicMock()
+        mock_cockpit.arm_drive.return_value = {"ok": True, "status": "ARMED", "mode": 3}
+        mock_cockpit.get_status.return_value = {"armed": True, "mode": 3, "cmdSource": "NONE"}
+        mock_cockpit.get_autonomy_status.return_value = {"state": "READY_ARMED", "zeroHandshakeCount": 3}
+
+        transitions = []
+        result = arm_and_verify_ready_armed(mock_cockpit, max_duration_sec=0.2, transitions=transitions)
+        self.assertTrue(result)
+        self.assertEqual(len(transitions), 1)
+        self.assertEqual(transitions[0]["state"], "READY_ARMED")
+
+    def test_arm_and_verify_rejects_unconfirmed_mode(self):
+        mock_cockpit = MagicMock()
+        mock_cockpit.arm_drive.return_value = {"ok": True, "status": "ARMED"}
+        # Armed is true, but mode is 0 (LOCKED)
+        mock_cockpit.get_status.return_value = {"armed": True, "mode": 0, "cmdSource": "NONE"}
+        mock_cockpit.get_autonomy_status.return_value = {"state": "READY_ARMED", "zeroHandshakeCount": 3}
+
+        with self.assertRaises(HandshakeException) as cm:
+            arm_and_verify_ready_armed(mock_cockpit, max_duration_sec=0.1)
+        self.assertEqual(cm.exception.stage, "ARM_CONFIRMATION")
+        self.assertIn("mode=0", str(cm.exception))
+
+    def test_arm_and_verify_rejects_missing_mode(self):
+        mock_cockpit = MagicMock()
+        mock_cockpit.arm_drive.return_value = {"ok": True, "status": "ARMED"}
+        # Armed is true, but 'mode' key is missing completely
+        mock_cockpit.get_status.return_value = {"armed": True, "cmdSource": "NONE"}
+        mock_cockpit.get_autonomy_status.return_value = {"state": "READY_ARMED", "zeroHandshakeCount": 3}
+
+        with self.assertRaises(HandshakeException) as cm:
+            arm_and_verify_ready_armed(mock_cockpit, max_duration_sec=0.1)
+        self.assertEqual(cm.exception.stage, "ARM_CONFIRMATION")
+        self.assertIn("mode=None", str(cm.exception))
+
+    def test_arm_and_verify_rejects_null_mode(self):
+        mock_cockpit = MagicMock()
+        mock_cockpit.arm_drive.return_value = {"ok": True, "status": "ARMED"}
+        # Armed is true, but 'mode' is explicitly null/None
+        mock_cockpit.get_status.return_value = {"armed": True, "mode": None, "cmdSource": "NONE"}
+        mock_cockpit.get_autonomy_status.return_value = {"state": "READY_ARMED", "zeroHandshakeCount": 3}
+
+        with self.assertRaises(HandshakeException) as cm:
+            arm_and_verify_ready_armed(mock_cockpit, max_duration_sec=0.1)
+        self.assertEqual(cm.exception.stage, "ARM_CONFIRMATION")
+        self.assertIn("mode=None", str(cm.exception))
+
+    def test_arm_and_verify_fails_on_arm_drive_error(self):
+        mock_cockpit = MagicMock()
+        mock_cockpit.arm_drive.return_value = {
+            "ok": False,
+            "error": "Arm confirmation timed out after 500ms waiting for ESP32 confirmation (armed=true, mode=3)"
+        }
+        mock_cockpit.get_autonomy_status.return_value = {
+            "state": "READY_DISARMED",
+            "zeroHandshakeCount": 3,
+            "cmdSource": "NONE",
+            "lastRejectionReason": "Timeout"
+        }
+
+        with self.assertRaises(HandshakeException) as cm:
+            arm_and_verify_ready_armed(mock_cockpit, max_duration_sec=0.1)
+        self.assertEqual(cm.exception.stage, "ARM_DRIVE")
+        self.assertIn("500ms", str(cm.exception))
+
+    def test_arm_and_verify_stale_packet_tolerated_until_mode_3(self):
+        mock_cockpit = MagicMock()
+        mock_cockpit.arm_drive.return_value = {"ok": True, "status": "ARMED", "mode": 3}
+        mock_cockpit.get_autonomy_status.return_value = {"state": "READY_ARMED", "zeroHandshakeCount": 3}
+        # First poll: stale packet with armed=False. Second poll: armed=True, mode=3
+        mock_cockpit.get_status.side_effect = [
+            {"armed": False, "mode": 0, "cmdSource": "NONE"},
+            {"armed": True, "mode": 3, "cmdSource": "NONE"}
+        ]
+
+        result = arm_and_verify_ready_armed(mock_cockpit, max_duration_sec=0.5)
+        self.assertTrue(result)
+
+
 if __name__ == "__main__":
     unittest.main()
+
