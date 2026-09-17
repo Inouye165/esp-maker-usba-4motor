@@ -491,10 +491,15 @@ class TestInterTrialApprovalAndEstimateCollection(unittest.TestCase):
             "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
             "gyro": {"z": 0.001}
         }
-        # Initial samples at 0 deg, then motion progresses to 90 deg (w=0.7071068, z=0.7071068)
+        # Initial samples at 0 deg, then motion progresses to 90 deg with advancing sequence/timestamp
         imu_0 = dict(base_imu, orientation={"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0})
         imu_90 = dict(base_imu, orientation={"w": 0.7071068, "x": 0.0, "y": 0.0, "z": 0.7071068})
-        mock_cockpit.get_imu.side_effect = [imu_0] * 8 + [imu_90] * 20
+        seq_gen = itertools.count(1)
+        t_base_ms = 1000
+        mock_cockpit.get_imu.side_effect = itertools.chain(
+            [dict(imu_0, sequence=next(seq_gen), timestamp_ms=t_base_ms + next(seq_gen)*20) for _ in range(8)],
+            (dict(imu_90, sequence=s, timestamp_ms=t_base_ms + s*20) for s in itertools.count(9))
+        )
         mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 100, "m2": 100, "m3": 100, "m4": 100}}
         mock_cockpit.enable_autonomy.return_value = {"ok": True}
         # Transition from READY_DISARMED to READY_ARMED then ACTIVE
@@ -1797,6 +1802,657 @@ class TestArmConfirmationRegression(unittest.TestCase):
         self.assertTrue(result)
 
 
+class TestSettlingInstrumentationAndTelemetry(unittest.TestCase):
+    """
+    Focused unit tests for settling instrumentation and telemetry:
+    - Queued PID diagnostic packets and pre-zero backlog identification (no merging)
+    - Stale / missing / invalid IMU data explicitly marked and non-polluting
+    - IMU non-advancing / repeated sample handling
+    - Monotonic timing, bounded duration, and achieved sampling rate reporting
+    - Final endpoint measurement preservation (never substitutes target angle)
+    - Zero-command send/response times, latency, and response contents
+    - JSON export includes all settling fields and deserializes accurately
+    - Preservation of existing cleanup guarantees
+    """
+
+class TestSettlingInstrumentationAndTelemetry(unittest.TestCase):
+    """
+    Focused unit tests for settling instrumentation and telemetry:
+    - Queued PID diagnostic packets and pre-zero backlog identification (no merging)
+    - Stale / missing / invalid IMU data explicitly marked and non-polluting
+    - IMU non-advancing / repeated sample handling
+    - Monotonic timing, bounded duration, and achieved sampling rate reporting
+    - Final endpoint measurement preservation (never substitutes target angle)
+    - Zero-command send/response times, latency, and response contents
+    - JSON export includes all settling fields and deserializes accurately
+    - Preservation of existing cleanup guarantees
+    """
+
+    def _create_mock_rover(self, target_deg=90.0, settle_seconds=0.5, final_imu_deg=None, settle_imus=None):
+        params = TurnParameters(
+            degrees=target_deg, direction="cw", trials=1, dry_run=False,
+            inter_trial_approval=False, settle_seconds=settle_seconds
+        )
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+        mock_ws.connected = True
+        mock_ws.authenticate.return_value = True
+        mock_cockpit.token = "test-operator-token"
+
+        base_imu = {
+            "ok": True,
+            "rotVecValid": True,
+            "inResetRecovery": False,
+            "dataAgeMs": 10,
+            "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "gyro": {"z": 0.001}
+        }
+        imu_0 = dict(base_imu, orientation={"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0})
+
+        reach_deg = final_imu_deg if final_imu_deg is not None else target_deg
+        rad = math.radians(reach_deg)
+        w = math.cos(rad / 2.0)
+        z = math.sin(rad / 2.0)
+        imu_target = dict(base_imu, orientation={"w": w, "x": 0.0, "y": 0.0, "z": z})
+
+        current_status = {
+            "armed": False,
+            "mode": 0,
+            "autonomyState": "DISABLED",
+            "cmdSource": "NONE"
+        }
+        phase_tracker = {"phase": "PRE_MOTION"}
+
+        def mock_arm():
+            current_status["armed"] = True
+            current_status["mode"] = 3
+            current_status["autonomyState"] = "READY_ARMED"
+            return {"ok": True}
+
+        def mock_disarm():
+            current_status["armed"] = False
+            current_status["mode"] = 0
+            return {"ok": True}
+
+        def mock_enable_auto():
+            current_status["autonomyState"] = "WAITING_FOR_ZERO"
+            return {"ok": True}
+
+        def mock_disable_auto():
+            current_status["autonomyState"] = "DISABLED"
+            return {"ok": True}
+
+        def mock_set_source(source="NONE"):
+            current_status["cmdSource"] = source
+            return {"ok": True}
+
+        def mock_cmd_vel(*args, **kwargs):
+            vx = kwargs.get("vx", args[0] if len(args) > 0 else 0.0)
+            wz = kwargs.get("wz", args[1] if len(args) > 1 else 0.0)
+            if abs(wz) > 0.01 or abs(vx) > 0.01:
+                current_status["autonomyState"] = "ACTIVE"
+                current_status["cmdSource"] = "ROS_AUTONOMY"
+                phase_tracker["phase"] = "MOTION"
+            elif phase_tracker["phase"] == "MOTION" and abs(wz) <= 0.001 and abs(vx) <= 0.001:
+                phase_tracker["phase"] = "SETTLING"
+            return {"ok": True, "linear": vx, "angular": wz, "state": current_status["autonomyState"]}
+
+        settle_iter = iter(settle_imus) if settle_imus is not None else None
+
+        motion_steps = []
+        if reach_deg > 120.0:
+            mid_rad = math.radians(reach_deg / 2.0)
+            imu_mid = dict(base_imu, orientation={"w": math.cos(mid_rad / 2.0), "x": 0.0, "y": 0.0, "z": math.sin(mid_rad / 2.0)})
+            motion_steps.append(imu_mid)
+        motion_steps.append(imu_target)
+        motion_iter = iter(motion_steps)
+
+        def mock_get_imu(*args, **kwargs):
+            if phase_tracker["phase"] == "PRE_MOTION":
+                return imu_0
+            elif phase_tracker["phase"] == "MOTION":
+                try:
+                    return next(motion_iter)
+                except StopIteration:
+                    return imu_target
+            else:  # SETTLING
+                if settle_iter is not None:
+                    try:
+                        return next(settle_iter)
+                    except StopIteration:
+                        return imu_target
+                return imu_target
+
+        mock_cockpit.get_status.side_effect = lambda: dict(current_status)
+        mock_cockpit.get_autonomy_status.side_effect = lambda: {
+            "state": current_status["autonomyState"],
+            "zeroHandshakeCount": 3,
+            "cmdSource": current_status["cmdSource"]
+        }
+        mock_cockpit.enable_autonomy.side_effect = mock_enable_auto
+        mock_cockpit.arm_drive.side_effect = mock_arm
+        mock_cockpit.disarm_drive.side_effect = mock_disarm
+        mock_cockpit.disable_autonomy.side_effect = mock_disable_auto
+        mock_cockpit.set_command_source.side_effect = mock_set_source
+        mock_cockpit.send_cmd_vel.side_effect = mock_cmd_vel
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 100, "m2": 100, "m3": 100, "m4": 100}}
+        mock_cockpit.get_imu.side_effect = mock_get_imu
+        mock_ws.recv_frames.return_value = []
+
+        return params, mock_cockpit, mock_ws, base_imu, imu_0, imu_target, phase_tracker
+
+    def test_queued_packets_individual_preservation_and_backlog_flagging(self):
+        params, mock_cockpit, mock_ws, base_imu, imu_0, imu_target, _ = self._create_mock_rover(target_deg=90.0)
+
+        # Simulate queued packets returned in a batch during settle: one pre-zero, one post-zero
+        t_now_ms = int(time.time() * 1000)
+        p1 = {
+            "type": "pid_diagnostic",
+            "timestamp": t_now_ms - 500,  # 500ms before zero command
+            "sequence": 42,
+            "m1": {"targetRadps": 0.20, "measuredRadps": 0.19, "finalPwm": 45, "stictionState": "KINETIC"}
+        }
+        p2 = {
+            "type": "pid_diagnostic",
+            "timestamp": t_now_ms + 500,  # after zero command
+            "sequence": 43,
+            "m1": {"targetRadps": 0.0, "measuredRadps": 0.05, "finalPwm": 0, "stictionState": "IDLE"}
+        }
+        mock_ws.recv_frames.side_effect = itertools.chain([[]] * 5, [[p1, p2]], itertools.repeat([]))
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        report = runner.execute_single_trial(1)
+
+        self.assertEqual(len(report.settle_pid_packets), 2)
+        # Check individual preservation (not merged)
+        self.assertEqual(report.settle_pid_packets[0]["source_sequence"], 42)
+        self.assertTrue(report.settle_pid_packets[0]["is_pre_zero_backlog"])
+        self.assertEqual(report.settle_pid_packets[1]["source_sequence"], 43)
+        self.assertFalse(report.settle_pid_packets[1]["is_pre_zero_backlog"])
+        # Check that receipt time and relative times are recorded
+        self.assertIn("host_receipt_time_monotonic", report.settle_pid_packets[0])
+        self.assertIn("t_rel_s", report.settle_pid_packets[0])
+        self.assertTrue(report.confirmed_final_disarmed_state)
+
+    def test_stale_and_missing_imu_data_recorded_explicitly(self):
+        base_imu = {
+            "ok": True, "rotVecValid": True, "inResetRecovery": False,
+            "dataAgeMs": 10, "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "gyro": {"z": 0.001},
+            "orientation": {"w": 0.7071068, "x": 0.0, "y": 0.0, "z": 0.7071068}
+        }
+        imu_missing = {"ok": False, "error": "Sensor read timeout"}
+        imu_stale = dict(base_imu, dataAgeMs=350)
+        imu_invalid_ori = dict(base_imu, orientation={"w": 1.0, "x": 0.0})  # missing y, z
+
+        params, mock_cockpit, mock_ws, _, _, _, _ = self._create_mock_rover(
+            target_deg=90.0,
+            settle_imus=[imu_missing, imu_stale, imu_invalid_ori]
+        )
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        report = runner.execute_single_trial(1)
+
+        statuses = [s["status"] for s in report.settle_imu_samples]
+        self.assertIn("MISSING", statuses)
+        self.assertIn("STALE", statuses)
+        self.assertIn("INVALID_ORIENTATION", statuses)
+        for s in report.settle_imu_samples:
+            if s["status"] in ("MISSING", "STALE", "INVALID_ORIENTATION"):
+                self.assertFalse(s["valid"])
+                self.assertIsNotNone(s["error"])
+        self.assertTrue(report.confirmed_final_disarmed_state)
+
+    def test_imu_repeated_non_advancing_sample(self):
+        rad = math.radians(90.0)
+        w = math.cos(rad / 2.0)
+        z = math.sin(rad / 2.0)
+        imu_base = {
+            "ok": True, "rotVecValid": True, "inResetRecovery": False,
+            "dataAgeMs": 10, "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "gyro": {"z": 0.001},
+            "orientation": {"w": w, "x": 0.0, "y": 0.0, "z": z}
+        }
+        imu_s1 = dict(imu_base, sequence=10, timestamp_ms=1000)
+        imu_s2_duplicate = dict(imu_base, sequence=10, timestamp_ms=1000)
+        imu_s3_advanced = dict(imu_base, sequence=11, timestamp_ms=1020)
+
+        params, mock_cockpit, mock_ws, _, _, _, _ = self._create_mock_rover(
+            target_deg=90.0,
+            settle_imus=[imu_s1, imu_s2_duplicate, imu_s3_advanced]
+        )
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        report = runner.execute_single_trial(1)
+
+        statuses = [s["status"] for s in report.settle_imu_samples]
+        self.assertIn("NOT_ADVANCING", statuses)
+        self.assertIn("VALID_ADVANCING", statuses)
+        self.assertTrue(report.confirmed_final_disarmed_state)
+
+    def test_final_endpoint_preserves_zero_measurement_never_substitutes_target(self):
+        # Target is 180.0, but rover stops at 182.5 (overshoot)
+        imu_fail = {"ok": False, "error": "Total sensor failure"}
+        params, mock_cockpit, mock_ws, _, _, _, _ = self._create_mock_rover(
+            target_deg=180.0,
+            final_imu_deg=182.5,
+            settle_imus=itertools.repeat(imu_fail)
+        )
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        report = runner.execute_single_trial(1)
+
+        # Requirement 2: angle_at_zero_cmd preserved only as last known reference
+        self.assertAlmostEqual(report.gyro_angle_at_zero_cmd_deg, 182.5, places=1)
+        # Final endpoint unavailable: report final angle and post-zero rotation as unavailable/invalid
+        self.assertIsNone(report.final_settled_gyro_angle_deg)
+        self.assertIsNone(report.post_zero_rotation_deg)
+        self.assertIsNone(report.settled_heading_error_deg)
+        self.assertFalse(report.final_measurement_valid)
+        self.assertTrue(report.confirmed_final_disarmed_state)
+
+    def test_zero_command_timing_and_response_recording(self):
+        params, mock_cockpit, mock_ws, _, _, _, _ = self._create_mock_rover(target_deg=90.0)
+        zero_response_payload = {"ok": True, "linear": 0.0, "angular": 0.0, "state": "ACTIVE", "bridgeTimeMs": 12345}
+
+        orig_send = mock_cockpit.send_cmd_vel.side_effect
+        def cmd_vel_wrapper(*args, **kwargs):
+            res = orig_send(*args, **kwargs)
+            vx = kwargs.get("vx", args[0] if len(args) > 0 else 0.0)
+            wz = kwargs.get("wz", args[1] if len(args) > 1 else 0.0)
+            if abs(vx) <= 0.001 and abs(wz) <= 0.001:
+                return zero_response_payload
+            return res
+        mock_cockpit.send_cmd_vel.side_effect = cmd_vel_wrapper
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        report = runner.execute_single_trial(1)
+
+        self.assertIsNotNone(report.zero_command_send_time_monotonic)
+        self.assertIsNotNone(report.zero_command_response_time_monotonic)
+        self.assertGreaterEqual(report.zero_command_response_time_monotonic, report.zero_command_send_time_monotonic)
+        self.assertIsNotNone(report.zero_command_latency_ms)
+        self.assertGreaterEqual(report.zero_command_latency_ms, 0.0)
+        self.assertEqual(report.zero_command_response, zero_response_payload)
+        self.assertTrue(report.confirmed_final_disarmed_state)
+
+    def test_json_export_preserves_settling_telemetry(self):
+        import tempfile
+        import json
+
+        trial = TrialReport(
+            trial_index=1, requested_turn_deg=180.0, direction="cw", target_signed_yaw_deg=180.0, status="SUCCESS",
+            zero_command_send_time_monotonic=100.1,
+            zero_command_response_time_monotonic=100.108,
+            zero_command_latency_ms=8.0,
+            zero_command_response={"ok": True, "linear": 0, "angular": 0},
+            settle_duration_s=2.001,
+            settle_achieved_imu_rate_hz=48.5,
+            settle_achieved_pid_rate_hz=49.2,
+            settle_imu_samples=[{"t_rel_s": 0.02, "valid": True, "yaw_deg": 180.1}],
+            settle_pid_packets=[{"t_rel_s": 0.02, "source_sequence": 10, "is_pre_zero_backlog": False}]
+        )
+        suite = MultiTrialSuiteReport(suite_id="999999", trials=[trial])
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            out_file = ReportGenerator.save_json(suite, tmp_dir)
+            self.assertTrue(os.path.exists(out_file))
+
+            with open(out_file, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+
+            t_loaded = loaded["trials"][0]
+            self.assertEqual(t_loaded["zero_command_latency_ms"], 8.0)
+            self.assertEqual(t_loaded["zero_command_response"], {"ok": True, "linear": 0, "angular": 0})
+            self.assertEqual(t_loaded["settle_duration_s"], 2.001)
+            self.assertEqual(t_loaded["settle_achieved_imu_rate_hz"], 48.5)
+            self.assertEqual(t_loaded["settle_achieved_pid_rate_hz"], 49.2)
+            self.assertEqual(len(t_loaded["settle_imu_samples"]), 1)
+            self.assertEqual(t_loaded["settle_imu_samples"][0]["yaw_deg"], 180.1)
+            self.assertEqual(len(t_loaded["settle_pid_packets"]), 1)
+            self.assertEqual(t_loaded["settle_pid_packets"][0]["source_sequence"], 10)
+            self.assertFalse(t_loaded["settle_pid_packets"][0]["is_pre_zero_backlog"])
+
+    def test_read_timeouts_and_settle_rate_calculation(self):
+        params, mock_cockpit, mock_ws, _, _, _, _ = self._create_mock_rover(target_deg=90.0, settle_seconds=0.5)
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        report = runner.execute_single_trial(1)
+
+        self.assertGreaterEqual(report.settle_duration_s, 0.45)
+        self.assertGreaterEqual(report.settle_achieved_imu_rate_hz, 0.0)
+        self.assertIsInstance(report.settle_achieved_imu_rate_hz, float)
+        self.assertTrue(report.confirmed_final_disarmed_state)
+
+    def test_delayed_read_enforces_time_budget_and_cleanup_timing(self):
+        """
+        Strengthened Requirement 6:
+        Proves that when individual HTTP/WS reads experience delays during settling:
+        1. Bounded read timeouts enforce the remaining monotonic budget.
+        2. The settle window duration stays close to the requested duration (not drifting/accumulating delays).
+        3. Cleanup (disarm_drive, disable_autonomy, command-source reset) is invoked immediately afterward.
+        """
+        requested_settle_s = 0.5
+        params, mock_cockpit, mock_ws, _, _, _, phase_tracker = self._create_mock_rover(
+            target_deg=90.0,
+            settle_seconds=requested_settle_s
+        )
+        orig_get_imu = mock_cockpit.get_imu.side_effect
+
+        cleanup_timestamps = []
+        orig_disarm = mock_cockpit.disarm_drive.side_effect
+        def recorded_disarm(*args, **kwargs):
+            cleanup_timestamps.append(time.monotonic())
+            return orig_disarm(*args, **kwargs) if orig_disarm else {"ok": True}
+        mock_cockpit.disarm_drive.side_effect = recorded_disarm
+
+        # In settle phase, simulate a slow network call taking up to 0.08s, bounded by the passed timeout
+        def delayed_get_imu(*args, **kwargs):
+            if phase_tracker["phase"] == "SETTLING":
+                timeout = kwargs.get("timeout", 2.0)
+                sleep_time = min(0.08, timeout)
+                time.sleep(sleep_time)
+            return orig_get_imu(*args, **kwargs)
+
+        mock_cockpit.get_imu.side_effect = delayed_get_imu
+
+        t_start = time.monotonic()
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        report = runner.execute_single_trial(1)
+        t_finish = time.monotonic()
+
+        # 1. Settle window must stay close to requested duration: within 50ms of requested 0.5s
+        self.assertGreaterEqual(report.settle_duration_s, requested_settle_s - 0.01)
+        self.assertLess(report.settle_duration_s, requested_settle_s + 0.06)
+
+        # 2. Cleanup must have occurred immediately after settling
+        self.assertTrue(len(cleanup_timestamps) >= 1, "Cleanup disarm_drive was not called")
+        t_disarm = cleanup_timestamps[-1]
+        self.assertLess(t_finish - t_disarm, 0.05)
+        self.assertTrue(report.confirmed_final_disarmed_state)
+
+    def test_unavailable_final_endpoint_excluded_from_accuracy_averages(self):
+        """
+        Requirement 2:
+        Restore bounded final endpoint measurement. If unavailable, report final angle and post-zero
+        rotation as unavailable/invalid and exclude them from accuracy averages. Keep angle_at_zero_cmd
+        only as the last known reference.
+        """
+        params, mock_cockpit, mock_ws, _, _, _, _ = self._create_mock_rover(
+            target_deg=90.0,
+            settle_seconds=0.5
+        )
+        orig_get_imu = mock_cockpit.get_imu.side_effect
+        def imu_with_failing_endpoint(*args, **kwargs):
+            timeout = kwargs.get("timeout")
+            if timeout and timeout <= 0.25 and timeout != 0.05:  # Final endpoint bounded read
+                return {"ok": False, "error": "Endpoint timeout"}
+            return orig_get_imu(*args, **kwargs)
+        mock_cockpit.get_imu.side_effect = imu_with_failing_endpoint
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        suite = runner.execute_suite()
+
+        trial = suite.trials[0]
+        self.assertAlmostEqual(trial.gyro_angle_at_zero_cmd_deg, 90.0, places=1)
+        self.assertIsNone(trial.final_settled_gyro_angle_deg)
+        self.assertIsNone(trial.post_zero_rotation_deg)
+        self.assertIsNone(trial.settled_heading_error_deg)
+        self.assertFalse(trial.final_measurement_valid)
+        # Accuracy averages must exclude this trial
+        self.assertIsNone(suite.mean_settled_error_deg)
+        self.assertIsNone(suite.std_dev_settled_error_deg)
+        self.assertIsNone(suite.repeatability_deg)
+
+    def test_final_endpoint_requires_advancing_sample_beyond_last_settling_sample(self):
+        """
+        Requirement 3:
+        Require the final IMU endpoint sample to have an advancing sequence or timestamp
+        beyond the last settling sample. If it does not advance within the bounded read,
+        mark the final measurement invalid and exclude it from averages.
+        """
+        rad = math.radians(90.0)
+        base = {
+            "ok": True, "rotVecValid": True, "dataAgeMs": 10,
+            "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "gyro": {"z": 0.001},
+            "orientation": {"w": math.cos(rad / 2.0), "x": 0.0, "y": 0.0, "z": math.sin(rad / 2.0)}
+        }
+        # Settling samples up to sequence 100
+        s_settle = dict(base, sequence=100, timestamp_ms=5000)
+        s_endpoint = dict(base, sequence=101, timestamp_ms=5020)
+
+        # Case A: Endpoint sample does NOT advance beyond sequence 100 (returns same sequence 100)
+        params_a, cockpit_a, ws_a, _, _, _, _ = self._create_mock_rover(
+            target_deg=90.0,
+            settle_seconds=0.5,
+            settle_imus=[s_settle]
+        )
+        # Endpoint returns sequence 100 (not advancing)
+        cockpit_a.get_imu.side_effect = lambda *args, **kwargs: dict(base, sequence=100, timestamp_ms=5000)
+
+        runner_a = PhysicalTestRunner(params_a, prompt_fn=lambda _: "y", cockpit_client=cockpit_a, ws_client=ws_a)
+        suite_a = runner_a.execute_suite()
+        trial_a = suite_a.trials[0]
+
+        self.assertFalse(trial_a.final_measurement_valid)
+        self.assertIsNone(trial_a.final_settled_gyro_angle_deg)
+        self.assertIsNone(trial_a.post_zero_rotation_deg)
+        self.assertIsNone(trial_a.settled_heading_error_deg)
+        self.assertIsNone(suite_a.mean_settled_error_deg)
+
+        # Case B: Endpoint sample advances to sequence 101 beyond settling sequence 100
+        params_b, cockpit_b, ws_b, _, _, _, _ = self._create_mock_rover(
+            target_deg=90.0,
+            settle_seconds=0.5,
+            settle_imus=[s_settle] * 35 + [s_endpoint] * 10
+        )
+
+        runner_b = PhysicalTestRunner(params_b, prompt_fn=lambda _: "y", cockpit_client=cockpit_b, ws_client=ws_b)
+        suite_b = runner_b.execute_suite()
+        trial_b = suite_b.trials[0]
+
+        self.assertTrue(trial_b.final_measurement_valid)
+        self.assertIsNotNone(trial_b.final_settled_gyro_angle_deg)
+        self.assertIsNotNone(trial_b.settled_heading_error_deg)
+        self.assertIsNotNone(suite_b.mean_settled_error_deg)
+
+    def test_missing_sample_identifiers_marked_unknown_advancement(self):
+        """
+        Requirement 3 & 4:
+        Missing sample identifiers must mean advancement UNKNOWN, not VALID_ADVANCING.
+        Preserve timestamp units and clock domains explicitly; verify yaw units.
+        Record host receipt time after HTTP response and clearly separate request-start time.
+        """
+        rad = math.radians(90.0)
+        imu_no_ids = {
+            "ok": True, "rotVecValid": True, "dataAgeMs": 10,
+            "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "gyro": {"z": 0.001},
+            "orientation": {"w": math.cos(rad / 2.0), "x": 0.0, "y": 0.0, "z": math.sin(rad / 2.0)}
+            # No sequence and no timestamp_ms/espTimestampUs
+        }
+        params, mock_cockpit, mock_ws, _, _, _, _ = self._create_mock_rover(
+            target_deg=90.0,
+            settle_seconds=0.5,
+            settle_imus=[imu_no_ids]
+        )
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        report = runner.execute_single_trial(1)
+
+        target_sample = [s for s in report.settle_imu_samples if s.get("status") == "UNKNOWN_ADVANCEMENT"]
+        self.assertTrue(len(target_sample) >= 1)
+        s = target_sample[0]
+        self.assertEqual(s["status"], "UNKNOWN_ADVANCEMENT")
+        self.assertEqual(s["advancement"], "UNKNOWN")
+        self.assertFalse(s["valid"])
+        self.assertIsNone(s["yaw_deg"])
+        self.assertEqual(s["yaw_units"], "deg")
+        self.assertEqual(s["host_clock_domain"], "host_monotonic")
+        self.assertIn("host_request_start_time_monotonic", s)
+        self.assertIn("host_receipt_time_monotonic", s)
+        self.assertGreaterEqual(s["host_receipt_time_monotonic"], s["host_request_start_time_monotonic"])
+        self.assertIsNone(s["source_clock_domain"])
+        self.assertIsNone(s["source_timestamp"])
+        self.assertIsNone(s["source_timestamp_unit"])
+
+    def test_missing_packet_timestamp_marked_unknown_backlog(self):
+        """
+        Requirement 3:
+        Missing packet timestamps must mean backlog UNKNOWN.
+        """
+        p_no_ts = {
+            "type": "pid_diagnostic",
+            "sequence": 50,
+            "m1": {"targetRadps": 0.0, "measuredRadps": 0.0}
+            # No timestamp
+        }
+        params, mock_cockpit, mock_ws, _, _, _, _ = self._create_mock_rover(target_deg=90.0)
+        mock_ws.recv_frames.side_effect = itertools.chain([[]] * 5, [[p_no_ts]], itertools.repeat([]))
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        report = runner.execute_single_trial(1)
+
+        target_packet = [p for p in report.settle_pid_packets if p.get("source_sequence") == 50]
+        self.assertEqual(len(target_packet), 1)
+        p = target_packet[0]
+        self.assertIsNone(p["is_pre_zero_backlog"])
+        self.assertEqual(p["backlog_status"], "UNKNOWN")
+        self.assertIsNone(p["source_timestamp_ms"])
+        self.assertIsNone(p["source_timestamp_unit"])
+        self.assertIsNone(p["source_clock_domain"])
+        self.assertEqual(p["host_clock_domain"], "host_monotonic")
+
+    def test_distinguish_polling_attempts_from_advancing_samples_and_post_zero_pid_rates(self):
+        """
+        Requirement 3 & 5:
+        Distinguish polling attempts from valid advancing IMU samples and post-zero PID packet rates.
+        Make settle_achieved_imu_rate_hz report the valid advancing IMU rate.
+        """
+        rad = math.radians(90.0)
+        base = {
+            "ok": True, "rotVecValid": True, "dataAgeMs": 10,
+            "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "orientation": {"w": math.cos(rad / 2.0), "x": 0.0, "y": 0.0, "z": math.sin(rad / 2.0)}
+        }
+        # 1 stale, 1 repeated, 1 valid advancing
+        s1 = dict(base, dataAgeMs=300, sequence=10, timestamp_ms=1000)
+        s2 = dict(base, sequence=10, timestamp_ms=1000)
+        s3 = dict(base, sequence=11, timestamp_ms=1020)
+
+        t_now_ms = int(time.time() * 1000)
+        # 1 pre-zero backlog, 1 post-zero, 1 unknown
+        p_backlog = {"type": "pid_diagnostic", "sequence": 1, "timestamp": t_now_ms - 1000}
+        p_post = {"type": "pid_diagnostic", "sequence": 2, "timestamp": t_now_ms + 1000}
+        p_unknown = {"type": "pid_diagnostic", "sequence": 3}
+
+        params, mock_cockpit, mock_ws, _, _, _, _ = self._create_mock_rover(
+            target_deg=90.0,
+            settle_seconds=0.5,
+            settle_imus=[s1, s2, s3]
+        )
+        mock_ws.recv_frames.side_effect = itertools.chain([[]] * 2, [[p_backlog, p_post, p_unknown]], itertools.repeat([]))
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        report = runner.execute_single_trial(1)
+
+        # Distinguish poll count vs advancing count
+        self.assertGreaterEqual(report.settle_imu_poll_count, 3)
+        self.assertGreaterEqual(report.settle_imu_valid_advancing_count, 1)
+        self.assertGreaterEqual(report.settle_imu_poll_rate_hz, report.settle_imu_valid_advancing_rate_hz)
+
+        # Requirement 5: settle_achieved_imu_rate_hz reports valid advancing rate
+        self.assertEqual(report.settle_achieved_imu_rate_hz, report.settle_imu_valid_advancing_rate_hz)
+
+        # Distinguish PID packet categories
+        self.assertEqual(report.settle_pid_packets_count, 3)
+        self.assertEqual(report.settle_pid_backlog_packets_count, 1)
+        self.assertEqual(report.settle_pid_post_zero_packets_count, 1)
+        self.assertEqual(report.settle_pid_unknown_packets_count, 1)
+        self.assertGreaterEqual(report.settle_pid_packet_rate_hz, report.settle_pid_post_zero_packet_rate_hz)
+
+    def test_exact_captured_live_pid_diagnostic_frame_schema_in_settle(self):
+        """
+        Requirement 1 & 2:
+        Restore exact verified live PID WebSocket schema:
+        - type: 'pid_diagnostic'
+        - top-level timestamp and sequence
+        - top-level m1, m2, m3, m4, and outerYaw
+        - no PID_DIAGNOSTICS or pid.wheels nesting.
+        """
+        t_now_ms = int(time.time() * 1000)
+        live_frame = {
+            "type": "pid_diagnostic",
+            "timestamp": t_now_ms + 10000,
+            "sequence": 45000,
+            "m1": {"targetRadps": -2.5, "measuredRadps": -2.4, "finalPwm": -50, "stictionState": "KINETIC"},
+            "m2": {"targetRadps": +2.5, "measuredRadps": +2.3, "finalPwm": +48, "stictionState": "KINETIC"},
+            "m3": {"targetRadps": -2.5, "measuredRadps": -2.5, "finalPwm": -51, "stictionState": "KINETIC"},
+            "m4": {"targetRadps": +2.5, "measuredRadps": +2.4, "finalPwm": +49, "stictionState": "KINETIC"},
+            "outerYaw": {
+                "wzRequested": 0.8, "wzActual": 0.78, "yawOuterError": 0.02,
+                "yawOuterCorrection": 0.01, "wzCorrected": 0.81, "yawOuterActive": True,
+                "imuGyroValid": True, "imuGyroAgeMs": 15
+            }
+        }
+        params, mock_cockpit, mock_ws, _, _, _, _ = self._create_mock_rover(target_deg=90.0, settle_seconds=0.5)
+        mock_ws.recv_frames.side_effect = itertools.chain([[]] * 2, [[live_frame]], itertools.repeat([]))
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        report = runner.execute_single_trial(1)
+
+        self.assertEqual(report.settle_pid_post_zero_packets_count, 1)
+        self.assertEqual(len(report.settle_pid_packets), 1)
+        pkt = report.settle_pid_packets[0]
+
+        # Top-level field verifications
+        self.assertEqual(pkt["source_sequence"], 45000)
+        self.assertEqual(pkt["source_timestamp_ms"], t_now_ms + 10000)
+        self.assertFalse(pkt["is_pre_zero_backlog"])
+        self.assertEqual(pkt["backlog_status"], "POST_ZERO")
+
+        # Top-level wheel records m1..m4 preserved
+        self.assertEqual(pkt["m1"]["targetRadps"], -2.5)
+        self.assertEqual(pkt["m2"]["measuredRadps"], +2.3)
+        self.assertEqual(pkt["m3"]["finalPwm"], -51)
+        self.assertEqual(pkt["m4"]["stictionState"], "KINETIC")
+
+        # Top-level outerYaw preserved
+        self.assertIsNotNone(pkt["outerYaw"])
+        self.assertEqual(pkt["outerYaw"]["wzRequested"], 0.8)
+        self.assertTrue(pkt["outerYaw"]["yawOuterActive"])
+
+    def test_dry_run_settling_duration_restored(self):
+        """
+        Requirement 4:
+        Restore requested dry-run settling duration.
+        """
+        params = TurnParameters(degrees=90.0, direction="cw", trials=1, dry_run=True, settle_seconds=0.5)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+        mock_ws.connected = False
+        mock_cockpit.get_imu.return_value = {
+            "ok": True, "rotVecValid": True, "dataAgeMs": 10,
+            "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "gyro": {"z": 0.001},
+            "orientation": {"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0}
+        }
+        mock_cockpit.get_encoders.return_value = {
+            "ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}
+        }
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        report = runner.execute_single_trial(1)
+
+        self.assertGreaterEqual(report.settle_duration_s, 0.49)
+        self.assertTrue(report.final_measurement_valid)
+        self.assertIsNotNone(report.final_settled_gyro_angle_deg)
+        self.assertEqual(report.final_settled_gyro_angle_deg, report.gyro_angle_at_zero_cmd_deg)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
 

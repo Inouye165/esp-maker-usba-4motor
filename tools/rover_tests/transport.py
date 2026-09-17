@@ -202,12 +202,21 @@ class NativeWSClient:
             "w": float(wz)
         })
 
-    def recv_frames(self) -> List[Dict[str, Any]]:
+    def recv_frames(self, timeout: Optional[float] = None, max_frames: Optional[int] = None) -> List[Dict[str, Any]]:
         if not self.connected or not self.sock:
             return []
         messages: List[Dict[str, Any]] = []
+        old_timeout = None
+        if timeout is not None:
+            try:
+                old_timeout = self.sock.gettimeout()
+                self.sock.settimeout(max(0.0001, float(timeout)))
+            except Exception:
+                pass
         try:
             while True:
+                if max_frames is not None and len(messages) >= max_frames:
+                    break
                 head = self.sock.recv(2)
                 if not head or len(head) < 2:
                     break
@@ -245,6 +254,12 @@ class NativeWSClient:
             pass
         except Exception:
             pass
+        finally:
+            if old_timeout is not None and self.sock:
+                try:
+                    self.sock.settimeout(old_timeout)
+                except Exception:
+                    pass
         return messages
 
     def close(self):
@@ -291,11 +306,11 @@ class CockpitClient:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    def get_status(self) -> Dict[str, Any]:
-        return self._request("/api/status")
+    def get_status(self, timeout: float = 2.0) -> Dict[str, Any]:
+        return self._request("/api/status", timeout=timeout)
 
-    def get_autonomy_status(self) -> Dict[str, Any]:
-        return self._request("/api/autonomy/status")
+    def get_autonomy_status(self, timeout: float = 2.0) -> Dict[str, Any]:
+        return self._request("/api/autonomy/status", timeout=timeout)
 
     def enable_autonomy(self) -> Dict[str, Any]:
         return self._request("/api/autonomy/enable", method="POST", data={})
@@ -312,11 +327,11 @@ class CockpitClient:
     def set_command_source(self, source: str = "NONE") -> Dict[str, Any]:
         return self._request("/api/command-source", method="POST", data={"source": source})
 
-    def get_encoders(self) -> Dict[str, Any]:
-        return self._request("/api/encoders")
+    def get_encoders(self, timeout: float = 2.0) -> Dict[str, Any]:
+        return self._request("/api/encoders", timeout=timeout)
 
-    def get_imu(self) -> Dict[str, Any]:
-        return self._request("/api/imu")
+    def get_imu(self, timeout: float = 2.0) -> Dict[str, Any]:
+        return self._request("/api/imu", timeout=timeout)
 
     def get_pid_telemetry(self) -> Dict[str, Any]:
         return self._request("/api/pid-telemetry")

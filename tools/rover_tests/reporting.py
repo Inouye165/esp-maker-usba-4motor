@@ -77,9 +77,10 @@ class TrialReport:
 
     # Gyro & Orientation Metrics
     gyro_angle_at_zero_cmd_deg: float = 0.0
-    final_settled_gyro_angle_deg: float = 0.0
-    post_zero_rotation_deg: float = 0.0
-    settled_heading_error_deg: float = 0.0
+    final_settled_gyro_angle_deg: Optional[float] = None
+    post_zero_rotation_deg: Optional[float] = None
+    settled_heading_error_deg: Optional[float] = None
+    final_measurement_valid: bool = False
     rons_physical_angle_estimate_deg: Optional[float] = None
     estimate_vs_gyro_delta_deg: Optional[float] = None
 
@@ -101,6 +102,27 @@ class TrialReport:
     autonomy_state_transitions: List[Dict[str, Any]] = field(default_factory=list)
     first_command_response: Dict[str, Any] = field(default_factory=dict)
 
+    # Zero-Command & Settling Instrumentation
+    zero_command_send_time_monotonic: Optional[float] = None
+    zero_command_response_time_monotonic: Optional[float] = None
+    zero_command_latency_ms: Optional[float] = None
+    zero_command_response: Dict[str, Any] = field(default_factory=dict)
+    settle_duration_s: float = 0.0
+    settle_achieved_imu_rate_hz: float = 0.0
+    settle_achieved_pid_rate_hz: float = 0.0
+    settle_imu_poll_count: int = 0
+    settle_imu_valid_advancing_count: int = 0
+    settle_imu_poll_rate_hz: float = 0.0
+    settle_imu_valid_advancing_rate_hz: float = 0.0
+    settle_pid_packets_count: int = 0
+    settle_pid_post_zero_packets_count: int = 0
+    settle_pid_backlog_packets_count: int = 0
+    settle_pid_unknown_packets_count: int = 0
+    settle_pid_packet_rate_hz: float = 0.0
+    settle_pid_post_zero_packet_rate_hz: float = 0.0
+    settle_imu_samples: List[Dict[str, Any]] = field(default_factory=list)
+    settle_pid_packets: List[Dict[str, Any]] = field(default_factory=list)
+
     # Raw telemetry frames (optional / truncated in summary)
     approach_milestones: Dict[str, Any] = field(default_factory=dict)
 
@@ -118,9 +140,9 @@ class MultiTrialSuiteReport:
     aborted_trials: int = 0
     is_dry_run: bool = False
     trials: List[TrialReport] = field(default_factory=list)
-    mean_settled_error_deg: float = 0.0
-    std_dev_settled_error_deg: float = 0.0
-    repeatability_deg: float = 0.0
+    mean_settled_error_deg: Optional[float] = None
+    std_dev_settled_error_deg: Optional[float] = None
+    repeatability_deg: Optional[float] = None
     mean_estimate_delta_deg: Optional[float] = None
 
 
@@ -156,9 +178,12 @@ class ReportGenerator:
         md.append(f"| Total Trials Executed | {report.total_trials} |")
         md.append(f"| Successful Trials | {report.successful_trials} |")
         md.append(f"| Aborted Trials | {report.aborted_trials} |")
-        md.append(f"| Mean Settled Error | {report.mean_settled_error_deg:+.2f}° |")
-        md.append(f"| Error Standard Deviation | {report.std_dev_settled_error_deg:.2f}° |")
-        md.append(f"| Repeatability Span | {report.repeatability_deg:.2f}° |")
+        mean_err_str = f"{report.mean_settled_error_deg:+.2f}°" if report.mean_settled_error_deg is not None else "Unavailable"
+        md.append(f"| Mean Settled Error | {mean_err_str} |")
+        std_err_str = f"{report.std_dev_settled_error_deg:.2f}°" if report.std_dev_settled_error_deg is not None else "Unavailable"
+        md.append(f"| Error Standard Deviation | {std_err_str} |")
+        rep_str = f"{report.repeatability_deg:.2f}°" if report.repeatability_deg is not None else "Unavailable"
+        md.append(f"| Repeatability Span | {rep_str} |")
         if report.mean_estimate_delta_deg is not None:
             md.append(f"| Mean Delta vs Ron's Estimate | {report.mean_estimate_delta_deg:+.2f}° |")
         md.append("")
@@ -175,9 +200,12 @@ class ReportGenerator:
             md.append("| :--- | :--- | :--- |")
             md.append(f"| Target Signed Angle | `{t.target_signed_yaw_deg:+.2f}°` | Intended continuous rotation |")
             md.append(f"| Angle at Zero Command | `{t.gyro_angle_at_zero_cmd_deg:+.2f}°` | IMU reading when $\\omega_z=0$ issued |")
-            md.append(f"| Final Settled Angle | `{t.final_settled_gyro_angle_deg:+.2f}°` | IMU reading after settle period |")
-            md.append(f"| Post-Zero Coast | `{t.post_zero_rotation_deg:+.2f}°` | Rotation between zero cmd and standstill |")
-            md.append(f"| Settled Error vs Target | `{t.settled_heading_error_deg:+.2f}°` | Final error against target |")
+            settled_str = f"`{t.final_settled_gyro_angle_deg:+.2f}°`" if t.final_settled_gyro_angle_deg is not None else "`Unavailable`"
+            md.append(f"| Final Settled Angle | {settled_str} | IMU reading after settle period |")
+            coast_str = f"`{t.post_zero_rotation_deg:+.2f}°`" if t.post_zero_rotation_deg is not None else "`Unavailable`"
+            md.append(f"| Post-Zero Coast | {coast_str} | Rotation between zero cmd and standstill |")
+            error_str = f"`{t.settled_heading_error_deg:+.2f}°`" if t.settled_heading_error_deg is not None else "`Unavailable`"
+            md.append(f"| Settled Error vs Target | {error_str} | Final error against target |")
 
             if t.rons_physical_angle_estimate_deg is not None:
                 md.append(f"| Ron's Physical Estimate | `{t.rons_physical_angle_estimate_deg:+.2f}°` | Ground truth protractor/laser observation |")
@@ -189,6 +217,13 @@ class ReportGenerator:
             md.append(f"| Opposing Polarity Verified | `{'YES' if t.opposite_polarity_maintained else 'NO (VIOLATION)'}` | Left & Right sides opposed |")
             md.append(f"| Breakout Events | `{t.breakout_event_count}` | Stiction boost activations |")
             md.append(f"| Active Telemetry Samples | `{t.telemetry_samples_count}` | Filtered PID diagnostic packets |")
+            if t.zero_command_latency_ms is not None:
+                md.append(f"| Zero Command Latency | `{t.zero_command_latency_ms:.1f} ms` | HTTP cmd_vel(0,0) turn-around |")
+            if t.settle_duration_s > 0:
+                md.append(
+                    f"| Settle Telemetry Achieved | `IMU: {t.settle_imu_valid_advancing_count}/{t.settle_imu_poll_count} valid ({t.settle_imu_valid_advancing_rate_hz:.1f} Hz, poll {t.settle_imu_poll_rate_hz:.1f} Hz), "
+                    f"PID: {t.settle_pid_post_zero_packets_count} post-zero ({t.settle_pid_post_zero_packet_rate_hz:.1f} Hz, {t.settle_pid_backlog_packets_count} backlog, {t.settle_pid_unknown_packets_count} unk)` | Duration: {t.settle_duration_s:.2f}s |"
+                )
             md.append(f"| Final Zero & Disarmed Confirmed | `{'YES' if (t.confirmed_final_zero_command and t.confirmed_final_disarmed_state) else 'NO (FAIL-SAFE ERROR)'}` | Drivetrain locked & safe |")
             md.append("")
 

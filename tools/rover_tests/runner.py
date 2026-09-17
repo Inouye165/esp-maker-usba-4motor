@@ -179,17 +179,22 @@ class PhysicalTestRunner:
                 if not final_disarmed:
                     t.confirmed_final_disarmed_state = False
 
-        # Compute suite statistics across successful trials
+        # Compute suite statistics across successful trials with valid final measurements
         successful_trials = [t for t in suite_report.trials if t.status in ("SUCCESS", "DRY_RUN_PASSED")]
-        if successful_trials:
-            errors = [t.settled_heading_error_deg for t in successful_trials]
-            suite_report.mean_settled_error_deg = statistics.mean(errors)
-            suite_report.std_dev_settled_error_deg = statistics.stdev(errors) if len(errors) > 1 else 0.0
-            suite_report.repeatability_deg = max(errors) - min(errors)
+        valid_error_trials = [t for t in successful_trials if t.final_measurement_valid and t.settled_heading_error_deg is not None]
+        if valid_error_trials:
+            errors = [t.settled_heading_error_deg for t in valid_error_trials]
+            suite_report.mean_settled_error_deg = round(statistics.mean(errors), 4)
+            suite_report.std_dev_settled_error_deg = round(statistics.stdev(errors), 4) if len(errors) > 1 else 0.0
+            suite_report.repeatability_deg = round(max(errors) - min(errors), 4)
+        else:
+            suite_report.mean_settled_error_deg = None
+            suite_report.std_dev_settled_error_deg = None
+            suite_report.repeatability_deg = None
 
-            estimate_deltas = [t.estimate_vs_gyro_delta_deg for t in successful_trials if t.estimate_vs_gyro_delta_deg is not None]
-            if estimate_deltas:
-                suite_report.mean_estimate_delta_deg = statistics.mean(estimate_deltas)
+        estimate_deltas = [t.estimate_vs_gyro_delta_deg for t in successful_trials if t.estimate_vs_gyro_delta_deg is not None]
+        if estimate_deltas:
+            suite_report.mean_estimate_delta_deg = round(statistics.mean(estimate_deltas), 4)
 
         # Generate output files
         json_path = ReportGenerator.save_json(suite_report, self.params.report_directory)
@@ -653,6 +658,8 @@ class PhysicalTestRunner:
             for w_id in ["m1", "m2", "m3", "m4"]
         }
         total_telemetry_samples = 0
+        angle_at_zero_cmd = 0.0
+        zero_send_wall_ms: Optional[int] = None
 
         abort_reason = None
         t_motion_start = time.time()
@@ -680,6 +687,11 @@ class PhysicalTestRunner:
                         total_telemetry_samples += 1
                     time.sleep(0.05)
                 angle_at_zero_cmd = self.params.signed_target_deg
+                t_dry_mono = time.monotonic()
+                trial_report.zero_command_send_time_monotonic = t_dry_mono
+                trial_report.zero_command_response_time_monotonic = t_dry_mono
+                trial_report.zero_command_latency_ms = 0.0
+                trial_report.zero_command_response = {"ok": True, "dry_run": True}
             else:
                 # Physical motion loop
                 while True:
@@ -726,7 +738,15 @@ class PhysicalTestRunner:
                     # This ensures zero-command and settling samples are NEVER mixed into active motion statistics.
                     if controller.phase == ApproachPhase.ZERO:
                         angle_at_zero_cmd = cur_rel_yaw
-                        self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
+                        t_send_mono = time.monotonic()
+                        zero_send_wall_ms = int(time.time() * 1000)
+                        zero_cmd_res = self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
+                        t_recv_mono = time.monotonic()
+
+                        trial_report.zero_command_send_time_monotonic = t_send_mono
+                        trial_report.zero_command_response_time_monotonic = t_recv_mono
+                        trial_report.zero_command_latency_ms = (t_recv_mono - t_send_mono) * 1000.0
+                        trial_report.zero_command_response = zero_cmd_res if isinstance(zero_cmd_res, dict) else {"ok": False, "raw": str(zero_cmd_res)}
                         break
 
                     # Stream command to rover via ROS2 bridge
@@ -868,20 +888,268 @@ class PhysicalTestRunner:
 
         # Step 12: Settle Period - zero command was issued upon target arrival
         print(f"  Settling for {self.params.settle_seconds:.1f}s...")
-        time.sleep(self.params.settle_seconds)
-        if not self.params.dry_run:
-            final_imu = self.cockpit.get_imu()
-            if final_imu and final_imu.get("ok", False):
-                final_raw_yaw = quat_to_yaw(final_imu.get("orientation", {}))
-                unwrapper.update_orientation_yaw(final_raw_yaw)
-                final_settled_yaw = unwrapper.relative_yaw_deg
-            else:
-                final_settled_yaw = angle_at_zero_cmd
-        else:
-            final_settled_yaw = angle_at_zero_cmd
+        t_settle_start_mono = time.monotonic()
+        t_settle_target_end_mono = t_settle_start_mono + max(0.0, self.params.settle_seconds)
 
-        controller.mark_settled(final_settled_yaw)
-        post_zero_coast = final_settled_yaw - angle_at_zero_cmd
+        settle_imu_samples: List[Dict[str, Any]] = []
+        settle_pid_packets: List[Dict[str, Any]] = []
+        last_advancing_imu_ts: Optional[int] = None
+        last_advancing_imu_seq: Optional[int] = None
+
+        final_measurement_valid = False
+        final_settled_yaw: Optional[float] = None
+        post_zero_coast: Optional[float] = None
+        settled_heading_error: Optional[float] = None
+
+        if self.params.dry_run:
+            # Restore full requested dry-run settling duration
+            time.sleep(self.params.settle_seconds)
+            actual_settle_duration_s = max(0.001, time.monotonic() - t_settle_start_mono)
+            final_settled_yaw = angle_at_zero_cmd
+            post_zero_coast = 0.0
+            settled_heading_error = final_settled_yaw - self.params.signed_target_deg
+            final_measurement_valid = True
+            controller.mark_settled(final_settled_yaw)
+            trial_report.settle_duration_s = round(actual_settle_duration_s, 4)
+        else:
+            # Active bounded sampling loop throughout the settling interval
+            while True:
+                remaining_budget = t_settle_target_end_mono - time.monotonic()
+                if remaining_budget <= 0.0:
+                    break
+
+                t_iter_start_mono = time.monotonic()
+
+                # 1. Bounded WebSocket ingestion: preserve each PID diagnostic packet individually
+                if self.ws and self.ws.connected:
+                    ws_timeout = min(0.005, remaining_budget)
+                    try:
+                        ws_frames = self.ws.recv_frames(timeout=ws_timeout)
+                    except StopIteration:
+                        ws_frames = []
+                    except Exception:
+                        ws_frames = []
+
+                    for f in ws_frames:
+                        # Enforce time budget during backlog frame processing
+                        if time.monotonic() >= t_settle_target_end_mono:
+                            break
+
+                        if f.get("type") == "pid_diagnostic":
+                            t_recv_mono = time.monotonic()
+                            src_ts = f.get("timestamp")
+                            if src_ts is None:
+                                is_backlog = None
+                                backlog_status = "UNKNOWN"
+                            elif zero_send_wall_ms is not None:
+                                is_backlog = (src_ts < zero_send_wall_ms)
+                                backlog_status = "BACKLOG" if is_backlog else "POST_ZERO"
+                            else:
+                                is_backlog = None
+                                backlog_status = "UNKNOWN"
+
+                            packet_record = {
+                                "host_receipt_time_monotonic": round(t_recv_mono, 6),
+                                "host_clock_domain": "host_monotonic",
+                                "t_rel_s": round(t_recv_mono - t_settle_start_mono, 4),
+                                "source_timestamp_ms": src_ts,
+                                "source_timestamp_unit": "ms" if src_ts is not None else None,
+                                "source_clock_domain": "bridge_timestamp_ms" if src_ts is not None else None,
+                                "source_sequence": f.get("sequence"),
+                                "is_pre_zero_backlog": is_backlog,
+                                "backlog_status": backlog_status,
+                                "m1": f.get("m1", {}),
+                                "m2": f.get("m2", {}),
+                                "m3": f.get("m3", {}),
+                                "m4": f.get("m4", {}),
+                                "outerYaw": f.get("outerYaw")
+                            }
+                            settle_pid_packets.append(packet_record)
+
+                # 2. Bounded IMU sample: check time budget before and within call
+                remaining_budget = t_settle_target_end_mono - time.monotonic()
+                if remaining_budget <= 0.0:
+                    break
+
+                imu_timeout = min(0.05, remaining_budget)
+                t_req_start_mono = time.monotonic()
+                try:
+                    imu_snap = self.cockpit.get_imu(timeout=imu_timeout)
+                except StopIteration:
+                    break
+                except Exception as e:
+                    imu_snap = {"ok": False, "error": str(e)}
+                t_imu_recv_mono = time.monotonic()
+
+                imu_record: Dict[str, Any] = {
+                    "host_request_start_time_monotonic": round(t_req_start_mono, 6),
+                    "host_receipt_time_monotonic": round(t_imu_recv_mono, 6),
+                    "host_clock_domain": "host_monotonic",
+                    "t_rel_s": round(t_imu_recv_mono - t_settle_start_mono, 4),
+                    "valid": False,
+                    "status": "MISSING",
+                    "advancement": "UNKNOWN",
+                    "yaw_deg": None,
+                    "yaw_units": "deg",
+                    "raw_yaw_deg": None,
+                    "age_ms": None,
+                    "source_timestamp": None,
+                    "source_timestamp_unit": None,
+                    "source_clock_domain": None,
+                    "source_sequence": None,
+                    "error": None
+                }
+
+                if not imu_snap or not imu_snap.get("ok", False):
+                    imu_record["status"] = "MISSING"
+                    imu_record["error"] = imu_snap.get("error") if isinstance(imu_snap, dict) and imu_snap.get("error") else "IMU endpoint returned not ok or null"
+                else:
+                    orientation = imu_snap.get("orientation")
+                    age_ms = imu_snap.get("dataAgeMs") if "dataAgeMs" in imu_snap else imu_snap.get("age_ms")
+                    src_ts = imu_snap.get("timestamp_ms") if "timestamp_ms" in imu_snap else (imu_snap.get("espTimestampUs") or imu_snap.get("timestamp"))
+                    src_ts_unit = "us" if "espTimestampUs" in imu_snap else ("ms" if src_ts is not None else None)
+                    src_clock = "esp32_boot_us" if "espTimestampUs" in imu_snap else ("bridge_timestamp_ms" if "timestamp_ms" in imu_snap else ("unknown" if src_ts is not None else None))
+                    src_seq = imu_snap.get("sequence")
+
+                    imu_record["age_ms"] = age_ms
+                    imu_record["source_timestamp"] = src_ts
+                    imu_record["source_timestamp_unit"] = src_ts_unit
+                    imu_record["source_clock_domain"] = src_clock
+                    imu_record["source_sequence"] = src_seq
+
+                    if not orientation or not isinstance(orientation, dict) or not all(k in orientation for k in ("x", "y", "z", "w")):
+                        imu_record["status"] = "INVALID_ORIENTATION"
+                        imu_record["error"] = "Orientation missing x, y, z, or w"
+                    else:
+                        is_fresh, freshness_msg = check_imu_freshness(imu_snap, max_age_ms=250.0)
+                        if not is_fresh:
+                            imu_record["status"] = "STALE"
+                            imu_record["error"] = freshness_msg
+                        else:
+                            # Freshness verified. Check sample advancement:
+                            has_sample_id = (src_seq is not None or src_ts is not None)
+                            raw_yaw_rad = quat_to_yaw(orientation)
+                            imu_record["raw_yaw_deg"] = round(math.degrees(raw_yaw_rad), 4)
+
+                            if not has_sample_id:
+                                imu_record["status"] = "UNKNOWN_ADVANCEMENT"
+                                imu_record["advancement"] = "UNKNOWN"
+                                imu_record["valid"] = False
+                                imu_record["error"] = "Missing sequence and timestamp identifiers; advancement unknown"
+                                imu_record["yaw_deg"] = None
+                            else:
+                                is_advanced = True
+                                if src_seq is not None and last_advancing_imu_seq is not None:
+                                    is_advanced = (src_seq > last_advancing_imu_seq)
+                                elif src_ts is not None and last_advancing_imu_ts is not None:
+                                    is_advanced = (src_ts > last_advancing_imu_ts)
+
+                                if not is_advanced:
+                                    imu_record["status"] = "NOT_ADVANCING"
+                                    imu_record["advancement"] = "NOT_ADVANCING"
+                                    imu_record["valid"] = False
+                                    imu_record["yaw_deg"] = None
+                                else:
+                                    imu_record["status"] = "VALID_ADVANCING"
+                                    imu_record["advancement"] = "ADVANCING"
+                                    imu_record["valid"] = True
+                                    unwrapper.update_orientation_yaw(raw_yaw_rad)
+                                    imu_record["yaw_deg"] = round(unwrapper.relative_yaw_deg, 4)
+                                    if src_ts is not None:
+                                        last_advancing_imu_ts = src_ts
+                                    if src_seq is not None:
+                                        last_advancing_imu_seq = src_seq
+
+                settle_imu_samples.append(imu_record)
+
+                # Bounded iteration pacing targeting ~20ms cadence
+                remaining_after = t_settle_target_end_mono - time.monotonic()
+                if remaining_after <= 0.0:
+                    break
+                iteration_elapsed = time.monotonic() - t_iter_start_mono
+                time.sleep(min(remaining_after, max(0.002, 0.02 - iteration_elapsed)))
+
+            actual_settle_duration_s = max(0.001, time.monotonic() - t_settle_start_mono)
+            imu_poll_count = len(settle_imu_samples)
+            imu_valid_advancing_count = len([s for s in settle_imu_samples if s.get("status") == "VALID_ADVANCING"])
+            pid_packets_count = len(settle_pid_packets)
+            pid_post_zero_count = len([p for p in settle_pid_packets if p.get("backlog_status") == "POST_ZERO"])
+            pid_backlog_count = len([p for p in settle_pid_packets if p.get("backlog_status") == "BACKLOG"])
+            pid_unknown_count = len([p for p in settle_pid_packets if p.get("backlog_status") == "UNKNOWN"])
+
+            trial_report.settle_duration_s = round(actual_settle_duration_s, 4)
+            trial_report.settle_imu_poll_count = imu_poll_count
+            trial_report.settle_imu_valid_advancing_count = imu_valid_advancing_count
+            trial_report.settle_imu_poll_rate_hz = round(imu_poll_count / actual_settle_duration_s, 2)
+            trial_report.settle_imu_valid_advancing_rate_hz = round(imu_valid_advancing_count / actual_settle_duration_s, 2)
+            trial_report.settle_achieved_imu_rate_hz = trial_report.settle_imu_valid_advancing_rate_hz
+
+            trial_report.settle_pid_packets_count = pid_packets_count
+            trial_report.settle_pid_post_zero_packets_count = pid_post_zero_count
+            trial_report.settle_pid_backlog_packets_count = pid_backlog_count
+            trial_report.settle_pid_unknown_packets_count = pid_unknown_count
+            trial_report.settle_pid_packet_rate_hz = round(pid_packets_count / actual_settle_duration_s, 2)
+            trial_report.settle_pid_post_zero_packet_rate_hz = round(pid_post_zero_count / actual_settle_duration_s, 2)
+            trial_report.settle_achieved_pid_rate_hz = trial_report.settle_pid_post_zero_packet_rate_hz
+            trial_report.settle_imu_samples = settle_imu_samples
+            trial_report.settle_pid_packets = settle_pid_packets
+
+            # Determine last settle sample identifiers
+            last_settle_seq = None
+            last_settle_ts = None
+            for s in reversed(settle_imu_samples):
+                if last_settle_seq is None and s.get("source_sequence") is not None:
+                    last_settle_seq = s.get("source_sequence")
+                if last_settle_ts is None and s.get("source_timestamp") is not None:
+                    last_settle_ts = s.get("source_timestamp")
+                if last_settle_seq is not None and last_settle_ts is not None:
+                    break
+
+            # Bounded final endpoint measurement
+            # Must advance beyond the last settling sample within the bounded read (timeout budget up to 0.25s)
+            t_endpoint_start = time.monotonic()
+            endpoint_deadline = t_endpoint_start + 0.25
+            while time.monotonic() < endpoint_deadline:
+                rem_endpoint = endpoint_deadline - time.monotonic()
+                if rem_endpoint <= 0.0:
+                    break
+                try:
+                    final_endpoint_imu = self.cockpit.get_imu(timeout=min(0.05, max(0.01, rem_endpoint)))
+                except Exception as e:
+                    final_endpoint_imu = {"ok": False, "error": str(e)}
+                    break
+
+                if final_endpoint_imu and final_endpoint_imu.get("ok", False):
+                    ori = final_endpoint_imu.get("orientation")
+                    if ori and isinstance(ori, dict) and all(k in ori for k in ("x", "y", "z", "w")):
+                        is_fresh, _ = check_imu_freshness(final_endpoint_imu, max_age_ms=250.0)
+                        final_seq = final_endpoint_imu.get("sequence")
+                        final_ts = final_endpoint_imu.get("timestamp_ms") if "timestamp_ms" in final_endpoint_imu else (final_endpoint_imu.get("espTimestampUs") or final_endpoint_imu.get("timestamp"))
+
+                        is_endpoint_advancing = False
+                        if final_seq is not None and last_settle_seq is not None:
+                            is_endpoint_advancing = (final_seq > last_settle_seq)
+                        elif final_ts is not None and last_settle_ts is not None:
+                            is_endpoint_advancing = (final_ts > last_settle_ts)
+                        elif last_settle_seq is None and last_settle_ts is None and (final_seq is not None or final_ts is not None):
+                            is_endpoint_advancing = True
+
+                        if is_fresh and is_endpoint_advancing:
+                            final_raw_yaw = quat_to_yaw(ori)
+                            unwrapper.update_orientation_yaw(final_raw_yaw)
+                            final_settled_yaw = unwrapper.relative_yaw_deg
+                            post_zero_coast = final_settled_yaw - angle_at_zero_cmd
+                            settled_heading_error = final_settled_yaw - self.params.signed_target_deg
+                            final_measurement_valid = True
+                            controller.mark_settled(final_settled_yaw)
+                            break
+                time.sleep(0.01)
+
+        trial_report.final_measurement_valid = final_measurement_valid
+        trial_report.gyro_angle_at_zero_cmd_deg = round(angle_at_zero_cmd, 4)
+        trial_report.final_settled_gyro_angle_deg = round(final_settled_yaw, 4) if final_settled_yaw is not None else None
+        trial_report.post_zero_rotation_deg = round(post_zero_coast, 4) if post_zero_coast is not None else None
+        trial_report.settled_heading_error_deg = round(settled_heading_error, 4) if settled_heading_error is not None else None
 
         # Capture final encoders
         enc_final = self.cockpit.get_encoders().get("encoders", enc_start)
@@ -908,10 +1176,6 @@ class PhysicalTestRunner:
 
         # Populate report metrics
         trial_report.duration_s = time.time() - t_trial_start
-        trial_report.gyro_angle_at_zero_cmd_deg = angle_at_zero_cmd
-        trial_report.final_settled_gyro_angle_deg = final_settled_yaw
-        trial_report.post_zero_rotation_deg = post_zero_coast
-        trial_report.settled_heading_error_deg = final_settled_yaw - self.params.signed_target_deg
         trial_report.wheel_metrics = wheel_metrics
         trial_report.breakout_event_count = breakout_count
         trial_report.breakout_dwell_time_ms_total = total_breakout_dwell_ms
@@ -920,20 +1184,24 @@ class PhysicalTestRunner:
 
         print(f"[OK] Trial Completed ({trial_report.status})")
         print(f"  • Angle at Zero Cmd: {angle_at_zero_cmd:+.2f}°")
-        print(f"  • Final Settled Yaw: {final_settled_yaw:+.2f}° (Target: {self.params.signed_target_deg:+.2f}°)")
-        print(f"  • Post-Zero Coast:   {post_zero_coast:+.2f}°")
-        print(f"  • Settled Error:     {trial_report.settled_heading_error_deg:+.2f}°")
+        final_str = f"{final_settled_yaw:+.2f}°" if final_settled_yaw is not None else "Unavailable"
+        print(f"  • Final Settled Yaw: {final_str} (Target: {self.params.signed_target_deg:+.2f}°)")
+        coast_str = f"{post_zero_coast:+.2f}°" if post_zero_coast is not None else "Unavailable"
+        print(f"  • Post-Zero Coast:   {coast_str}")
+        err_str = f"{settled_heading_error:+.2f}°" if settled_heading_error is not None else "Unavailable"
+        print(f"  • Settled Error:     {err_str}")
 
         # Ingest Ron's Physical Estimate
         if self.params.inter_trial_approval and not self.params.dry_run:
             print("\n[PHYSICAL ESTIMATE COLLECTION]")
-            print(f"  Gyro Measured Settled Angle: {final_settled_yaw:+.2f}°")
+            print(f"  Gyro Measured Settled Angle: {final_str}")
             est_input = self.prompt_fn("Enter Ron's physical ground-truth angle estimate in degrees (or Enter to skip): ").strip()
             if est_input:
                 try:
                     est_val = float(est_input)
                     trial_report.rons_physical_angle_estimate_deg = est_val
-                    trial_report.estimate_vs_gyro_delta_deg = final_settled_yaw - est_val
+                    if final_settled_yaw is not None:
+                        trial_report.estimate_vs_gyro_delta_deg = round(final_settled_yaw - est_val, 4)
                 except ValueError:
                     print("  Invalid numeric input for physical estimate. Skipped.")
 
