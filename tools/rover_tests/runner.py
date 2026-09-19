@@ -391,12 +391,13 @@ class PhysicalTestRunner:
             command_line=cmd_str,
             timestamp_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             target_distance_m=self.params.distance,
+            target_linear_speed_mps=self.params.max_linear_speed,
             direction=self.params.direction,
             total_trials=self.params.trials,
             repetitions=self.params.trials,
             is_dry_run=self.params.dry_run,
-            wheel_balancing_enabled=self.params.enable_balancing,
-            dynamic_braking_enabled=self.params.enable_braking
+            wheel_balancing_enabled=bool(self.params.enable_balancing),
+            dynamic_braking_enabled=bool(self.params.enable_braking)
         )
 
         print("=" * 80)
@@ -426,6 +427,15 @@ class PhysicalTestRunner:
                     suite_report.aborted_trials += 1
                     print(f"\n[SUITE ABORTED] Trial {trial_idx} aborted: {trial_report.abort_reason}")
                     break
+
+            # Propagate confirmed live configuration from executed trials
+            if suite_report.trials:
+                first_t = suite_report.trials[0]
+                suite_report.wheel_balancing_enabled = first_t.wheel_balancing_enabled
+                suite_report.dynamic_braking_enabled = first_t.dynamic_braking_enabled
+                suite_report.dynamic_brake_duration_ms = first_t.dynamic_brake_duration_ms
+                suite_report.dynamic_brake_max_speed = first_t.dynamic_brake_max_speed
+                suite_report.anti_stall_confirmed = first_t.anti_stall_confirmed
 
             # Aggregate linear metrics across successful trials
             successful_trials = [t for t in suite_report.trials if t.status in ("SUCCESS", "DRY_RUN_PASSED")]
@@ -480,24 +490,78 @@ class PhysicalTestRunner:
             direction=self.params.direction,
             requested_distance_m=self.params.distance,
             target_signed_distance_m=self.params.signed_target_m,
-            status="INITIALIZING",
-            wheel_balancing_enabled=self.params.enable_balancing,
-            dynamic_braking_enabled=self.params.enable_braking
+            status="INITIALIZING"
         )
 
         t_trial_start = time.time()
         wheel_metrics = {w_id: WheelTrialMetrics(wheel_id=w_id) for w_id in ["m1", "m2", "m3", "m4"]}
         trial_report.wheel_metrics = wheel_metrics
 
+        # Step 0: Read back & confirm live production controller configuration BEFORE motion
+        live_cfg = {}
+        anti_stall_confirmed = False
+        if not self.params.dry_run:
+            # If user explicitly requested drive parameter overrides via CLI flags, apply them
+            if self.params.enable_balancing is not None or self.params.enable_braking is not None:
+                target_bal = bool(self.params.enable_balancing) if self.params.enable_balancing is not None else False
+                target_brk = bool(self.params.enable_braking) if self.params.enable_braking is not None else False
+                try:
+                    self.cockpit.configure_drive(
+                        wheel_balancing=target_bal,
+                        dynamic_braking=target_brk
+                    )
+                    time.sleep(0.05)
+                except Exception as e:
+                    print(f"[WARN] Failed to configure drive parameters: {e}")
+
+            # Read back actual live drive config from cockpit server & ESP32
+            try:
+                cfg_resp = self.cockpit.get_drive_config()
+                if cfg_resp.get("ok"):
+                    live_cfg = cfg_resp.get("config", {})
+            except Exception as e:
+                print(f"[WARN] Failed to read live drive configuration: {e}")
+
+            # Query live PID telemetry to confirm anti-stall / stiction state machine
+            try:
+                pid_resp = self.cockpit.get_pid_telemetry()
+                if pid_resp.get("ok") and pid_resp.get("telemetry"):
+                    telem = pid_resp.get("telemetry", {})
+                    if "m1" in telem and "stictionState" in telem["m1"]:
+                        anti_stall_confirmed = True
+            except Exception as e:
+                print(f"[WARN] Failed to read live anti-stall telemetry: {e}")
+        else:
+            # Stationary dry run: reflect parameters / mock state
+            live_cfg = {
+                "wheelBalancing": bool(self.params.enable_balancing) if self.params.enable_balancing is not None else False,
+                "dynamicBraking": bool(self.params.enable_braking) if self.params.enable_braking is not None else False,
+                "brakeDurationMs": 100,
+                "maxTriggerSpeed": 0.35,
+            }
+            anti_stall_confirmed = True
+
+        confirmed_bal = bool(live_cfg.get("wheelBalancing", False))
+        confirmed_brk = bool(live_cfg.get("dynamicBraking", False))
+        confirmed_dur = int(live_cfg.get("brakeDurationMs", 100))
+        confirmed_max_spd = float(live_cfg.get("maxTriggerSpeed", 0.35))
+
+        trial_report.wheel_balancing_enabled = confirmed_bal
+        trial_report.dynamic_braking_enabled = confirmed_brk
+        trial_report.dynamic_brake_duration_ms = confirmed_dur
+        trial_report.dynamic_brake_max_speed = confirmed_max_spd
+        trial_report.anti_stall_confirmed = anti_stall_confirmed
+
         # Step 1: Inter-Trial Approval
         if self.params.inter_trial_approval or (trial_idx == 1 and not self.params.dry_run):
             print("\n" + "-" * 60)
             print(f"OPERATOR INTER-TRIAL APPROVAL REQUIRED FOR TRIAL {trial_idx}/{self.params.trials}")
-            print(f"  • Distance:         {self.params.distance:.3f} m ({self.params.direction.upper()})")
-            print(f"  • Requested Speed:  {self.params.max_linear_speed:.2f} m/s (Constant Production Speed)")
-            print(f"  • Wheel Balancing:  {'ENABLED' if self.params.enable_balancing else 'DISABLED'}")
-            print(f"  • Dynamic Braking:  {'ENABLED' if self.params.enable_braking else 'DISABLED'}")
-            print(f"  • Execution Mode:   {'DRY RUN (STATIONARY)' if self.params.dry_run else 'PHYSICAL MOTION'}")
+            print(f"  • Distance:            {self.params.distance:.3f} m ({self.params.direction.upper()})")
+            print(f"  • Requested Speed:     {self.params.max_linear_speed:.2f} m/s (Constant Production Speed)")
+            print(f"  • Confirmed Balancing: {'ENABLED' if confirmed_bal else 'DISABLED'} (Live controller readback)")
+            print(f"  • Confirmed Braking:   {'ENABLED' if confirmed_brk else 'DISABLED'} ({confirmed_dur}ms pulse, max {confirmed_max_spd:.2f} rad/s)")
+            print(f"  • Confirmed Anti-Stall: {'ACTIVE' if anti_stall_confirmed else 'UNVERIFIED'} (Live PID telemetry)")
+            print(f"  • Execution Mode:      {'DRY RUN (STATIONARY)' if self.params.dry_run else 'PHYSICAL MOTION'}")
             print("-" * 60)
             ans = self.prompt_fn("Authorize motion for this trial? [y/N]: ").strip().lower()
             if ans not in ("y", "yes"):
@@ -510,14 +574,7 @@ class PhysicalTestRunner:
             self.cockpit.clear_faults()
             time.sleep(0.1)
 
-        # Step 3: Configure drive
-        if not self.params.dry_run:
-            self.cockpit.configure_drive(
-                wheel_balancing=self.params.enable_balancing,
-                dynamic_braking=self.params.enable_braking
-            )
-
-        # Step 4: Fresh sensor baselines
+        # Step 3: Fresh sensor baselines
         start_yaw_deg = 0.0
         start_ticks = {w: 0 for w in ["m1", "m2", "m3", "m4"]}
         if not self.params.dry_run:

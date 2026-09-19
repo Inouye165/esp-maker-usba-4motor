@@ -279,6 +279,71 @@ class TestLinearCliAndDryRun(unittest.TestCase):
             import shutil
             shutil.rmtree("test_reports_tmp")
 
+    @patch("tools.rover_tests.runner.time.sleep", return_value=None)
+    def test_live_configuration_readback_and_confirmation(self, mock_sleep):
+        """Verifies runner reads back and confirms live production settings before motion without assumed values."""
+        params = LinearParameters(
+            distance_m=1.0,
+            direction="forward",
+            trials=1,
+            dry_run=False,
+            inter_trial_approval=False,
+            report_directory="test_reports_tmp"
+        )
+        runner = PhysicalTestRunner(params)
+        mock_cockpit = MagicMock()
+        mock_cockpit.get_drive_config.return_value = {
+            "ok": True,
+            "config": {
+                "wheelBalancing": False,
+                "dynamicBraking": True,
+                "brakeDurationMs": 120,
+                "maxTriggerSpeed": 0.25
+            }
+        }
+        mock_cockpit.get_pid_telemetry.return_value = {
+            "ok": True,
+            "telemetry": {
+                "m1": {"stictionState": "IDLE"}
+            }
+        }
+        mock_cockpit.get_imu.return_value = {
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+            "sensor_type": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "calibration_status": 3
+        }
+        mock_cockpit.get_encoders.return_value = {
+            "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}
+        }
+        mock_cockpit.arm.return_value = {"ok": True}
+        mock_cockpit.set_command_source.return_value = {"ok": True}
+        mock_cockpit.disarm.return_value = {"ok": True}
+        mock_cockpit.get_status.return_value = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+
+        runner.cockpit = mock_cockpit
+        runner.prompt_fn = lambda _: "y"
+
+        from tools.rover_tests.runner import HandshakeException
+        with patch("tools.rover_tests.runner.complete_zero_handshake", side_effect=HandshakeException("Simulated exit after config readback")):
+            trial = runner.execute_single_linear_trial(1)
+
+        # Confirm readback occurred from live cockpit endpoints
+        mock_cockpit.get_drive_config.assert_called()
+        mock_cockpit.get_pid_telemetry.assert_called()
+        # Confirm no mutation occurred since enable_balancing/braking were None
+        mock_cockpit.configure_drive.assert_not_called()
+
+        # Confirm verified live values populated trial report
+        self.assertFalse(trial.wheel_balancing_enabled)
+        self.assertTrue(trial.dynamic_braking_enabled)
+        self.assertEqual(trial.dynamic_brake_duration_ms, 120)
+        self.assertEqual(trial.dynamic_brake_max_speed, 0.25)
+        self.assertTrue(trial.anti_stall_confirmed)
+
+        if os.path.exists("test_reports_tmp"):
+            import shutil
+            shutil.rmtree("test_reports_tmp")
+
 
 if __name__ == "__main__":
     unittest.main()

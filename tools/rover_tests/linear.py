@@ -40,8 +40,8 @@ class LinearParameters:
     distance_tolerance_m: float = 0.05   # m (50 mm tolerance)
     inter_trial_approval: bool = False
     dry_run: bool = False
-    enable_balancing: bool = False
-    enable_braking: bool = False
+    enable_balancing: Optional[bool] = None
+    enable_braking: Optional[bool] = None
     clear_faults: bool = False
     report_directory: str = "reports"
     host: str = "127.0.0.1"
