@@ -457,6 +457,149 @@ class TestLinearCliAndDryRun(unittest.TestCase):
             import shutil
             shutil.rmtree("test_reports_tmp")
 
+    def test_end_to_end_linear_trial_with_realistic_telemetry(self):
+        """
+        Regression test: Complete trial and report generation using realistic advancing
+        odometry and PID diagnostic telemetry.
+        Verifies:
+        1. No NameError (e.g. compute_phase_balancing_metrics) on trial execution or reporting.
+        2. Trial completes with status SUCCESS.
+        3. Both overall and steady-phase per-wheel encoder deltas are strictly positive/nonzero.
+        4. Markdown report contains nonzero encoder deltas and phase balancing table.
+        """
+        params = LinearParameters(
+            distance_m=0.20,
+            direction="forward",
+            max_linear_speed=0.10,
+            trials=1,
+            dry_run=False,
+            inter_trial_approval=False,
+            report_directory="test_reports_tmp"
+        )
+        runner = PhysicalTestRunner(params)
+        runner.prompt_fn = lambda _: "y"
+
+        current_ticks = {"m1": 10000, "m2": 10000, "m3": 10000, "m4": 10000}
+        tick_step = 250
+
+        mock_cockpit = MagicMock()
+        mock_cockpit.get_drive_config.return_value = {
+            "ok": True,
+            "config": {"wheelBalancing": False, "dynamicBraking": False}
+        }
+        mock_cockpit.get_status.return_value = {
+            "armed": True,
+            "mode": 3,
+            "autonomyState": "READY_ARMED",
+            "cmdSource": "ROS_AUTONOMY"
+        }
+        is_motion_active = [False]
+
+        mock_cockpit.arm_drive.return_value = {"ok": True}
+        mock_cockpit.arm.return_value = {"ok": True}
+        mock_cockpit.disarm.return_value = {"ok": True}
+        mock_cockpit.get_imu.return_value = {
+            "ok": True,
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+            "sensor_type": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "rotVecValid": True,
+            "inResetRecovery": False,
+            "dataAgeMs": 5,
+            "calibration_status": 3
+        }
+
+        def mock_get_encoders(**kwargs):
+            return {
+                "ok": True,
+                "lastPacketAgeMs": 5,
+                "sequence": 100,
+                "encoders": dict(current_ticks)
+            }
+        mock_cockpit.get_encoders.side_effect = mock_get_encoders
+
+        def mock_send_cmd_vel(vx=0.0, wz=0.0):
+            if vx > 0:
+                is_motion_active[0] = True
+                for w in current_ticks:
+                    current_ticks[w] += tick_step
+            return {"ok": True}
+        mock_cockpit.send_cmd_vel.side_effect = mock_send_cmd_vel
+
+        def mock_get_autonomy_status():
+            if is_motion_active[0]:
+                return {"state": "ACTIVE", "clampedLinear": 0.10}
+            return {"state": "READY_ARMED", "clampedLinear": 0.0}
+        mock_cockpit.get_autonomy_status.side_effect = mock_get_autonomy_status
+
+        mock_cockpit.get_pid_telemetry.return_value = {
+            "ok": True,
+            "telemetry": {
+                "m1": {"targetRadps": 3.07, "measuredRadps": 4.00, "finalPwm": 45, "stictionState": "KINETIC"},
+                "m2": {"targetRadps": 3.07, "measuredRadps": 4.00, "finalPwm": 45, "stictionState": "KINETIC"},
+                "m3": {"targetRadps": 3.07, "measuredRadps": 4.00, "finalPwm": 45, "stictionState": "KINETIC"},
+                "m4": {"targetRadps": 3.07, "measuredRadps": 4.00, "finalPwm": 45, "stictionState": "KINETIC"},
+            }
+        }
+
+        mock_ws = MagicMock()
+        mock_ws.connected = True
+        def mock_recv_frames():
+            return [
+                {
+                    "type": "odom",
+                    "encoders": [current_ticks["m1"], current_ticks["m2"], current_ticks["m3"], current_ticks["m4"]],
+                    "yaw": 0.0
+                },
+                {
+                    "type": "pid_diagnostic",
+                    "phase": "CRUISE",
+                    "m1": {"targetRadps": 3.07, "measuredRadps": 4.00, "finalPwm": 45, "stictionState": "KINETIC"},
+                    "m2": {"targetRadps": 3.07, "measuredRadps": 4.00, "finalPwm": 45, "stictionState": "KINETIC"},
+                    "m3": {"targetRadps": 3.07, "measuredRadps": 4.00, "finalPwm": 45, "stictionState": "KINETIC"},
+                    "m4": {"targetRadps": 3.07, "measuredRadps": 4.00, "finalPwm": 45, "stictionState": "KINETIC"},
+                }
+            ]
+        mock_ws.recv_frames.side_effect = mock_recv_frames
+
+        runner.cockpit = mock_cockpit
+        runner.ws = mock_ws
+
+        trial = runner.execute_single_linear_trial(1)
+
+        self.assertEqual(trial.status, "SUCCESS", f"Trial failed with reason: {trial.abort_reason}")
+        self.assertGreater(trial.measured_distance_m, 0.15)
+        self.assertIsNotNone(trial.steady_speed_wheel_metrics)
+
+        for w_id in ["m1", "m2", "m3", "m4"]:
+            total_delta = trial.wheel_metrics[w_id].encoder_delta_ticks
+            steady_delta = trial.steady_speed_wheel_metrics[w_id].encoder_delta_ticks
+            self.assertGreater(total_delta, 0, f"{w_id} total encoder delta must be strictly positive, got {total_delta}")
+            self.assertGreater(steady_delta, 0, f"{w_id} steady-phase encoder delta must be strictly positive, got {steady_delta}")
+
+        # Generate report and confirm complete reporting pipeline does not raise NameError
+        suite_rep = MultiTrialSuiteReport(
+            suite_id="test_suite_e2e",
+            test_type="linear",
+            command_line="rover-test linear --distance 0.20",
+            timestamp_utc="2026-09-19T20:00:00Z",
+            target_degrees=0.0,
+            target_distance_m=0.20,
+            direction="forward",
+            total_trials=1,
+            repetitions=1,
+            is_dry_run=False,
+            trials=[trial]
+        )
+        md_report = ReportGenerator.format_markdown_summary(suite_rep)
+        self.assertIn("Physical Linear Motion Test Report", md_report)
+        self.assertIn("Steady-Speed Wheel Balancing & Symmetry", md_report)
+        for w_id in ["m1", "m2", "m3", "m4"]:
+            self.assertIn(f"**{w_id.upper()}**", md_report)
+
+        if os.path.exists("test_reports_tmp"):
+            import shutil
+            shutil.rmtree("test_reports_tmp")
+
 
 if __name__ == "__main__":
     unittest.main()

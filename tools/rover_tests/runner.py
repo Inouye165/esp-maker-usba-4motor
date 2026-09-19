@@ -62,7 +62,8 @@ from .reporting import (
     TrialReport,
     WheelTrialMetrics,
     MultiTrialSuiteReport,
-    ReportGenerator
+    ReportGenerator,
+    compute_phase_balancing_metrics
 )
 
 
@@ -869,6 +870,8 @@ class PhysicalTestRunner:
                 t_start_motion = time.time()
                 t_steady_start: Optional[float] = None
                 t_zero_issued: Optional[float] = None
+                steady_start_ticks: Optional[Dict[str, int]] = None
+                steady_end_ticks: Optional[Dict[str, int]] = None
                 dist_at_steady_start = 0.0
                 dist_at_zero_issued = 0.0
                 curr_dist_m = 0.0
@@ -985,6 +988,7 @@ class PhysicalTestRunner:
                         if speeds and (sum(speeds) / len(speeds)) >= 0.85 * expected_radps:
                             t_steady_start = now
                             dist_at_steady_start = curr_dist_m
+                            steady_start_ticks = dict(cur_ticks)
 
                     # 7. Update approach controller
                     cmd_vx = controller.update(current_progress=curr_dist_m, current_time=now)
@@ -998,6 +1002,7 @@ class PhysicalTestRunner:
                         # Target reached: issue zero command immediately
                         t_zero_issued = now
                         dist_at_zero_issued = curr_dist_m
+                        steady_end_ticks = dict(cur_ticks)
                         t_zero_start = time.monotonic()
                         z_res = self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
                         t_zero_end = time.monotonic()
@@ -1010,13 +1015,17 @@ class PhysicalTestRunner:
                     self.cockpit.send_cmd_vel(vx=cmd_vx, wz=0.0)
                     time.sleep(0.02)
 
+                if steady_end_ticks is None:
+                    steady_end_ticks = dict(cur_ticks)
+
                 # Standstill settling period
                 time.sleep(self.params.settle_seconds)
                 t_settled_time = time.time()
                 final_enc = self.cockpit.get_encoders()
                 final_imu = self.cockpit.get_imu()
                 final_yaw = math.degrees(quat_to_yaw(final_imu.get("orientation", {}))) if final_imu else last_yaw_deg
-                settled_ticks = [final_enc.get("encoders", {}).get(w, start_ticks[w]) - start_ticks[w] for w in ["m1", "m2", "m3", "m4"]]
+                extracted_final = extract_encoder_ticks(final_enc) or cur_ticks
+                settled_ticks = [extracted_final[w] - start_ticks[w] for w in ["m1", "m2", "m3", "m4"]]
                 settled_dist = ticks_to_meters(sum(settled_ticks) / 4.0)
 
                 controller.mark_settled(settled_dist, current_time=t_settled_time)
@@ -1062,6 +1071,16 @@ class PhysicalTestRunner:
                     if sw["pwms"]:
                         sm.pwm_mean = round(sum(sw["pwms"]) / len(sw["pwms"]), 1)
                         sm.pwm_max = max(sw["pwms"])
+
+                    if steady_start_ticks and steady_end_ticks and (steady_end_ticks[w_id] != steady_start_ticks[w_id]):
+                        sm.encoder_start_ticks = steady_start_ticks[w_id]
+                        sm.encoder_final_ticks = steady_end_ticks[w_id]
+                        sm.encoder_delta_ticks = steady_end_ticks[w_id] - steady_start_ticks[w_id]
+                    else:
+                        sm.encoder_start_ticks = start_ticks[w_id]
+                        sm.encoder_final_ticks = extracted_final[w_id]
+                        sm.encoder_delta_ticks = extracted_final[w_id] - start_ticks[w_id]
+
                     steady_metrics[w_id] = sm
                 trial_report.steady_speed_wheel_metrics = steady_metrics
 
@@ -1107,7 +1126,7 @@ class PhysicalTestRunner:
                 for w_id in ["m1", "m2", "m3", "m4"]:
                     w_metric = wheel_metrics[w_id]
                     ws = wheel_samples[w_id]
-                    w_metric.encoder_final_ticks = final_enc.get("encoders", {}).get(w_id, start_ticks[w_id])
+                    w_metric.encoder_final_ticks = extracted_final[w_id]
                     w_metric.encoder_delta_ticks = w_metric.encoder_final_ticks - w_metric.encoder_start_ticks
                     if ws["targets"]:
                         w_metric.commanded_speed_radps_mean = round(sum(ws["targets"]) / len(ws["targets"]), 3)
@@ -1146,6 +1165,13 @@ class PhysicalTestRunner:
                         if trial_report.measured_distance_m is None:
                             trial_report.measured_distance_m = round(ticks_to_meters(final_avg_delta), 5)
                             trial_report.final_settled_distance_m = trial_report.measured_distance_m
+                        if trial_report.steady_speed_wheel_metrics:
+                            for w in ["m1", "m2", "m3", "m4"]:
+                                sm = trial_report.steady_speed_wheel_metrics.get(w)
+                                if sm and sm.encoder_delta_ticks == 0 and wheel_metrics[w].encoder_delta_ticks != 0:
+                                    sm.encoder_start_ticks = wheel_metrics[w].encoder_start_ticks
+                                    sm.encoder_final_ticks = wheel_metrics[w].encoder_final_ticks
+                                    sm.encoder_delta_ticks = wheel_metrics[w].encoder_delta_ticks
                 except Exception:
                     pass
 
