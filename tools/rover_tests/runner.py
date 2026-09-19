@@ -194,10 +194,10 @@ class PhysicalTestRunner:
         cleanup_st = disarm_and_stop(self.cockpit, self.ws, verbose=verbose)
         self._last_cleanup_state = cleanup_st
 
-        # Always restore drive configuration to baseline (false/false) on disarm/cleanup
+        # Always restore drive configuration to baseline (false/true) on disarm/cleanup
         if not self.params.dry_run:
             try:
-                self.cockpit.configure_drive(wheel_balancing=False, dynamic_braking=False)
+                self.cockpit.configure_drive(wheel_balancing=False, dynamic_braking=True)
             except Exception:
                 pass
 
@@ -401,13 +401,14 @@ class PhysicalTestRunner:
             repetitions=self.params.trials,
             is_dry_run=self.params.dry_run,
             wheel_balancing_enabled=bool(self.params.enable_balancing),
-            dynamic_braking_enabled=bool(self.params.enable_braking)
+            dynamic_braking_enabled=bool(self.params.enable_braking) if self.params.enable_braking is not None else True
         )
 
+        effective_brk = self.params.enable_braking if self.params.enable_braking is not None else True
         print("=" * 80)
         print(f"ROVER ONE REUSABLE PHYSICAL TEST FRAMEWORK: LINEAR {self.params.distance:.3f}m {self.params.direction.upper()}")
         print(f"Repetitions: {self.params.trials} | Requested Velocity: {self.params.max_linear_speed:.2f} m/s (Constant Production Speed)")
-        print(f"Balancing: {'ENABLED' if self.params.enable_balancing else 'DISABLED'} | Braking: {'ENABLED' if self.params.enable_braking else 'DISABLED'}")
+        print(f"Balancing: {'ENABLED' if self.params.enable_balancing else 'DISABLED'} | Braking: {'ENABLED' if effective_brk else 'DISABLED'}")
         print(f"Mode: {'DRY RUN (STATIONARY - NO MOTOR POWER)' if self.params.dry_run else 'PHYSICAL MOTION EXECUTION'}")
         print("=" * 80)
 
@@ -508,7 +509,7 @@ class PhysicalTestRunner:
             # If user explicitly requested drive parameter overrides via CLI flags, apply them
             if self.params.enable_balancing is not None or self.params.enable_braking is not None:
                 target_bal = bool(self.params.enable_balancing) if self.params.enable_balancing is not None else False
-                target_brk = bool(self.params.enable_braking) if self.params.enable_braking is not None else False
+                target_brk = bool(self.params.enable_braking) if self.params.enable_braking is not None else True
                 try:
                     self.cockpit.configure_drive(
                         wheel_balancing=target_bal,
@@ -539,14 +540,14 @@ class PhysicalTestRunner:
             # Stationary dry run: reflect parameters / mock state
             live_cfg = {
                 "wheelBalancing": bool(self.params.enable_balancing) if self.params.enable_balancing is not None else False,
-                "dynamicBraking": bool(self.params.enable_braking) if self.params.enable_braking is not None else False,
+                "dynamicBraking": bool(self.params.enable_braking) if self.params.enable_braking is not None else True,
                 "brakeDurationMs": 100,
                 "maxTriggerSpeed": 0.35,
             }
             anti_stall_confirmed = True
 
         confirmed_bal = bool(live_cfg.get("wheelBalancing", False))
-        confirmed_brk = bool(live_cfg.get("dynamicBraking", False))
+        confirmed_brk = bool(live_cfg.get("dynamicBraking", True))
         confirmed_dur = int(live_cfg.get("brakeDurationMs", 100))
         confirmed_max_spd = float(live_cfg.get("maxTriggerSpeed", 0.35))
 

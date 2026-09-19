@@ -18,9 +18,9 @@ bool USE_UNIFORM_BREAKAWAY = true;
 
 // Runtime feature toggles (safe defaults: false to preserve baseline)
 bool WHEEL_BALANCE_ENABLED = false;
-bool DYNAMIC_BRAKE_ENABLED = false;
+bool DYNAMIC_BRAKE_ENABLED = true;
 uint16_t DYNAMIC_BRAKE_DURATION_MS = 100; // 100 ms bounded brake pulse
-float DYNAMIC_BRAKE_MAX_TRIGGER_RADPS = 0.35f; // Triggers only in low-speed / creep stopping window
+float DYNAMIC_BRAKE_MAX_TRIGGER_RADPS = 0.35f; // Triggers in low-speed stopping window
 
 // Default calibrations:
 // SS6625E motor driver board on the Maker Pro generally starts rotating wheels around 40-60 PWM
@@ -114,11 +114,16 @@ void loadCalibrations() {
     bool trimFwdNvs = preferences.isKey("left_trim");
     bool trimRevNvs = preferences.isKey("left_trim_rev");
 
+    DYNAMIC_BRAKE_ENABLED = preferences.getBool("dyn_brake", true);
+    bool brakeNvs = preferences.isKey("dyn_brake");
+
     LOG_SERIAL_PRINTF("[Config] Loaded physical dimensions: diameter=%.4f m (%s), separation=%.4f m (%s)\n", 
                   WHEEL_DIAMETER_M, diaNvs ? "NVS" : "DEFAULT", WHEEL_SEPARATION_M, sepNvs ? "NVS" : "DEFAULT");
     LOG_SERIAL_PRINTF("[Config] Loaded FWD trims (%s): Left=%.4f, Right=%.4f | REV trims (%s): Left=%.4f, Right=%.4f\n", 
                   trimFwdNvs ? "NVS" : "DEFAULT", LEFT_TRIM_FWD, RIGHT_TRIM_FWD, 
                   trimRevNvs ? "NVS" : "DEFAULT", LEFT_TRIM_REV, RIGHT_TRIM_REV);
+    LOG_SERIAL_PRINTF("[Config] Dynamic Braking: %s (%s)\n",
+                  DYNAMIC_BRAKE_ENABLED ? "ENABLED" : "DISABLED", brakeNvs ? "NVS" : "DEFAULT");
 }
 
 void saveCalibrations() {

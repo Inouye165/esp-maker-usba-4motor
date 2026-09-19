@@ -204,7 +204,13 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
     
     // STICTION_KINETIC: Closed-loop PID + Feedforward structure
     float error = targetVel - measuredRadps;
-    errorSum += error * dt;
+    
+    // Fast unwinding of opposing integral windup from acceleration/overshoot
+    if ((error < 0.0f && errorSum > 0.0f) || (error > 0.0f && errorSum < 0.0f)) {
+        errorSum += error * dt * 2.0f;
+    } else {
+        errorSum += error * dt;
+    }
     
     // Check for speed deficit in commanded direction (wheel too slow or stalled)
     bool isCommanded = abs(targetVel) >= MIN_RELIABLE_SPEED_RADPS;
@@ -213,13 +219,14 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
 
     // Dynamic integral gain:
     // When stalled while commanded, accelerate integration to overcome static friction within ~500ms.
-    // When lagging with significant error, use responsive tracking gain.
-    // When tracking closely or decelerating/overspeeding, use standard stable Ki.
+    // When tracking error is significant (|error| >= 0.25 rad/s), use responsive tracking gain
+    // for both lagging and overspeeding in normal driving to ensure rapid convergence.
+    // When tracking closely or in spin cruise, use standard stable Ki.
     float activeKi = isSpinManeuver ? SPIN_PID_KI : Ki;
     if (isStalled) {
         activeKi = ANTI_STALL_KI;
-    } else if (isCommanded && isLagging && abs(error) >= 0.25f) {
-        activeKi = isSpinManeuver ? LAGGING_KI : (Ki * 3.0f);
+    } else if (isCommanded && abs(error) >= 0.25f) {
+        activeKi = isSpinManeuver ? (isLagging ? LAGGING_KI : SPIN_PID_KI) : (Ki * 3.0f);
     }
 
     // Integral anti-windup: clamp the integral contribution
@@ -236,8 +243,10 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
         // Dedicated pure-spin kinetic feedforward base (75.0 PWM)
         breakaway = SPIN_KINETIC_KS_PWM;
     } else {
-        breakaway = (targetVel > 0.0f) ? (float)motorCalibrations[index].forwardBreakawayPwm
-                                       : (float)motorCalibrations[index].reverseBreakawayPwm;
+        // In rolling kinetic motion, dynamic friction is ~55% of static breakaway (~22 PWM)
+        float staticBreakaway = (targetVel > 0.0f) ? (float)motorCalibrations[index].forwardBreakawayPwm
+                                                   : (float)motorCalibrations[index].reverseBreakawayPwm;
+        breakaway = staticBreakaway * 0.55f;
     }
     float ffMagnitude = breakaway + (motorCalibrations[index].kV * abs(targetVel));
 
@@ -248,7 +257,7 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
             // Forward-driving rear wheel receives 94 PWM floor; others receive 80 PWM floor
             minFfFloor = isForwardRearWheel ? SPIN_FORWARD_REAR_KINETIC_FLOOR : MIN_SPIN_KINETIC_FF_FLOOR;
         } else {
-            minFfFloor = 45.0f;
+            minFfFloor = 22.0f;
         }
         if (ffMagnitude < minFfFloor) {
             ffMagnitude = minFfFloor;

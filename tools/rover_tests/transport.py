@@ -333,7 +333,7 @@ class CockpitClient:
     def configure_drive(
         self,
         wheel_balancing: bool = False,
-        dynamic_braking: bool = False,
+        dynamic_braking: bool = True,
         brake_duration_ms: int = 100,
         max_trigger_speed: float = 0.35,
         timeout: float = 2.0
