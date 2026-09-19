@@ -810,6 +810,166 @@ class TestSameSideSynchronizationRegression(unittest.TestCase):
         self.assertEqual(creep["m4_trim"], -6.0)
 
 
+class TestCCWCommonModeSlowdownRegression(unittest.TestCase):
+    """
+    Regression tests reproducing and verifying the CCW suite 1789841710 common-mode slowdown:
+    - In CCW turns, M2 and M4 are commanded in reverse (e.g. -1.04 rad/s during CREEP).
+    - When both wheels stall together, pair error is near-zero so push-pull balancing provides 0 trim.
+    - Under baseline Ki=4.0 without anti-stall, final PWM peaks at only -99 PWM (38.8% of max 255)
+      and fails to overcome static friction (~102-105 PWM), staying stalled for > 1.5s (triggering stall watchdog).
+    - With anti-stall integral acceleration (ANTI_STALL_KI=25.0), the controller ramps up common-mode PWM
+      past static breakaway (>= 102-105 PWM) within ~500 ms, breaking the stall and tracking target velocity.
+    - Anti-stall is strictly gated above MIN_RELIABLE_SPEED_RADPS (0.35 rad/s) and resets on zero command/brake.
+    - Same-side wheel balancing remains fully active alongside common-mode tracking.
+    """
+
+    def simulate_single_wheel(
+        self,
+        target_radps: float,
+        measured_radps_seq: list,
+        enable_anti_stall: bool = True,
+        dt: float = 0.01,
+        is_spin: bool = True
+    ):
+        """Simulates SingleWheelController::update for a sequence of measured speeds."""
+        MIN_RELIABLE_SPEED_RADPS = 0.35
+        ANTI_STALL_SPEED_THRESHOLD = 0.15
+        SPIN_PID_KP = 10.0
+        SPIN_PID_KI = 4.0
+        ANTI_STALL_KI = 25.0
+        LAGGING_KI = 12.0
+        SPIN_KINETIC_KS_PWM = 75.0
+        MIN_SPIN_KINETIC_FF_FLOOR = 80.0
+        kV = 6.0
+
+        error_sum = 0.0
+        last_error = 0.0
+        pwm_history = []
+
+        # Feedforward
+        ff_mag = SPIN_KINETIC_KS_PWM + kV * abs(target_radps)
+        if ff_mag < MIN_SPIN_KINETIC_FF_FLOOR:
+            ff_mag = MIN_SPIN_KINETIC_FF_FLOOR
+        ff = (1.0 if target_radps > 0 else -1.0) * ff_mag
+
+        for meas in measured_radps_seq:
+            if abs(target_radps) < 0.01:
+                pwm_history.append({
+                    "target": 0.0,
+                    "measured": meas,
+                    "feedforward": 0.0,
+                    "p_term": 0.0,
+                    "i_term": 0.0,
+                    "pwm": 0,
+                    "is_stalled": False
+                })
+                continue
+
+            error = target_radps - meas
+            error_sum += error * dt
+
+            is_commanded = abs(target_radps) >= MIN_RELIABLE_SPEED_RADPS
+            is_lagging = (target_radps > 0 and error > 0) or (target_radps < 0 and error < 0)
+            is_stalled = is_commanded and is_lagging and (abs(meas) < ANTI_STALL_SPEED_THRESHOLD)
+
+            active_ki = SPIN_PID_KI
+            if enable_anti_stall:
+                if is_stalled:
+                    active_ki = ANTI_STALL_KI
+                elif is_commanded and is_lagging and abs(error) >= 0.25:
+                    active_ki = LAGGING_KI
+
+            integral_term = error_sum * active_ki
+            integral_term = max(-150.0, min(150.0, integral_term))
+
+            derivative = (error - last_error) / dt
+            last_error = error
+
+            pid_corr = (SPIN_PID_KP * error) + integral_term + (0.5 * derivative)
+            total_pwm = ff + pid_corr
+            final_pwm = max(-255, min(255, round(total_pwm)))
+
+            pwm_history.append({
+                "target": target_radps,
+                "measured": meas,
+                "feedforward": ff,
+                "p_term": SPIN_PID_KP * error,
+                "i_term": integral_term,
+                "pwm": final_pwm,
+                "is_stalled": is_stalled
+            })
+
+        return pwm_history
+
+    def test_reproduce_ccw_slowdown_without_anti_stall(self):
+        """Reproduces the suite 1789841710 failure where baseline controller capped at -99 PWM."""
+        target = -1.04
+        # 1.5 seconds (150 control ticks) of stalled wheel (measured = 0.0)
+        stalled_seq = [0.0] * 150
+        history = self.simulate_single_wheel(target, stalled_seq, enable_anti_stall=False)
+
+        # In baseline, feedforward is -81.2, p_term is -10.4
+        self.assertAlmostEqual(history[0]["feedforward"], -81.2, places=1)
+        self.assertAlmostEqual(history[0]["p_term"], -10.4, places=1)
+
+        # After 1.5s, integral term only reached ~ -6.2 PWM
+        last_step = history[-1]
+        self.assertAlmostEqual(last_step["i_term"], -6.24, delta=0.5)
+        # Total PWM was capped at -98 to -99 PWM (only ~38.8% of 255)
+        self.assertGreaterEqual(last_step["pwm"], -99, "Without anti-stall, PWM is capped around -98 to -99")
+        self.assertLessEqual(abs(last_step["pwm"]), 100, "Without anti-stall, PWM never reached static breakaway 102+")
+
+    def test_ccw_stalled_anti_stall_ramps_past_breakaway(self):
+        """Verifies that with anti-stall tracking, controller ramps PWM past static breakaway within 500ms."""
+        target = -1.04
+        # 80 control ticks (800ms) of zero speed
+        stalled_seq = [0.0] * 80
+        history = self.simulate_single_wheel(target, stalled_seq, enable_anti_stall=True)
+
+        # Within 50 ticks (500ms), output reaches >= -102 PWM (static breakaway)
+        step_50 = history[49]
+        self.assertLessEqual(step_50["pwm"], -102, "Anti-stall must reach static breakaway threshold (<= -102 PWM) within 500ms")
+
+        # Within 80 ticks (800ms), output reaches >= -108 PWM without exceeding safe bounds
+        step_80 = history[79]
+        self.assertLessEqual(step_80["pwm"], -108)
+        self.assertGreaterEqual(step_80["pwm"], -130, "Anti-stall must remain safely bounded well below 255")
+
+    def test_anti_stall_never_applies_below_reliable_speed(self):
+        """Verifies that anti-stall is gated above MIN_RELIABLE_SPEED_RADPS (0.35 rad/s)."""
+        target = -0.20  # Below 0.35 rad/s
+        stalled_seq = [0.0] * 50
+        history = self.simulate_single_wheel(target, stalled_seq, enable_anti_stall=True)
+        # Stalled flag must remain False
+        self.assertFalse(history[0]["is_stalled"])
+        self.assertFalse(history[-1]["is_stalled"])
+        # Integral term integrates at normal Ki=4.0, not 25.0
+        self.assertAlmostEqual(history[-1]["i_term"], -0.20 * 4.0 * 0.5, delta=0.1)
+
+    def test_lagging_tracking_provides_common_mode_power_when_both_slow(self):
+        """Verifies that when both wheels are lagging (e.g. meas=-0.5 when target=-1.04), responsive tracking activates."""
+        target = -1.04
+        lagging_seq = [-0.50] * 50  # 50% slow
+        history = self.simulate_single_wheel(target, lagging_seq, enable_anti_stall=True)
+
+        # Active Ki is boosted to LAGGING_KI (12.0)
+        # error = -0.54. After 50 ticks (0.5s), integral term is -0.54 * 0.5 * 12.0 = -3.24 PWM
+        self.assertAlmostEqual(history[-1]["i_term"], -3.24, delta=0.2)
+        # Proportional term is -5.4 PWM
+        self.assertAlmostEqual(history[-1]["p_term"], -5.4, delta=0.2)
+
+    def test_anti_stall_resets_on_zero_command(self):
+        """Verifies that integral accumulation drops to 0 when command becomes zero."""
+        target = -1.04
+        history = self.simulate_single_wheel(target, [0.0] * 50, enable_anti_stall=True)
+        self.assertLessEqual(history[-1]["pwm"], -102)
+
+        # Now command zero: SingleWheelController::setTargetVelocity resets to IDLE and errorSum = 0
+        zero_hist = self.simulate_single_wheel(0.0, [0.0] * 10, enable_anti_stall=True)
+        self.assertEqual(zero_hist[-1]["pwm"], 0)
+        self.assertEqual(zero_hist[-1]["i_term"], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
 

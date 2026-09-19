@@ -206,8 +206,23 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
     float error = targetVel - measuredRadps;
     errorSum += error * dt;
     
-    // Integral anti-windup: clamp the integral contribution
+    // Check for speed deficit in commanded direction (wheel too slow or stalled)
+    bool isCommanded = abs(targetVel) >= MIN_RELIABLE_SPEED_RADPS;
+    bool isLagging = ((targetVel > 0.0f && error > 0.0f) || (targetVel < 0.0f && error < 0.0f));
+    bool isStalled = isCommanded && isLagging && (abs(measuredRadps) < ANTI_STALL_SPEED_THRESHOLD);
+
+    // Dynamic integral gain:
+    // When stalled while commanded, accelerate integration to overcome static friction within ~500ms.
+    // When lagging with significant error, use responsive tracking gain.
+    // When tracking closely or decelerating/overspeeding, use standard stable Ki.
     float activeKi = isSpinManeuver ? SPIN_PID_KI : Ki;
+    if (isStalled) {
+        activeKi = ANTI_STALL_KI;
+    } else if (isCommanded && isLagging && abs(error) >= 0.25f) {
+        activeKi = isSpinManeuver ? LAGGING_KI : (Ki * 3.0f);
+    }
+
+    // Integral anti-windup: clamp the integral contribution
     float integralTerm = errorSum * activeKi;
     integralTerm = constrain(integralTerm, -150.0f, 150.0f);
     

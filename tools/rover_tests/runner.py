@@ -16,7 +16,7 @@ import time
 import math
 import statistics
 import traceback
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, List, Callable, Tuple
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -58,6 +58,64 @@ from .reporting import (
 class TestAbortException(Exception):
     """Raised when a safety guard or watchdog aborts a trial."""
     pass
+
+
+def ingest_physical_estimate(
+    prompt_fn: Callable[[str], str],
+    target_degrees: float,
+    direction: str,
+    final_settled_yaw: Optional[float]
+) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Ingests the operator's physical ground-truth angle estimate.
+    
+    Rules:
+    - Operator can enter an unsigned magnitude (e.g. 90 or 89.8 for either direction).
+    - The program automatically applies the CW/CCW sign:
+        * 'cw'  -> positive (+abs(val))
+        * 'ccw' -> negative (-abs(val))
+    - An obvious typo (such as 9.05 for a 90° maneuver, where ratio < 0.5 or > 2.0)
+      requires explicit confirmation before proceeding.
+    - Empty input skips collection.
+    
+    Returns:
+        (signed_estimate_deg, estimate_vs_gyro_delta_deg)
+    """
+    target_mag = abs(target_degrees)
+    dir_norm = direction.lower()
+
+    while True:
+        est_input = prompt_fn("Enter Ron's physical ground-truth angle estimate in degrees (or Enter to skip): ").strip()
+        if not est_input:
+            return None, None
+
+        try:
+            val = float(est_input)
+        except ValueError:
+            print("  Invalid numeric input for physical estimate. Please enter a number or press Enter to skip.")
+            continue
+
+        mag = abs(val)
+        signed_val = mag if dir_norm == "cw" else -mag
+
+        # Check for obvious typo: e.g. 9.05 for a 90° maneuver
+        is_typo = False
+        if target_mag > 0.0:
+            ratio = mag / target_mag
+            if ratio < 0.5 or ratio > 2.0:
+                is_typo = True
+
+        if is_typo:
+            confirm = prompt_fn(
+                f"  Estimate {mag:.2f}° differs significantly from requested {target_mag:.1f}° maneuver (typo?). Confirm this value? [y/N]: "
+            ).strip().lower()
+            if confirm not in ("y", "yes"):
+                print("  Re-enter physical estimate:")
+                continue
+
+        delta = round(final_settled_yaw - signed_val, 4) if final_settled_yaw is not None else None
+        print(f"  Recorded Ron's physical estimate: {signed_val:+.2f}°" + (f" (Delta vs Gyro: {delta:+.2f}°)" if delta is not None else ""))
+        return signed_val, delta
 
 
 class PhysicalTestRunner:
@@ -1547,14 +1605,13 @@ class PhysicalTestRunner:
         if self.params.inter_trial_approval and not self.params.dry_run:
             print("\n[PHYSICAL ESTIMATE COLLECTION]")
             print(f"  Gyro Measured Settled Angle: {final_str}")
-            est_input = self.prompt_fn("Enter Ron's physical ground-truth angle estimate in degrees (or Enter to skip): ").strip()
-            if est_input:
-                try:
-                    est_val = float(est_input)
-                    trial_report.rons_physical_angle_estimate_deg = est_val
-                    if final_settled_yaw is not None:
-                        trial_report.estimate_vs_gyro_delta_deg = round(final_settled_yaw - est_val, 4)
-                except ValueError:
-                    print("  Invalid numeric input for physical estimate. Skipped.")
+            est_val, est_delta = ingest_physical_estimate(
+                prompt_fn=self.prompt_fn,
+                target_degrees=self.params.degrees,
+                direction=self.params.direction,
+                final_settled_yaw=final_settled_yaw
+            )
+            trial_report.rons_physical_angle_estimate_deg = est_val
+            trial_report.estimate_vs_gyro_delta_deg = est_delta
 
         return trial_report

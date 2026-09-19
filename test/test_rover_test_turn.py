@@ -527,6 +527,61 @@ class TestInterTrialApprovalAndEstimateCollection(unittest.TestCase):
             self.assertEqual(trial_report.status, "SUCCESS")
 
 
+class TestPhysicalEstimateIngestion(unittest.TestCase):
+    """
+    Verifies physical ground-truth estimate entry rules:
+    - Operator can enter an unsigned magnitude (e.g. 90 or 89.8) for either direction.
+    - Program automatically applies CW (+) or CCW (-) sign.
+    - Obvious typo (e.g. 9.05 for a 90° maneuver) requires explicit confirmation.
+    - If typo confirmation is declined, allows prompt re-entry.
+    - Empty input cleanly skips collection.
+    """
+    def test_unsigned_cw_auto_signs_positive(self):
+        from tools.rover_tests.runner import ingest_physical_estimate
+        prompt = MagicMock(return_value="89.5")
+        val, delta = ingest_physical_estimate(prompt, target_degrees=90.0, direction="cw", final_settled_yaw=89.8)
+        self.assertEqual(val, 89.5)
+        self.assertAlmostEqual(delta, 0.3, places=2)
+
+    def test_unsigned_ccw_auto_signs_negative(self):
+        from tools.rover_tests.runner import ingest_physical_estimate
+        prompt = MagicMock(return_value="90.0")
+        val, delta = ingest_physical_estimate(prompt, target_degrees=90.0, direction="ccw", final_settled_yaw=-89.9)
+        self.assertEqual(val, -90.0)
+        self.assertAlmostEqual(delta, 0.1, places=2)
+
+    def test_signed_negative_ccw_preserved(self):
+        from tools.rover_tests.runner import ingest_physical_estimate
+        prompt = MagicMock(return_value="-89.5")
+        val, delta = ingest_physical_estimate(prompt, target_degrees=90.0, direction="ccw", final_settled_yaw=-89.5)
+        self.assertEqual(val, -89.5)
+        self.assertAlmostEqual(delta, 0.0, places=2)
+
+    def test_typo_rejected_then_corrected(self):
+        from tools.rover_tests.runner import ingest_physical_estimate
+        # First entry "9.05" (typo for 90°), reject with "n", then enter "90.5"
+        prompt = MagicMock(side_effect=["9.05", "n", "90.5"])
+        val, delta = ingest_physical_estimate(prompt, target_degrees=90.0, direction="cw", final_settled_yaw=90.0)
+        self.assertEqual(val, 90.5)
+        self.assertAlmostEqual(delta, -0.5, places=2)
+        self.assertEqual(prompt.call_count, 3)
+
+    def test_typo_confirmed(self):
+        from tools.rover_tests.runner import ingest_physical_estimate
+        # Enter "9.05" and explicitly confirm with "y"
+        prompt = MagicMock(side_effect=["9.05", "y"])
+        val, delta = ingest_physical_estimate(prompt, target_degrees=90.0, direction="ccw", final_settled_yaw=-9.0)
+        self.assertEqual(val, -9.05)
+        self.assertAlmostEqual(delta, 0.05, places=2)
+
+    def test_empty_input_skips(self):
+        from tools.rover_tests.runner import ingest_physical_estimate
+        prompt = MagicMock(return_value="")
+        val, delta = ingest_physical_estimate(prompt, target_degrees=90.0, direction="cw", final_settled_yaw=90.0)
+        self.assertIsNone(val)
+        self.assertIsNone(delta)
+
+
 class TestLifecycleAndCleanupTiming(unittest.TestCase):
     """
     Verifies the complete 19-step lifecycle invariants:
