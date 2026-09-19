@@ -324,6 +324,9 @@ class CockpitClient:
     def disarm_drive(self) -> Dict[str, Any]:
         return self._request("/api/drive/disarm", method="POST", data={})
 
+    def clear_faults(self) -> Dict[str, Any]:
+        return self._request("/api/drive/clear-faults", method="POST", data={})
+
     def set_command_source(self, source: str = "NONE") -> Dict[str, Any]:
         return self._request("/api/command-source", method="POST", data={"source": source})
 

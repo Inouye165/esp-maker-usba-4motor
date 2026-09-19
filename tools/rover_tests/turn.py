@@ -30,6 +30,7 @@ class TurnParameters:
     dry_run: bool = False
     enable_balancing: bool = False
     enable_braking: bool = False
+    clear_faults: bool = False
     stopping_advance_deg: Optional[float] = None
     report_directory: str = "reports"
     host: str = "127.0.0.1"

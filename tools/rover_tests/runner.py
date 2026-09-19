@@ -404,6 +404,18 @@ class PhysicalTestRunner:
                 )
                 return trial_report
 
+        # Step 4b: Controlled Operator-Authorized Fault Clear Path (if requested)
+        if self.params.clear_faults and not self.params.dry_run:
+            stat = self.cockpit.get_status()
+            if stat.get("armed", False):
+                print("[FAULT CLEAR REJECTED] Cannot clear faults while rover is armed.")
+            else:
+                clear_res = self.cockpit.clear_faults()
+                if clear_res.get("ok", False):
+                    print("[OK] Controlled fault clear executed: rover confirmed stationary and disarmed.")
+                else:
+                    print(f"[FAULT CLEAR WARNING] Clear faults response: {clear_res.get('error', 'unknown')}")
+
         # Step 5: Autonomy Enable and Three-Consecutive-Zero Handshake -> READY_DISARMED
         if not self.params.dry_run:
             try:

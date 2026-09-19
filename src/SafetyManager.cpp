@@ -1,4 +1,5 @@
 #include "SafetyManager.h"
+#include "SerialProtocol.h"
 
 SafetyManager::SafetyManager() 
     : activeFaults(FAULT_NONE) {
@@ -43,14 +44,32 @@ uint32_t SafetyManager::update(const float *targets, const float *measured, cons
         nonzeroTargetTicks[i]++;
         lastTargets[i] = target;
         
-        // 1. Motor Stall Detection (Continuous stopped-while-commanded watchdog):
-        // Protects Nav2, ROS 2, teleop, and test runner across all motion phases.
-        // If commanded non-zero (|target| >= 0.10 rad/s) and measured speed remains near-zero (|speed| < 0.05 rad/s)
-        // continuously for >= 1.5 seconds (150 cycles @ 100Hz): trigger stall fault
-        if (abs(target) >= 0.10f && abs(speed) < 0.05f) {
+        // 1. Motor Stall Detection:
+        // Distinguishes real continuous physical motor stall from normal low-speed creep / encoder quantization.
+        // Criteria for real stall:
+        //  - Must have passed initial breakaway grace period (nonzeroTargetTicks[i] > 50 / 0.5s)
+        //  - Commanded non-zero speed above creep (|target| >= 0.25 rad/s)
+        //  - High motor drive power (|pwm| >= 90), indicating PID integrator saturation / stall effort
+        //  - Measured wheel speed remains near-zero (|speed| < 0.05 rad/s)
+        //  - Sustained continuously for >= 2.0 seconds (200 cycles @ 100Hz)
+        if (nonzeroTargetTicks[i] > 50 && abs(target) >= 0.25f && abs(pwm) >= 90 && abs(speed) < 0.05f) {
             stallTicks[i]++;
-            if (stallTicks[i] >= 150) { // 1.5 seconds at 100Hz
-                activeFaults |= (FAULT_STALL_M1 << i);
+            if (stallTicks[i] >= 200) { // 2.0 seconds at 100Hz
+                uint32_t flag = (FAULT_STALL_M1 << i);
+                if ((activeFaults & flag) == 0) {
+                    activeFaults |= flag;
+                    lastStallRecord.wheel = (uint8_t)i;
+                    lastStallRecord.faultFlag = flag;
+                    lastStallRecord.durationMs = stallTicks[i] * 10;
+                    lastStallRecord.targetSpeed = target;
+                    lastStallRecord.measuredSpeed = speed;
+                    lastStallRecord.pwm = pwm;
+                    lastStallRecord.drivetrainMode = (uint8_t)driver.getMode();
+                    lastStallRecord.valid = true;
+
+                    LOG_SERIAL_PRINTF("[Safety] MOTOR STALL TRIPPED on M%d: flag=0x%04X, duration=%ums, target=%.2f, meas=%.2f, pwm=%d, mode=%d\n",
+                        i + 1, flag, lastStallRecord.durationMs, target, speed, pwm, (int)driver.getMode());
+                }
             }
         } else {
             stallTicks[i] = 0;
@@ -120,6 +139,7 @@ uint32_t SafetyManager::update(const float *targets, const float *measured, cons
 
 void SafetyManager::clearFaults() {
     activeFaults = FAULT_NONE;
+    lastStallRecord = {0, 0, 0, 0.0f, 0.0f, 0, 0, false};
     for (int i = 0; i < 4; i++) {
         stallTicks[i] = 0;
         encFaultTicks[i] = 0;

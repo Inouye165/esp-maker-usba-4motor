@@ -18,6 +18,17 @@ enum FaultType {
     FAULT_MISMATCH_RIGHT= 1 << 9
 };
 
+struct StallDiagnosticRecord {
+    uint8_t wheel;          // 0..3 (M1..M4)
+    uint32_t faultFlag;     // e.g. FAULT_STALL_M4
+    uint32_t durationMs;    // duration in ms
+    float targetSpeed;      // commanded target in rad/s
+    float measuredSpeed;    // measured speed in rad/s
+    int pwm;                // commanded PWM output [-255..255]
+    uint8_t drivetrainMode; // MotorOutputMode
+    bool valid;
+};
+
 class SafetyManager {
 public:
     SafetyManager();
@@ -31,8 +42,11 @@ public:
     bool hasFaults() const { return activeFaults != FAULT_NONE; }
     void clearFaults();
 
+    const StallDiagnosticRecord& getLastStallRecord() const { return lastStallRecord; }
+
 private:
     uint32_t activeFaults;
+    StallDiagnosticRecord lastStallRecord;
     
     // Accumulators for fault detection timers
     uint32_t stallTicks[4];

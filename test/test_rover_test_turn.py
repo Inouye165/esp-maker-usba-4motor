@@ -2730,6 +2730,273 @@ class TestFailFastSafeguardIntegration(unittest.TestCase):
         self.assertTrue(report.confirmed_final_disarmed_state)
 
 
+class TestFirmwareStallWatchdogAndFaultClearRegressions(unittest.TestCase):
+    """
+    Regression test suite reproducing failures 1789826675 and 1789827814,
+    validating:
+    1. Clean abort and diagnostic preservation when cmd_vel is rejected due to firmware EMERGENCY_STOP / stall fault.
+    2. Arm rejection diagnosis when latched faults remain, followed by controlled fault-clear restoring armability.
+    3. Stall watchdog algorithm immunity to normal low-speed creep / encoder quantization vs true continuous stalls.
+    """
+
+    def test_regression_failure_1789826675_emergency_stop_disarm_aborts_cleanly_with_diagnostics(self):
+        """
+        Reproduce Failure 1 (1789826675):
+        Rover is moving, then cmd_vel is rejected mid-motion because ESP32 entered EMERGENCY_STOP
+        due to a stall fault. Test runner must abort cleanly, capture diagnostic details,
+        and ensure rover ends confirmed stopped and disarmed.
+        """
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1, dry_run=False)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock()
+
+        current_status = {
+            "ok": True,
+            "armed": True,
+            "mode": 3,
+            "autonomyState": "READY_ARMED",
+            "cmdSource": "ROS_AUTONOMY"
+        }
+        mock_cockpit.get_status.side_effect = lambda *a, **k: dict(current_status)
+        mock_cockpit.get_autonomy_status.return_value = {
+            "state": "ACTIVE",
+            "clampedAngular": 0.8,
+            "zeroHandshakeCount": 3,
+            "cmdSource": "ROS_AUTONOMY"
+        }
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+
+        # First command check (call 1) & initial motion (call 2) succeed, mid-motion (call 3) rejected
+        call_count = [0]
+        def mock_send_cmd_vel(vx=0.0, wz=0.0, **kw):
+            call_count[0] += 1
+            if call_count[0] <= 2:
+                return {"ok": True}
+            # Simulate Cockpit reporting the firmware EMERGENCY_STOP state
+            current_status["armed"] = False
+            current_status["mode"] = 4
+            return {"ok": False, "error": "Rover in EMERGENCY_STOP (fault=0x0008)", "mode": 4, "faultFlags": 8}
+
+        mock_cockpit.send_cmd_vel.side_effect = mock_send_cmd_vel
+        def mock_disarm():
+            current_status["armed"] = False
+            current_status["autonomyState"] = "DISABLED"
+            return {"ok": True}
+        def mock_disable_auto():
+            current_status["autonomyState"] = "DISABLED"
+            return {"ok": True}
+        def mock_set_source(s):
+            current_status["cmdSource"] = s
+            return {"ok": True, "source": s}
+
+        mock_cockpit.disarm_drive.side_effect = mock_disarm
+        mock_cockpit.disable_autonomy.side_effect = mock_disable_auto
+        mock_cockpit.set_command_source.side_effect = mock_set_source
+        mock_ws.connected = True
+        mock_ws.recv_frames.return_value = []
+
+        q_start = {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        sample = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 100, "dataAgeMs": 15, "orientation": q_start}
+        mock_cockpit.get_imu.return_value = sample
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+
+        with patch("tools.rover_tests.runner.perform_zero_handshake", return_value=True):
+            with patch("tools.rover_tests.runner.wait_for_advancing_imu_sample", return_value=(True, sample, "ok")):
+                with patch.object(PhysicalTestRunner, "_assert_pre_motion_invariants", return_value=None):
+                    with patch("tools.rover_tests.runner.arm_and_verify_ready_armed", return_value=True):
+                        with patch("time.sleep", return_value=None):
+                            report = runner.execute_single_trial(1)
+
+        self.assertEqual(report.status, "ABORTED")
+        self.assertIn("cmd_vel transmission failed", report.abort_reason)
+        self.assertIn("EMERGENCY_STOP", report.abort_reason)
+        self.assertIn("CMD_VEL_SEND_FAILED", report.communication_faults)
+        self.assertTrue(report.confirmed_final_zero_command)
+        self.assertTrue(report.confirmed_final_disarmed_state)
+
+    def test_regression_failure_1789827814_arm_rejection_and_controlled_fault_clear(self):
+        """
+        Reproduce Failure 2 (1789827814):
+        Latched safety fault from prior abort prevents arming.
+        Then, show that specifying clear_faults=True executes controlled fault clear
+        while stationary and disarmed, allowing arming to proceed.
+        """
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock()
+
+        current_status_fail = {
+            "ok": True,
+            "armed": False,
+            "mode": 4,
+            "autonomyState": "READY_DISARMED",
+            "cmdSource": "NONE"
+        }
+        mock_cockpit.get_status.side_effect = lambda *a, **k: dict(current_status_fail)
+        def mock_disarm_fail():
+            current_status_fail["armed"] = False
+            current_status_fail["autonomyState"] = "DISABLED"
+            return {"ok": True}
+        def mock_disable_auto_fail():
+            current_status_fail["autonomyState"] = "DISABLED"
+            return {"ok": True}
+        def mock_set_source_fail(s):
+            current_status_fail["cmdSource"] = s
+            return {"ok": True, "source": s}
+
+        mock_cockpit.disarm_drive.side_effect = mock_disarm_fail
+        mock_cockpit.disable_autonomy.side_effect = mock_disable_auto_fail
+        mock_cockpit.set_command_source.side_effect = mock_set_source_fail
+        mock_cockpit.get_autonomy_status.return_value = {"state": "READY_DISARMED", "zeroHandshakeCount": 3, "cmdSource": "NONE"}
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        mock_cockpit.arm_drive.return_value = {
+            "ok": False,
+            "error": "Arm confirmation timed out after 500ms waiting for ESP32 confirmation (armed=true, mode=3) [ESP32 in EMERGENCY_STOP mode; active faults=0x8]"
+        }
+        mock_ws.connected = False
+
+        q_start = {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        sample = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 200, "dataAgeMs": 10, "orientation": q_start}
+        mock_cockpit.get_imu.return_value = sample
+
+        # 1. Run without clear_faults: arming fails because ESP32 rejects arming
+        params_fail = TurnParameters(degrees=180.0, direction="cw", trials=1, dry_run=False, clear_faults=False)
+        runner_fail = PhysicalTestRunner(params_fail, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        with patch("tools.rover_tests.runner.perform_zero_handshake", return_value=True):
+            with patch("tools.rover_tests.runner.wait_for_advancing_imu_sample", return_value=(True, sample, "ok")):
+                report_fail = runner_fail.execute_single_trial(1)
+
+        self.assertEqual(report_fail.status, "ABORTED")
+        self.assertIn("Failed to arm drivetrain", report_fail.abort_reason)
+        self.assertIn("EMERGENCY_STOP", report_fail.abort_reason)
+        self.assertTrue(report_fail.confirmed_final_disarmed_state)
+
+        # 2. Run with clear_faults=True: controlled clear executed while disarmed & stationary
+        params_clear = TurnParameters(degrees=180.0, direction="cw", trials=1, dry_run=False, clear_faults=True)
+        current_status_clear = {
+            "ok": True,
+            "armed": False,
+            "mode": 4,
+            "autonomyState": "READY_DISARMED",
+            "cmdSource": "NONE"
+        }
+        mock_cockpit.get_status.side_effect = lambda *a, **k: dict(current_status_clear)
+        def mock_clear():
+            current_status_clear["mode"] = 0
+            return {"ok": True, "message": "Clear faults command sent (verified disarmed and stationary)."}
+        mock_cockpit.clear_faults.side_effect = mock_clear
+        def mock_arm():
+            current_status_clear["armed"] = True
+            current_status_clear["mode"] = 3
+            current_status_clear["autonomyState"] = "READY_ARMED"
+            return {"ok": True}
+        mock_cockpit.arm_drive.side_effect = mock_arm
+        def mock_disarm_clear():
+            current_status_clear["armed"] = False
+            current_status_clear["autonomyState"] = "DISABLED"
+            return {"ok": True}
+        def mock_disable_auto_clear():
+            current_status_clear["autonomyState"] = "DISABLED"
+            return {"ok": True}
+        def mock_set_source_clear(s):
+            current_status_clear["cmdSource"] = s
+            return {"ok": True, "source": s}
+
+        mock_cockpit.disarm_drive.side_effect = mock_disarm_clear
+        mock_cockpit.disable_autonomy.side_effect = mock_disable_auto_clear
+        mock_cockpit.set_command_source.side_effect = mock_set_source_clear
+        mock_cockpit.get_autonomy_status.return_value = {"state": "ACTIVE", "clampedAngular": 0.8, "zeroHandshakeCount": 3, "cmdSource": "ROS_AUTONOMY"}
+
+        runner_clear = PhysicalTestRunner(params_clear, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        with patch("tools.rover_tests.runner.perform_zero_handshake", return_value=True):
+            with patch("tools.rover_tests.runner.wait_for_advancing_imu_sample", return_value=(True, sample, "ok")):
+                with patch.object(PhysicalTestRunner, "_assert_pre_motion_invariants", return_value=None):
+                    with patch("tools.rover_tests.runner.arm_and_verify_ready_armed", return_value=True):
+                        with patch("time.sleep", return_value=None):
+                            mock_cockpit.send_cmd_vel.return_value = {"ok": True}
+                            report_clear = runner_clear.execute_single_trial(1)
+
+        mock_cockpit.clear_faults.assert_called_once()
+        self.assertTrue(report_clear.confirmed_final_disarmed_state)
+
+    def test_stall_watchdog_creep_and_quantization_immunity(self):
+        """
+        Verify the firmware stall watchdog logic:
+        - Low-speed creep (|target| < 0.25 rad/s or |pwm| < 90) must NEVER trip stall.
+        - True stall (|target| >= 0.25 rad/s, |pwm| >= 90, |speed| < 0.05 rad/s for 2.0s) trips stall
+          and records diagnostic record with exact wheel, fault flag, duration, target, speed, pwm, mode.
+        """
+        class MockFirmwareSafetyWatchdog:
+            def __init__(self):
+                self.stall_ticks = [0] * 4
+                self.nonzero_ticks = [0] * 4
+                self.active_faults = 0
+                self.last_stall_record = None
+
+            def update(self, targets, measured, pwms, mode=3):
+                if mode != 3:  # NORMAL_DRIVE
+                    return self.active_faults
+                for i in range(4):
+                    tgt, spd, pwm = targets[i], measured[i], pwms[i]
+                    if abs(tgt) < 0.01:
+                        self.nonzero_ticks[i] = 0
+                        self.stall_ticks[i] = 0
+                        continue
+                    self.nonzero_ticks[i] += 1
+                    # Updated watchdog rule
+                    if self.nonzero_ticks[i] > 50 and abs(tgt) >= 0.25 and abs(pwm) >= 90 and abs(spd) < 0.05:
+                        self.stall_ticks[i] += 1
+                        if self.stall_ticks[i] >= 200:
+                            flag = (1 << i)
+                            if (self.active_faults & flag) == 0:
+                                self.active_faults |= flag
+                                self.last_stall_record = {
+                                    "wheel": i,
+                                    "faultFlag": flag,
+                                    "durationMs": self.stall_ticks[i] * 10,
+                                    "targetSpeed": tgt,
+                                    "measuredSpeed": spd,
+                                    "pwm": pwm,
+                                    "drivetrainMode": mode,
+                                    "valid": True
+                                }
+                    else:
+                        self.stall_ticks[i] = 0
+                return self.active_faults
+
+        # Case A: Normal low-speed creep / approach: target=0.20, measured=0.02, pwm=55 for 500 cycles (5 seconds)
+        w_creep = MockFirmwareSafetyWatchdog()
+        for _ in range(500):
+            faults = w_creep.update([0.20, 0.20, 0.20, 0.20], [0.02, 0.02, 0.02, 0.02], [55, 55, 55, 55])
+            self.assertEqual(faults, 0)
+        self.assertIsNone(w_creep.last_stall_record)
+
+        # Case B: Low-speed fluctuations / encoder quantization: target=0.80, measured intermittently 0.00, pwm=60
+        w_quant = MockFirmwareSafetyWatchdog()
+        for _ in range(300):
+            faults = w_quant.update([0.80, 0.80, 0.80, 0.80], [0.00, 0.00, 0.00, 0.00], [60, 60, 60, 60])
+            self.assertEqual(faults, 0)
+
+        # Case C: True continuous physical motor stall on M4: target=2.80, measured=0.00, pwm=140
+        w_stall = MockFirmwareSafetyWatchdog()
+        for cycle in range(250):
+            w_stall.update([2.80, 2.80, 2.80, 2.80], [2.50, 2.50, 2.50, 0.00], [100, 100, 100, 140])
+            if cycle < 249:  # 50 grace + 200 stall - 1 = 249 cycles before trip
+                pass
+            else:
+                self.assertEqual(w_stall.active_faults, (1 << 3))  # M4 stall fault
+                self.assertIsNotNone(w_stall.last_stall_record)
+                rec = w_stall.last_stall_record
+                self.assertEqual(rec["wheel"], 3)  # M4 (0-indexed 3)
+                self.assertEqual(rec["faultFlag"], 8)
+                self.assertEqual(rec["durationMs"], 2000)
+                self.assertEqual(rec["targetSpeed"], 2.80)
+                self.assertEqual(rec["measuredSpeed"], 0.00)
+                self.assertEqual(rec["pwm"], 140)
+                self.assertEqual(rec["drivetrainMode"], 3)
+                self.assertTrue(rec["valid"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -14,6 +14,7 @@
 #include "WheelController.h"
 
 extern MotorDriver motorDriver;
+extern WheelController wheelController;
 
 SerialProtocol::SerialProtocol()
     : parserState(WAIT_HEAD), extLen(0), payloadIdx(0), lastCharTimeMs(0),
@@ -172,9 +173,17 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
         }
         
         case 0x22: { // CMD_CLEAR_FAULTS
-            safetyManager.clearFaults();
-            cmdManager.clearEmergencyStop();
-            LOG_SERIAL_PRINTLN("[Safety] Faults cleared via serial command.");
+            // Controlled fault-clear path:
+            // Operates only when rover is disarmed and stationary (not in active NORMAL_DRIVE)
+            if (!cmdManager.isNormalDriveArmed() && motorDriver.getMode() != MotorOutputMode::NORMAL_DRIVE) {
+                safetyManager.clearFaults();
+                cmdManager.clearEmergencyStop();
+                motorDriver.setMode(MotorOutputMode::LOCKED);
+                wheelController.reset();
+                LOG_SERIAL_PRINTLN("[Safety] Faults cleared via serial command (verified disarmed & locked).");
+            } else {
+                LOG_SERIAL_PRINTLN("[Safety] Rejecting fault clear: rover must be disarmed.");
+            }
             break;
         }
         
