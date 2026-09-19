@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import math
 import sys
 import os
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -339,6 +340,118 @@ class TestLinearCliAndDryRun(unittest.TestCase):
         self.assertEqual(trial.dynamic_brake_duration_ms, 120)
         self.assertEqual(trial.dynamic_brake_max_speed, 0.25)
         self.assertTrue(trial.anti_stall_confirmed)
+
+        if os.path.exists("test_reports_tmp"):
+            import shutil
+            shutil.rmtree("test_reports_tmp")
+
+    def test_stale_encoder_telemetry_aborts_before_arming(self):
+        """Verifies fail-closed guard refuses to arm if encoder stream is stale or unreadable."""
+        params = LinearParameters(
+            distance_m=1.0,
+            direction="forward",
+            trials=1,
+            dry_run=False,
+            inter_trial_approval=False,
+            report_directory="test_reports_tmp"
+        )
+        runner = PhysicalTestRunner(params)
+        runner.prompt_fn = lambda _: "y"
+        mock_cockpit = MagicMock()
+        mock_cockpit.get_drive_config.return_value = {"ok": True, "config": {}}
+        mock_cockpit.get_pid_telemetry.return_value = {"ok": True, "telemetry": {"m1": {"stictionState": "IDLE"}}}
+        mock_cockpit.get_imu.return_value = {
+            "ok": True,
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+            "sensor_type": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "rotVecValid": True,
+            "inResetRecovery": False,
+            "dataAgeMs": 5,
+            "calibration_status": 3
+        }
+        # Stale encoders: age 600ms > 250ms limit
+        mock_cockpit.get_encoders.return_value = {
+            "ok": True,
+            "lastPacketAgeMs": 600,
+            "encoders": {"m1": 100, "m2": 100, "m3": 100, "m4": 100}
+        }
+        mock_cockpit.get_status.return_value = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+        runner.cockpit = mock_cockpit
+
+        trial = runner.execute_single_linear_trial(1)
+        self.assertEqual(trial.status, "ABORTED")
+        self.assertIn("Pre-arm encoder telemetry verification failed", trial.abort_reason)
+        # Arm must never be called when encoders are stale
+        mock_cockpit.arm.assert_not_called()
+
+        if os.path.exists("test_reports_tmp"):
+            import shutil
+            shutil.rmtree("test_reports_tmp")
+
+    def test_non_advancing_distance_aborts_immediately(self):
+        """
+        Regression test: When physical movement is commanded but reported distance stream
+        does not advance, runner must immediately command zero and abort, NOT run to max duration.
+        """
+        params = LinearParameters(
+            distance_m=1.0,
+            direction="forward",
+            trials=1,
+            dry_run=False,
+            inter_trial_approval=False,
+            report_directory="test_reports_tmp"
+        )
+        runner = PhysicalTestRunner(params)
+        runner.prompt_fn = lambda _: "y"
+        mock_cockpit = MagicMock()
+        mock_cockpit.get_drive_config.return_value = {"ok": True, "config": {}}
+        mock_cockpit.get_pid_telemetry.return_value = {
+            "ok": True,
+            "telemetry": {
+                "m1": {"targetRadps": 5.97, "measuredRadps": 0.0, "stictionState": "BOOST"},
+                "m2": {"targetRadps": 5.97, "measuredRadps": 0.0, "stictionState": "BOOST"},
+                "m3": {"targetRadps": 5.97, "measuredRadps": 0.0, "stictionState": "BOOST"},
+                "m4": {"targetRadps": 5.97, "measuredRadps": 0.0, "stictionState": "BOOST"},
+            }
+        }
+        mock_cockpit.get_imu.return_value = {
+            "ok": True,
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+            "sensor_type": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "rotVecValid": True,
+            "inResetRecovery": False,
+            "dataAgeMs": 5,
+            "calibration_status": 3
+        }
+        # Encoders return fresh status but tick values NEVER advance (simulating broken encoder wire or stalled distance)
+        mock_cockpit.get_encoders.return_value = {
+            "ok": True,
+            "lastPacketAgeMs": 5,
+            "sequence": 1,
+            "encoders": {"m1": 5000, "m2": 5000, "m3": 5000, "m4": 5000}
+        }
+        mock_cockpit.get_status.return_value = {"armed": True, "mode": 3, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.get_autonomy_status.return_value = {"state": "READY_ARMED", "clampedLinear": 0.20}
+        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
+        mock_cockpit.arm_drive.return_value = {"ok": True}
+        mock_cockpit.arm.return_value = {"ok": True}
+        mock_cockpit.disarm.return_value = {"ok": True}
+        runner.cockpit = mock_cockpit
+
+        t_start = time.time()
+        trial = runner.execute_single_linear_trial(1)
+        elapsed = time.time() - t_start
+
+        # Must abort quickly (startup guard window ~800ms, not 9.5s or 25s timeout)
+        self.assertEqual(trial.status, "ABORTED")
+        self.assertIn("Startup safety guard tripped", trial.abort_reason)
+        self.assertIn("did not advance within 800ms", trial.abort_reason)
+        self.assertLess(elapsed, 2.0, "Runner must fail-fast within ~1 second, not run to max duration")
+
+        # Must have sent emergency zero velocity command upon detecting stall
+        cmd_vel_calls = [call.kwargs for call in mock_cockpit.send_cmd_vel.call_args_list]
+        has_zero_cmd = any(c.get("vx") == 0.0 and c.get("wz") == 0.0 for c in cmd_vel_calls)
+        self.assertTrue(has_zero_cmd, "Emergency zero command must be dispatched on non-advancing distance stream")
 
         if os.path.exists("test_reports_tmp"):
             import shutil

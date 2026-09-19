@@ -51,6 +51,9 @@ from .sensors import (
     verify_non_magnetic_imu,
     check_imu_freshness,
     wait_for_advancing_imu_sample,
+    check_encoder_freshness,
+    wait_for_advancing_encoder_sample,
+    extract_encoder_ticks,
     MagneticImuException,
     SensorException
 )
@@ -574,7 +577,7 @@ class PhysicalTestRunner:
             self.cockpit.clear_faults()
             time.sleep(0.1)
 
-        # Step 3: Fresh sensor baselines
+        # Step 3: Fresh sensor baselines & pre-arm encoder validation
         start_yaw_deg = 0.0
         start_ticks = {w: 0 for w in ["m1", "m2", "m3", "m4"]}
         if not self.params.dry_run:
@@ -588,14 +591,41 @@ class PhysicalTestRunner:
                 start_yaw_deg = math.degrees(quat_to_yaw(init_imu.get("orientation", {})))
                 trial_report.start_heading_raw_deg = round(start_yaw_deg, 4)
 
-                enc_res = self.cockpit.get_encoders()
-                if enc_res and "encoders" in enc_res:
-                    for w in ["m1", "m2", "m3", "m4"]:
-                        start_ticks[w] = enc_res["encoders"].get(w, 0)
-                        wheel_metrics[w].encoder_start_ticks = start_ticks[w]
+                # Require fresh, advancing encoder telemetry before arming
+                enc_ok, enc_res, enc_err = wait_for_advancing_encoder_sample(
+                    self.cockpit,
+                    max_wait_sec=0.50,
+                    max_acceptable_age_ms=150.0,
+                    watchdog_max_age_ms=250.0
+                )
+                if not enc_ok or not enc_res:
+                    trial_report.status = "ABORTED"
+                    trial_report.abort_reason = f"Pre-arm encoder telemetry verification failed: {enc_err}"
+                    print(f"[FAIL-CLOSED ERROR] {trial_report.abort_reason}")
+                    cleanup_st = self.cleanup()
+                    trial_report.confirmed_final_zero_command = True
+                    trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
+                    return trial_report
+
+                extracted_start = extract_encoder_ticks(enc_res)
+                if extracted_start is None:
+                    trial_report.status = "ABORTED"
+                    trial_report.abort_reason = "Pre-arm encoder telemetry malformed (cannot extract m1..m4 ticks)"
+                    print(f"[FAIL-CLOSED ERROR] {trial_report.abort_reason}")
+                    cleanup_st = self.cleanup()
+                    trial_report.confirmed_final_zero_command = True
+                    trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
+                    return trial_report
+
+                start_ticks = extracted_start
+                for w in ["m1", "m2", "m3", "m4"]:
+                    wheel_metrics[w].encoder_start_ticks = start_ticks[w]
             except Exception as e:
                 trial_report.status = "ABORTED"
                 trial_report.abort_reason = f"Preflight sensor verification fault: {e}"
+                cleanup_st = self.cleanup()
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
                 return trial_report
         else:
             trial_report.start_heading_raw_deg = 0.0
@@ -770,31 +800,86 @@ class PhysicalTestRunner:
                 trial_report.steady_speed_wheel_metrics = dict(wheel_metrics)
             else:
                 # Physical motion loop
+                theoretical_sec = abs(self.params.distance) / self.params.max_linear_speed
+                max_duration = max(3.0, min(15.0, round(theoretical_sec * 1.5 + 2.0, 2)))
+
+                # Drain stale WebSocket frames before motion so telemetry strictly reflects active driving
+                if self.ws and self.ws.connected:
+                    self.ws.recv_frames()
+
                 first_cmd_vx = controller.update(current_progress=0.0, current_time=time.time())
                 first_res = self.cockpit.send_cmd_vel(vx=first_cmd_vx, wz=0.0)
                 trial_report.first_command_response = first_res
                 if not first_res.get("ok", False):
                     raise TestAbortException(f"First command rejected: {first_res.get('error')}")
 
-                # Wait up to 500ms for ACTIVE state
+                # Step 10: Bounded startup verification (max 800ms)
+                # Verify autonomy ACTIVE, nonzero wheel targets confirmed, and distance begins advancing
+                startup_active = False
+                startup_has_targets = False
+                startup_has_advancement = False
                 t_chk = time.time()
-                while time.time() - t_chk < 0.5:
+                last_enc_ticks = dict(start_ticks)
+
+                while time.time() - t_chk < 0.80:
                     a_st = self.cockpit.get_autonomy_status()
                     if a_st.get("state") == "ACTIVE" or abs(a_st.get("clampedLinear", 0.0)) > 1e-4:
-                        break
-                    time.sleep(0.04)
+                        startup_active = True
+
+                    pid_st = self.cockpit.get_pid_telemetry()
+                    if pid_st and pid_st.get("ok") and pid_st.get("telemetry"):
+                        telem = pid_st["telemetry"]
+                        m1_tgt = abs(float(telem.get("m1", {}).get("targetRadps", 0.0)))
+                        if m1_tgt > 0.05 or abs(a_st.get("clampedLinear", 0.0)) > 1e-4:
+                            startup_has_targets = True
+                    elif startup_active:
+                        startup_has_targets = True
+
+                    enc_st = self.cockpit.get_encoders()
+                    if enc_st:
+                        ticks_now = extract_encoder_ticks(enc_st)
+                        if ticks_now:
+                            last_enc_ticks = ticks_now
+                            tick_deltas = [abs(ticks_now[w] - start_ticks[w]) for w in ["m1", "m2", "m3", "m4"]]
+                            if max(tick_deltas) >= 15:  # At least 15 ticks (~1.5 mm)
+                                startup_has_advancement = True
+                                break
+                    time.sleep(0.03)
+
+                if not startup_active:
+                    self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
+                    raise TestAbortException("Startup safety guard tripped: Autonomy ACTIVE state not achieved within 800ms")
+
+                if not startup_has_targets:
+                    self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
+                    raise TestAbortException("Startup safety guard tripped: Non-zero wheel PID targets not confirmed within 800ms")
+
+                if not startup_has_advancement:
+                    self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
+                    raise TestAbortException(
+                        "Startup safety guard tripped: Commanded motion but encoder distance stream did not advance within 800ms (reported progress remained zero)"
+                    )
+
+                trial_report.autonomy_state_transitions.append({
+                    "timestamp": time.time(),
+                    "state": "ACTIVE",
+                    "trigger": "first_nonzero_cmd_accepted_and_advancing"
+                })
 
                 t_start_motion = time.time()
                 t_steady_start: Optional[float] = None
                 t_zero_issued: Optional[float] = None
                 dist_at_steady_start = 0.0
                 dist_at_zero_issued = 0.0
-                max_duration = 25.0
                 curr_dist_m = 0.0
+                last_adv_dist = 0.0
+                last_dist_advance_time = t_start_motion
+                last_encoder_time = t_start_motion
                 last_yaw_deg = start_yaw_deg
                 breakout_start_time = None
                 breakout_count = 0
                 total_breakout_dwell_ms = 0.0
+                cur_ticks = dict(last_enc_ticks)
 
                 steady_wheel_samples: Dict[str, Dict[str, List[float]]] = {
                     w: {"targets": [], "measured": [], "pwms": []} for w in ["m1", "m2", "m3", "m4"]
@@ -804,19 +889,25 @@ class PhysicalTestRunner:
                 while True:
                     now = time.time()
                     if now - t_start_motion > max_duration:
-                        raise TestAbortException(f"Linear trial exceeded max duration ({max_duration}s)")
+                        self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
+                        raise TestAbortException(
+                            f"Linear trial exceeded bounded duration limit ({max_duration:.1f}s, theoretical: {theoretical_sec:.1f}s)"
+                        )
 
-                    # Process incoming telemetry
+                    # 1. Ingest telemetry from WebSocket
+                    got_encoder_frame = False
                     if self.ws and self.ws.connected:
                         frames = self.ws.recv_frames()
                         for f in frames:
                             ftype = f.get("type")
-                            if ftype == "encoder_status" or ftype == "encoders":
-                                encs = f.get("encoders", {})
-                                if encs:
-                                    tick_deltas = [encs.get(w, start_ticks[w]) - start_ticks[w] for w in ["m1", "m2", "m3", "m4"]]
-                                    avg_ticks = sum(tick_deltas) / 4.0
-                                    curr_dist_m = ticks_to_meters(avg_ticks)
+                            if ftype in ("odom", "encoders", "encoder_status"):
+                                extracted = extract_encoder_ticks(f)
+                                if extracted:
+                                    cur_ticks = extracted
+                                    last_encoder_time = now
+                                    got_encoder_frame = True
+                                if "yaw" in f:
+                                    last_yaw_deg = math.degrees(float(f["yaw"]))
                             elif ftype == "imu":
                                 ori = f.get("orientation", {})
                                 if ori:
@@ -824,22 +915,6 @@ class PhysicalTestRunner:
                             elif ftype == "pid_diagnostic":
                                 total_telemetry_samples += 1
                                 active_pid_packets.append(f)
-                                
-                                # Check if steady speed is reached
-                                meas_speeds = []
-                                for w_id in ["m1", "m2", "m3", "m4"]:
-                                    w_f = f.get(w_id, {})
-                                    m_val = w_f.get("measuredRadps")
-                                    if m_val is not None:
-                                        meas_speeds.append(abs(float(m_val)))
-                                
-                                expected_wheel_radps = abs(self.params.max_linear_speed / 0.033475)
-                                if meas_speeds and t_steady_start is None:
-                                    avg_meas = sum(meas_speeds) / len(meas_speeds)
-                                    if avg_meas >= 0.85 * expected_wheel_radps:
-                                        t_steady_start = now
-                                        dist_at_steady_start = curr_dist_m
-
                                 for w_id in ["m1", "m2", "m3", "m4"]:
                                     w_f = f.get(w_id, {})
                                     tgt = w_f.get("targetRadps")
@@ -857,26 +932,66 @@ class PhysicalTestRunner:
                                             accel_pwms.append(pwm_int)
                                         else:
                                             steady_wheel_samples[w_id]["pwms"].append(pwm_int)
-
                                     if t_steady_start is not None and t_zero_issued is None:
                                         if tgt is not None:
                                             steady_wheel_samples[w_id]["targets"].append(float(tgt))
                                         if meas is not None:
                                             steady_wheel_samples[w_id]["measured"].append(float(meas))
-
                                     if stict == "STICTION_BOOST":
                                         wheel_metrics[w_id].stiction_boost_events += 1
-                                        if breakout_start_time is None:
-                                            breakout_start_time = now
-                                            breakout_count += 1
                                     elif stict == "BLOCKED":
                                         wheel_metrics[w_id].blocked_state_events += 1
 
-                    # Update controller (constant requested velocity until target reached)
+                    # 2. Authoritative HTTP polling fallback if no WebSocket encoder frame within 40ms
+                    if not got_encoder_frame or (now - last_encoder_time > 0.040):
+                        try:
+                            enc_resp = self.cockpit.get_encoders(timeout=0.10)
+                            is_fresh, fresh_msg = check_encoder_freshness(enc_resp, max_age_ms=250.0)
+                            if not is_fresh:
+                                self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
+                                raise TestAbortException(f"Encoder telemetry stale or dropped during motion: {fresh_msg}")
+                            extracted = extract_encoder_ticks(enc_resp)
+                            if extracted:
+                                cur_ticks = extracted
+                                last_encoder_time = now
+                        except Exception as e:
+                            if isinstance(e, TestAbortException):
+                                raise
+                            self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
+                            raise TestAbortException(f"Failed to query encoder telemetry during motion: {e}")
+
+                    # 3. Compute current linear displacement from encoder ticks
+                    deltas = [cur_ticks[w] - start_ticks[w] for w in ["m1", "m2", "m3", "m4"]]
+                    avg_delta = sum(deltas) / 4.0
+                    curr_dist_m = ticks_to_meters(avg_delta)
+
+                    # 4. Check progress advancement (must advance at least 1 mm)
+                    if abs(curr_dist_m - last_adv_dist) >= 0.001:
+                        last_adv_dist = curr_dist_m
+                        last_dist_advance_time = now
+
+                    # 5. Stall watchdog: progress MUST advance while motion is commanded
+                    if now - last_dist_advance_time > 0.60:
+                        self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
+                        raise TestAbortException(
+                            f"Distance telemetry stalled while commanded: progress remained at {curr_dist_m:.4f}m for > 600ms"
+                        )
+
+                    # 6. Check steady-speed phase transition (>= 85% of target speed)
+                    if t_steady_start is None and active_pid_packets:
+                        recent_pkt = active_pid_packets[-1]
+                        speeds = [abs(float(recent_pkt.get(w, {}).get("measuredRadps", 0.0))) for w in ["m1", "m2", "m3", "m4"]]
+                        expected_radps = abs(self.params.max_linear_speed / 0.033475)
+                        if speeds and (sum(speeds) / len(speeds)) >= 0.85 * expected_radps:
+                            t_steady_start = now
+                            dist_at_steady_start = curr_dist_m
+
+                    # 7. Update approach controller
                     cmd_vx = controller.update(current_progress=curr_dist_m, current_time=now)
                     wheel_cmds = compute_linear_wheel_speed_targets(cmd_vx)
                     sym_ok, sym_msg = verify_linear_wheel_command_symmetry(wheel_cmds)
                     if not sym_ok:
+                        self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
                         raise TestAbortException(f"Command symmetry fault: {sym_msg}")
 
                     if controller.phase == ApproachPhase.ZERO:
@@ -1018,6 +1133,22 @@ class PhysicalTestRunner:
             trial_report.abort_reason = str(e)
             print(f"[TRIAL ABORTED] {e}")
         finally:
+            # Capture final encoder ticks and distance EVEN IF ABORTED
+            if not self.params.dry_run:
+                try:
+                    final_enc = self.cockpit.get_encoders()
+                    final_ticks = extract_encoder_ticks(final_enc)
+                    if final_ticks:
+                        for w in ["m1", "m2", "m3", "m4"]:
+                            wheel_metrics[w].encoder_final_ticks = final_ticks[w]
+                            wheel_metrics[w].encoder_delta_ticks = final_ticks[w] - start_ticks[w]
+                        final_avg_delta = sum(wheel_metrics[w].encoder_delta_ticks for w in ["m1", "m2", "m3", "m4"]) / 4.0
+                        if trial_report.measured_distance_m is None:
+                            trial_report.measured_distance_m = round(ticks_to_meters(final_avg_delta), 5)
+                            trial_report.final_settled_distance_m = trial_report.measured_distance_m
+                except Exception:
+                    pass
+
             cleanup_st = self.cleanup()
             trial_report.confirmed_final_zero_command = True
             trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
@@ -1055,8 +1186,9 @@ class PhysicalTestRunner:
         if not is_fresh:
             return f"Pre-motion invariant violated: {freshness_msg}"
 
-        if not enc_stat or (not enc_stat.get("ok", False) and "encoders" not in enc_stat):
-            return "Pre-motion invariant violated: encoder telemetry dropped or unreadable"
+        is_enc_fresh, enc_msg = check_encoder_freshness(enc_stat, max_age_ms=250.0)
+        if not is_enc_fresh:
+            return f"Pre-motion invariant violated: {enc_msg}"
 
         return None
 

@@ -283,3 +283,103 @@ def wait_for_advancing_imu_sample(
         f"Timed out waiting for advancing fresh IMU sample ({elapsed_ms:.1f}ms > {max_wait_sec*1000.0:.0f}ms limit, "
         f"baseline_seq={baseline_seq}, last_seq={last_seq}, last_age={last_age}ms)"
     )
+
+
+def extract_encoder_ticks(packet_or_frame: Optional[Dict[str, Any]]) -> Optional[Dict[str, int]]:
+    """
+    Extracts individual wheel encoder ticks from either:
+    1. HTTP /api/encoders dictionary schema: {'encoders': {'m1': ..., 'm2': ..., 'm3': ..., 'm4': ...}}
+    2. Direct dictionary: {'m1': ..., 'm2': ..., 'm3': ..., 'm4': ...}
+    3. WebSocket 'odom' list schema: {'type': 'odom', 'encoders': [m1, m2, m3, m4]}
+    """
+    if not packet_or_frame or not isinstance(packet_or_frame, dict):
+        return None
+
+    enc_field = packet_or_frame.get("encoders")
+    if isinstance(enc_field, dict):
+        if all(k in enc_field for k in ("m1", "m2", "m3", "m4")):
+            return {k: int(enc_field[k]) for k in ("m1", "m2", "m3", "m4")}
+    elif isinstance(enc_field, (list, tuple)) and len(enc_field) >= 4:
+        return {
+            "m1": int(enc_field[0]),
+            "m2": int(enc_field[1]),
+            "m3": int(enc_field[2]),
+            "m4": int(enc_field[3]),
+        }
+
+    if all(k in packet_or_frame for k in ("m1", "m2", "m3", "m4")):
+        return {k: int(packet_or_frame[k]) for k in ("m1", "m2", "m3", "m4")}
+
+    return None
+
+
+def check_encoder_freshness(encoder_data: Optional[Dict[str, Any]], max_age_ms: float = 250.0) -> Tuple[bool, str]:
+    """
+    Validates freshness and schema integrity of wheel encoder telemetry.
+    Checks:
+    1. Payload readable and ok == True
+    2. Contains valid 4-wheel encoder readings (extract_encoder_ticks is not None)
+    3. Serial connection active (serialConnected is not False)
+    4. Packet age (lastPacketAgeMs or dataAgeMs) <= max_age_ms
+    """
+    if not encoder_data or not isinstance(encoder_data, dict):
+        return False, "Encoder telemetry dropped or unreadable"
+    if not encoder_data.get("ok", False) and "encoders" not in encoder_data:
+        return False, f"Encoder response status not ok: {encoder_data.get('error', 'unknown error')}"
+    if encoder_data.get("serialConnected") is False:
+        return False, "ESP32 serial connection reported disconnected in encoder packet"
+
+    ticks = extract_encoder_ticks(encoder_data)
+    if ticks is None:
+        return False, "Malformed encoder packet: missing 4-wheel ticks (m1..m4)"
+
+    age_ms = encoder_data.get("lastPacketAgeMs")
+    if age_ms is None:
+        age_ms = encoder_data.get("dataAgeMs")
+    if age_ms is not None and age_ms > max_age_ms:
+        return False, f"Stale encoder telemetry ({age_ms}ms > {max_age_ms:.0f}ms limit)"
+
+    display_age = f"{age_ms:.0f}ms" if age_ms is not None else "0ms"
+    return True, f"Fresh encoder telemetry ({display_age} <= {max_age_ms:.0f}ms)"
+
+
+def wait_for_advancing_encoder_sample(
+    cockpit: Any,
+    baseline_seq: Optional[int] = None,
+    max_wait_sec: float = 0.50,
+    poll_interval_sec: float = 0.015,
+    max_acceptable_age_ms: float = 150.0,
+    watchdog_max_age_ms: float = 250.0
+) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+    """
+    Waits for a fresh, verified encoder sample before arming.
+    Ensures encoder stream is actively received from ESP32 with fresh timestamp/sequence.
+    """
+    t_start = time.time()
+    last_sample = None
+
+    while (time.time() - t_start) < max_wait_sec:
+        try:
+            enc_snap = cockpit.get_encoders()
+            last_sample = enc_snap
+            if enc_snap:
+                is_fresh, fresh_msg = check_encoder_freshness(enc_snap, max_age_ms=watchdog_max_age_ms)
+                if is_fresh:
+                    cur_seq = enc_snap.get("sequence")
+                    age_ms = enc_snap.get("lastPacketAgeMs", enc_snap.get("dataAgeMs", 0))
+                    if cur_seq is not None and baseline_seq is not None:
+                        if cur_seq != baseline_seq:
+                            return True, enc_snap, f"Advancing encoder sample verified (seq={cur_seq}, age={age_ms}ms)"
+                    elif age_ms is not None and age_ms <= max_acceptable_age_ms:
+                        return True, enc_snap, f"Fresh encoder sample verified (seq={cur_seq}, age={age_ms}ms)"
+        except Exception:
+            pass
+        time.sleep(poll_interval_sec)
+
+    elapsed_ms = (time.time() - t_start) * 1000.0
+    last_seq = last_sample.get("sequence") if last_sample else None
+    last_age = last_sample.get("lastPacketAgeMs") if last_sample else None
+    return False, last_sample, (
+        f"Timed out waiting for fresh encoder sample ({elapsed_ms:.1f}ms > {max_wait_sec*1000.0:.0f}ms limit, "
+        f"baseline_seq={baseline_seq}, last_seq={last_seq}, last_age={last_age}ms)"
+    )
