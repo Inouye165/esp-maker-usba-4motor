@@ -209,10 +209,20 @@ def verify_non_magnetic_imu(imu_snapshot: Dict[str, Any]) -> Tuple[bool, str]:
     return True, "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC verified active and valid"
 
 
-def check_imu_freshness(imu_data: Optional[Dict[str, Any]], max_age_ms: float = 250.0) -> Tuple[bool, str]:
+def check_imu_freshness(
+    imu_data: Optional[Dict[str, Any]],
+    max_age_ms: float = 250.0,
+    last_seq: Optional[int] = None,
+    last_esp_ts_us: Optional[int] = None,
+    require_hardware_id: bool = False
+) -> Tuple[bool, str]:
     """
     Unified freshness check for BNO08x orientation telemetry.
     Used consistently by pre-motion invariant assertions and active motion loop watchdog.
+
+    Safety requirement:
+    WebSocket / sensor freshness requires a verifiable hardware source sequence or
+    ESP timestamp. dataAgeMs: 0 alone MUST NOT be treated as proof of a fresh sensor sample.
     """
     if not imu_data or not imu_data.get("ok", False):
         return False, "IMU telemetry dropped or unreadable"
@@ -221,12 +231,35 @@ def check_imu_freshness(imu_data: Optional[Dict[str, Any]], max_age_ms: float = 
     if imu_data.get("inResetRecovery", False):
         return False, "BNO08x IMU is in reset recovery mode"
 
+    cur_seq = imu_data.get("sequence")
+    cur_esp_ts = imu_data.get("espTimestampUs") if "espTimestampUs" in imu_data else imu_data.get("timestamp")
     age_ms = imu_data.get("dataAgeMs")
+
+    # Critical Safety Rule:
+    # Do not treat dataAgeMs: 0 alone as proof of a fresh sensor sample.
+    # When dataAgeMs is 0 (typical for WebSocket frames) or when require_hardware_id is True,
+    # we MUST have a valid source sequence or ESP timestamp.
+    if (age_ms == 0 or require_hardware_id) and cur_seq is None and cur_esp_ts is None:
+        return False, "IMU telemetry with dataAgeMs=0 requires source sequence or ESP timestamp (dataAgeMs:0 alone is insufficient)"
+
     if age_ms is not None and age_ms > max_age_ms:
         return False, f"Stale IMU data detected ({age_ms}ms > {max_age_ms:.0f}ms limit)"
 
+    if last_seq is not None and cur_seq is not None:
+        if cur_seq <= last_seq:
+            return False, f"Non-advancing IMU sequence ({cur_seq} <= {last_seq})"
+    elif last_esp_ts_us is not None and cur_esp_ts is not None:
+        if cur_esp_ts <= last_esp_ts_us:
+            return False, f"Non-advancing IMU ESP timestamp ({cur_esp_ts} <= {last_esp_ts_us})"
+
     display_age = f"{age_ms:.0f}ms" if age_ms is not None else "0ms"
-    return True, f"Fresh IMU data ({display_age} <= {max_age_ms:.0f}ms)"
+    id_info = []
+    if cur_seq is not None:
+        id_info.append(f"seq={cur_seq}")
+    if cur_esp_ts is not None:
+        id_info.append(f"ts={cur_esp_ts}")
+    id_str = f", {', '.join(id_info)}" if id_info else ""
+    return True, f"Fresh IMU data ({display_age} <= {max_age_ms:.0f}ms{id_str})"
 
 
 def wait_for_advancing_imu_sample(

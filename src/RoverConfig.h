@@ -124,4 +124,11 @@ void initConfigStorage();
 void loadCalibrations();
 void saveCalibrations();
 
+// ESP32 Boot and Reset Reason Telemetry
+uint32_t getEspBootCount();
+uint32_t getEspResetReason();
+uint32_t getEspRtc0ResetReason();
+const char* getEspResetReasonString(uint32_t reason);
+const char* getEspRtcResetReasonString(uint32_t reason);
+
 #endif // ROVER_CONFIG_H

@@ -184,6 +184,14 @@ class TrialReport:
     actuation_states_observed: List[str] = field(default_factory=list)
     brake_active_duration_ms: Optional[float] = None
 
+    # ESP32 Controller Identity & Reset Telemetry
+    esp_boot_count_start: Optional[int] = None
+    esp_boot_count_end: Optional[int] = None
+    esp_reset_reason_start: Optional[str] = None
+    esp_reset_reason_end: Optional[str] = None
+    esp_rtc_reset_reason_start: Optional[str] = None
+    esp_rtc_reset_reason_end: Optional[str] = None
+
     # Raw telemetry frames (optional / truncated in summary)
     approach_milestones: Dict[str, Any] = field(default_factory=dict)
 
@@ -583,6 +591,12 @@ class ReportGenerator:
                 md.append(f"| Actuation States | `{' -> '.join(t.actuation_states_observed)}` | Firmware drivetrain states |")
             if t.brake_active_duration_ms is not None:
                 md.append(f"| Brake Pulse Duration | `{t.brake_active_duration_ms:.1f} ms` | Active dynamic brake period |")
+            if t.esp_boot_count_start is not None or t.esp_boot_count_end is not None:
+                md.append(f"| ESP32 Boot Count | `Start: {t.esp_boot_count_start}, End: {t.esp_boot_count_end}` | Controller reboot detection counter |")
+            if t.esp_reset_reason_end or t.esp_reset_reason_start:
+                md.append(f"| ESP32 Reset Reason | `{t.esp_reset_reason_end or t.esp_reset_reason_start}` | ROM / ESP-IDF reset reason |")
+            if t.esp_rtc_reset_reason_end or t.esp_rtc_reset_reason_start:
+                md.append(f"| ESP32 RTC Reset Reason | `{t.esp_rtc_reset_reason_end or t.esp_rtc_reset_reason_start}` | RTC controller reset reason |")
             md.append(f"| Final Zero & Disarmed Confirmed | `{'YES' if (t.confirmed_final_zero_command and t.confirmed_final_disarmed_state) else 'NO (FAIL-SAFE ERROR)'}` | Drivetrain locked & safe |")
             md.append("")
 

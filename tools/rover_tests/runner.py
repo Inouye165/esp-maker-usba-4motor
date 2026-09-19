@@ -1565,6 +1565,21 @@ class PhysicalTestRunner:
                 fresh_raw_deg = round(math.degrees(fresh_raw_yaw), 4)
                 trial_report.start_heading_raw_deg = fresh_raw_deg
                 trial_report.start_heading_continuous_deg = round(cumulative_continuous_heading, 4) if cumulative_continuous_heading is not None else fresh_raw_deg
+                trial_report.esp_boot_count_start = (
+                    fresh_imu.get("espBootCount")
+                    if fresh_imu.get("espBootCount") is not None
+                    else fresh_imu.get("bootCount")
+                )
+                trial_report.esp_reset_reason_start = (
+                    fresh_imu.get("espResetReason")
+                    if fresh_imu.get("espResetReason") is not None
+                    else fresh_imu.get("resetReason")
+                )
+                trial_report.esp_rtc_reset_reason_start = (
+                    fresh_imu.get("espRtcResetReason")
+                    if fresh_imu.get("espRtcResetReason") is not None
+                    else fresh_imu.get("rtcResetReason")
+                )
             print(f"[OK] Advancing fresh IMU sample synchronized in READY_DISARMED: {adv_reason}")
 
         # Step 7: Arm Drivetrain and Verify READY_ARMED
@@ -1808,6 +1823,7 @@ class PhysicalTestRunner:
                 last_motion_imu_seq: Optional[int] = None
                 last_motion_esp_ts: Optional[int] = None
                 last_motion_reset_count: Optional[int] = None
+                last_motion_boot_count: Optional[int] = trial_report.esp_boot_count_start
                 last_motion_imu_advance_time: float = t_motion_start
                 latest_imu: Optional[Dict[str, Any]] = None
                 wheel_cmds: Dict[str, float] = {w: 0.0 for w in ["m1", "m2", "m3", "m4"]}
@@ -1841,39 +1857,60 @@ class PhysicalTestRunner:
                         latest_imu = self.cockpit.get_imu()
 
                     cur_seq = latest_imu.get("sequence") if latest_imu else None
-                    cur_esp_ts = latest_imu.get("espTimestampUs") if latest_imu else None
-                    cur_reset_cnt = latest_imu.get("resetCount") if latest_imu else None
+                    cur_esp_ts = latest_imu.get("espTimestampUs") if latest_imu else (latest_imu.get("timestamp") if latest_imu else None)
+                    cur_boot_cnt = (
+                        latest_imu.get("espBootCount")
+                        if latest_imu and latest_imu.get("espBootCount") is not None
+                        else (latest_imu.get("bootCount") if latest_imu else None)
+                    )
+                    cur_reset_reason = (
+                        latest_imu.get("espResetReason")
+                        if latest_imu and latest_imu.get("espResetReason") is not None
+                        else (latest_imu.get("resetReason") if latest_imu else None)
+                    )
+                    cur_rtc_reset_reason = (
+                        latest_imu.get("espRtcResetReason")
+                        if latest_imu and latest_imu.get("espRtcResetReason") is not None
+                        else (latest_imu.get("rtcResetReason") if latest_imu else None)
+                    )
 
                     # Check for explicit ESP32 hardware reset during motion
                     is_hardware_reset = False
                     reset_msg = ""
-                    if cur_seq is not None and last_motion_imu_seq is not None and cur_seq < last_motion_imu_seq:
+                    if cur_boot_cnt is not None and last_motion_boot_count is not None and cur_boot_cnt > last_motion_boot_count:
+                        is_hardware_reset = True
+                        reset_msg = f"ESP32 bootCount incremented ({last_motion_boot_count} -> {cur_boot_cnt}), resetReason: {cur_reset_reason}, rtcResetReason: {cur_rtc_reset_reason}"
+                    elif cur_seq is not None and last_motion_imu_seq is not None and cur_seq < last_motion_imu_seq:
                         is_hardware_reset = True
                         reset_msg = f"ESP32 sequence dropped ({last_motion_imu_seq} -> {cur_seq})"
                     elif cur_esp_ts is not None and last_motion_esp_ts is not None and cur_esp_ts < last_motion_esp_ts:
                         is_hardware_reset = True
                         reset_msg = f"ESP32 uptime reset ({last_motion_esp_ts}us -> {cur_esp_ts}us)"
-                    elif cur_reset_cnt is not None and last_motion_reset_count is not None and cur_reset_cnt > last_motion_reset_count:
-                        is_hardware_reset = True
-                        reset_msg = f"ESP32 resetCount incremented ({last_motion_reset_count} -> {cur_reset_cnt})"
 
                     is_fresh, freshness_msg = check_imu_freshness(latest_imu, max_age_ms=250.0)
 
+                    # Stream advancement strictly requires advancing sequence or ESP timestamp for WebSocket telemetry.
+                    # dataAgeMs: 0 alone does NOT advance the stream.
+                    has_advanced = False
                     if cur_seq is not None:
-                        if last_motion_imu_seq is None or cur_seq != last_motion_imu_seq:
+                        if last_motion_imu_seq is None or cur_seq > last_motion_imu_seq:
                             last_motion_imu_seq = cur_seq
-                            last_motion_imu_advance_time = now
+                            has_advanced = True
                     elif cur_esp_ts is not None:
-                        if last_motion_esp_ts is None or cur_esp_ts != last_motion_esp_ts:
-                            last_motion_imu_advance_time = now
-                    else:
-                        if is_fresh:
-                            last_motion_imu_advance_time = now
+                        if last_motion_esp_ts is None or cur_esp_ts > last_motion_esp_ts:
+                            last_motion_esp_ts = cur_esp_ts
+                            has_advanced = True
+                    elif not (latest_ws_imu is not None) and is_fresh:
+                        # HTTP polling sample without sequence/timestamp fields
+                        has_advanced = True
 
-                    if cur_esp_ts is not None:
+                    if has_advanced:
+                        last_motion_imu_advance_time = now
+
+                    if cur_esp_ts is not None and (last_motion_esp_ts is None or cur_esp_ts > last_motion_esp_ts):
                         last_motion_esp_ts = cur_esp_ts
-                    if cur_reset_cnt is not None:
-                        last_motion_reset_count = cur_reset_cnt
+                    if cur_boot_cnt is not None:
+                        last_motion_boot_count = cur_boot_cnt
 
                     is_non_advancing = (now - last_motion_imu_advance_time) > 0.250
 
@@ -1893,29 +1930,49 @@ class PhysicalTestRunner:
                         confirm_imu = self.cockpit.get_imu()
                         is_confirm_fresh, confirm_msg = check_imu_freshness(confirm_imu, max_age_ms=250.0)
                         confirm_seq = confirm_imu.get("sequence") if confirm_imu else None
-                        confirm_esp_ts = confirm_imu.get("espTimestampUs") if confirm_imu else None
-                        confirm_reset_cnt = confirm_imu.get("resetCount") if confirm_imu else None
+                        confirm_esp_ts = confirm_imu.get("espTimestampUs") if confirm_imu else (confirm_imu.get("timestamp") if confirm_imu else None)
+                        confirm_boot_cnt = (
+                            confirm_imu.get("espBootCount")
+                            if confirm_imu and confirm_imu.get("espBootCount") is not None
+                            else (confirm_imu.get("bootCount") if confirm_imu else None)
+                        )
+                        confirm_reset_reason = (
+                            confirm_imu.get("espResetReason")
+                            if confirm_imu and confirm_imu.get("espResetReason") is not None
+                            else (confirm_imu.get("resetReason") if confirm_imu else None)
+                        )
+                        confirm_rtc_reset_reason = (
+                            confirm_imu.get("espRtcResetReason")
+                            if confirm_imu and confirm_imu.get("espRtcResetReason") is not None
+                            else (confirm_imu.get("rtcResetReason") if confirm_imu else None)
+                        )
 
                         if not is_hardware_reset:
-                            if confirm_seq is not None and last_motion_imu_seq is not None and confirm_seq < last_motion_imu_seq:
+                            if confirm_boot_cnt is not None and last_motion_boot_count is not None and confirm_boot_cnt > last_motion_boot_count:
+                                is_hardware_reset = True
+                                reset_msg = f"ESP32 bootCount incremented ({last_motion_boot_count} -> {confirm_boot_cnt}), resetReason: {confirm_reset_reason}, rtcResetReason: {confirm_rtc_reset_reason}"
+                            elif confirm_seq is not None and last_motion_imu_seq is not None and confirm_seq < last_motion_imu_seq:
                                 is_hardware_reset = True
                                 reset_msg = f"ESP32 sequence dropped ({last_motion_imu_seq} -> {confirm_seq})"
                             elif confirm_esp_ts is not None and last_motion_esp_ts is not None and confirm_esp_ts < last_motion_esp_ts:
                                 is_hardware_reset = True
                                 reset_msg = f"ESP32 uptime reset ({last_motion_esp_ts}us -> {confirm_esp_ts}us)"
-                            elif confirm_reset_cnt is not None and last_motion_reset_count is not None and confirm_reset_cnt > last_motion_reset_count:
-                                is_hardware_reset = True
-                                reset_msg = f"ESP32 resetCount incremented ({last_motion_reset_count} -> {confirm_reset_cnt})"
 
                         confirm_advancing = True
                         if confirm_seq is not None and last_motion_imu_seq is not None:
-                            if confirm_seq == last_motion_imu_seq and (time.time() - last_motion_imu_advance_time) > 0.250:
+                            if confirm_seq <= last_motion_imu_seq and (time.time() - last_motion_imu_advance_time) > 0.250:
+                                confirm_advancing = False
+                        elif confirm_esp_ts is not None and last_motion_esp_ts is not None:
+                            if confirm_esp_ts <= last_motion_esp_ts and (time.time() - last_motion_imu_advance_time) > 0.250:
                                 confirm_advancing = False
 
                         # 3. Always abort rather than automatically resume once zero motion is commanded
                         if is_hardware_reset:
                             abort_reason = f"ESP32 hardware reset detected during motion: {reset_msg}"
                             trial_report.watchdog_trips.append("ESP32_HARDWARE_RESET")
+                            trial_report.esp_boot_count_end = confirm_boot_cnt or cur_boot_cnt
+                            trial_report.esp_reset_reason_end = confirm_reset_reason or cur_reset_reason
+                            trial_report.esp_rtc_reset_reason_end = confirm_rtc_reset_reason or cur_rtc_reset_reason
                         elif (not is_confirm_fresh) or (not confirm_advancing):
                             fail_detail = freshness_msg if not is_fresh else (confirm_msg if not is_confirm_fresh else f"Non-advancing IMU sequence ({last_motion_imu_seq}) for {(time.time() - last_motion_imu_advance_time)*1000:.0f}ms")
                             abort_reason = f"Confirmed stale/non-advancing IMU data: {fail_detail}"
@@ -2421,6 +2478,21 @@ class PhysicalTestRunner:
                             settled_heading_error = final_settled_yaw - self.params.signed_target_deg
                             final_measurement_valid = True
                             controller.mark_settled(final_settled_yaw)
+                            trial_report.esp_boot_count_end = (
+                                final_endpoint_imu.get("espBootCount")
+                                if final_endpoint_imu.get("espBootCount") is not None
+                                else final_endpoint_imu.get("bootCount")
+                            )
+                            trial_report.esp_reset_reason_end = (
+                                final_endpoint_imu.get("espResetReason")
+                                if final_endpoint_imu.get("espResetReason") is not None
+                                else final_endpoint_imu.get("resetReason")
+                            )
+                            trial_report.esp_rtc_reset_reason_end = (
+                                final_endpoint_imu.get("espRtcResetReason")
+                                if final_endpoint_imu.get("espRtcResetReason") is not None
+                                else final_endpoint_imu.get("rtcResetReason")
+                            )
                             break
                 time.sleep(0.01)
 

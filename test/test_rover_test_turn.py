@@ -1124,6 +1124,45 @@ class TestIMUFreshnessAndPreMotionGate(unittest.TestCase):
         ok, msg = check_imu_freshness(dropped)
         self.assertFalse(ok)
 
+        # dataAgeMs: 0 alone without sequence or timestamp MUST BE REJECTED
+        sample_zero_age_no_id = {
+            "ok": True,
+            "rotVecValid": True,
+            "inResetRecovery": False,
+            "dataAgeMs": 0
+        }
+        ok, msg = check_imu_freshness(sample_zero_age_no_id)
+        self.assertFalse(ok)
+        self.assertIn("dataAgeMs:0 alone is insufficient", msg)
+
+        # dataAgeMs: 0 with advancing sequence is ACCEPTED
+        sample_zero_age_with_seq = {
+            "ok": True,
+            "rotVecValid": True,
+            "inResetRecovery": False,
+            "dataAgeMs": 0,
+            "sequence": 105
+        }
+        ok, msg = check_imu_freshness(sample_zero_age_with_seq, last_seq=104)
+        self.assertTrue(ok)
+
+        # Non-advancing sequence is REJECTED
+        ok, msg = check_imu_freshness(sample_zero_age_with_seq, last_seq=105)
+        self.assertFalse(ok)
+        self.assertIn("Non-advancing IMU sequence", msg)
+
+        # Non-advancing ESP timestamp is REJECTED
+        sample_with_ts = {
+            "ok": True,
+            "rotVecValid": True,
+            "inResetRecovery": False,
+            "dataAgeMs": 10,
+            "espTimestampUs": 1000000
+        }
+        ok, msg = check_imu_freshness(sample_with_ts, last_esp_ts_us=1000000)
+        self.assertFalse(ok)
+        self.assertIn("Non-advancing IMU ESP timestamp", msg)
+
     def test_waiting_for_advancing_fresh_sample(self):
         """wait_for_advancing_imu_sample waits for sequence advancement and low age."""
         mock_cockpit = MagicMock(spec=CockpitClient)
@@ -2719,6 +2758,82 @@ class TestFailFastSafeguardIntegration(unittest.TestCase):
         self.assertEqual(report.status, "ABORTED")
         self.assertIn("ESP32_HARDWARE_RESET", report.watchdog_trips)
         self.assertIn("ESP32 hardware reset detected during motion", report.abort_reason)
+        self.assertTrue(report.confirmed_final_zero_command)
+        self.assertTrue(report.confirmed_final_disarmed_state)
+
+    def test_esp_boot_count_increment_aborts_immediately(self):
+        """Runner must detect bootCount increment from ESP32, record reset reason, and abort immediately."""
+        params = TurnParameters(degrees=90.0, direction="cw", trials=1)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+
+        current_status = {"armed": True, "mode": 3, "autonomyState": "ACTIVE", "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.token = "test"
+        mock_cockpit.get_status.side_effect = lambda: dict(current_status)
+        mock_cockpit.get_autonomy_status.side_effect = lambda: {
+            "state": "ACTIVE",
+            "clampedAngular": 0.8,
+            "zeroHandshakeCount": 3,
+            "cmdSource": "ROS_AUTONOMY"
+        }
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        in_motion = [False]
+        def mock_send_cmd_vel(vx=0.0, wz=0.0, **kw):
+            if abs(wz) > 0.01:
+                in_motion[0] = True
+            return {"ok": True}
+        mock_cockpit.send_cmd_vel.side_effect = mock_send_cmd_vel
+        def mock_disarm():
+            current_status["armed"] = False
+            current_status["autonomyState"] = "DISABLED"
+            return {"ok": True}
+        def mock_set_source(s):
+            current_status["cmdSource"] = s
+            return {"ok": True, "source": s}
+        mock_cockpit.disarm_drive.side_effect = mock_disarm
+        mock_cockpit.disable_autonomy.side_effect = lambda: {"ok": True}
+        mock_cockpit.set_command_source.side_effect = mock_set_source
+        mock_ws.connected = True
+        mock_ws.recv_frames.return_value = []
+
+        q_start = {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        sample_1 = {
+            "ok": True, "rotVecValid": True, "inResetRecovery": False,
+            "sequence": 100, "espTimestampUs": 10000000,
+            "espBootCount": 5, "espResetReason": "POWERON_RESET", "espRtcResetReason": "POWERON_RESET (0x1)",
+            "dataAgeMs": 15, "orientation": q_start
+        }
+        # Controller brownout / reset occurred during motion: bootCount advanced from 5 to 6
+        sample_reboot = {
+            "ok": True, "rotVecValid": True, "inResetRecovery": False,
+            "sequence": 101, "espTimestampUs": 10005000,
+            "espBootCount": 6, "espResetReason": "BROWNOUT_RESET", "espRtcResetReason": "RTCWDT_BROWN_OUT_RESET (0xF)",
+            "dataAgeMs": 15, "orientation": q_start
+        }
+
+        stream = [sample_1, sample_reboot]
+        def mock_get_imu(*a, **k):
+            if not in_motion[0]:
+                return dict(sample_1)
+            return stream.pop(0) if stream else sample_reboot
+        mock_cockpit.get_imu.side_effect = mock_get_imu
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+
+        with patch("tools.rover_tests.runner.perform_zero_handshake", return_value=True):
+            with patch("tools.rover_tests.runner.wait_for_advancing_imu_sample", return_value=(True, sample_1, "ok")):
+                with patch.object(PhysicalTestRunner, "_assert_pre_motion_invariants", return_value=None):
+                    with patch("tools.rover_tests.runner.arm_and_verify_ready_armed", return_value=True):
+                        with patch("time.sleep", return_value=None):
+                            report = runner.execute_single_trial(1)
+
+        self.assertEqual(report.status, "ABORTED")
+        self.assertIn("ESP32_HARDWARE_RESET", report.watchdog_trips)
+        self.assertIn("ESP32 bootCount incremented (5 -> 6)", report.abort_reason)
+        self.assertIn("BROWNOUT_RESET", report.abort_reason)
+        self.assertEqual(report.esp_boot_count_start, 5)
+        self.assertEqual(report.esp_boot_count_end, 6)
+        self.assertEqual(report.esp_reset_reason_end, "BROWNOUT_RESET")
         self.assertTrue(report.confirmed_final_zero_command)
         self.assertTrue(report.confirmed_final_disarmed_state)
 

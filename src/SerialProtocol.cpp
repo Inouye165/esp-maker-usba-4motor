@@ -643,7 +643,7 @@ void SerialProtocol::sendTelemetry(
     extern MotionLimiter motionLimiter;
     extern MotorDriver motorDriver;
     
-    uint8_t normalData[24];
+    uint8_t normalData[32];
     memset(normalData, 0, sizeof(normalData));
     normalData[0] = commandManager.isNormalDriveArmed() ? 1 : 0;
     normalData[1] = (uint8_t)motorDriver.getMode();
@@ -669,7 +669,13 @@ void SerialProtocol::sendTelemetry(
     normalData[24] = commandManager.getClearanceMask();
     normalData[25] = (uint8_t)min(255UL, (unsigned long)(commandManager.getClearanceAgeMs() / 10));
     
-    writePacket(0x36, normalData, 26);
+    // Persistent ESP32 Boot and Reset Reason Telemetry
+    uint32_t bCount = getEspBootCount();
+    memcpy(&normalData[26], &bCount, 4);
+    normalData[30] = (uint8_t)getEspResetReason();
+    normalData[31] = (uint8_t)getEspRtc0ResetReason();
+    
+    writePacket(0x36, normalData, 32);
 
 #if !PRODUCTION_BINARY_ONLY_SERIAL
     // 10-Second Rate-Limited Packet TX Summary Diagnostic Output (non-blocking, capacity checked)

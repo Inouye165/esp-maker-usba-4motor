@@ -5,6 +5,18 @@
 // Brownout workaround headers
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
+#include <esp_system.h>
+#include <rom/rtc.h>
+
+// Persistent RTC reset reason & boot tracking across reboots
+RTC_DATA_ATTR static uint32_t s_rtcBootCount = 0;
+RTC_DATA_ATTR static uint32_t s_rtcResetReason = 0;
+RTC_DATA_ATTR static uint32_t s_rtcRtc0Reason = 0;
+RTC_DATA_ATTR static uint32_t s_rtcRtc1Reason = 0;
+
+uint32_t getEspBootCount() { return s_rtcBootCount; }
+uint32_t getEspResetReason() { return s_rtcResetReason; }
+uint32_t getEspRtc0ResetReason() { return s_rtcRtc0Reason; }
 
 // Unified Controller Components
 #include "RoverConfig.h"
@@ -385,13 +397,31 @@ static void updateChassisStallSupervisor(const ChassisCommand &activeCmd, bool i
 }
 
 void setup() {
+  // Capture ESP32 hardware reset reason and increment persistent RTC boot count
+  s_rtcBootCount++;
+  esp_reset_reason_t rst_reason = esp_reset_reason();
+  RESET_REASON rtc0 = rtc_get_reset_reason(0);
+  RESET_REASON rtc1 = rtc_get_reset_reason(1);
+  s_rtcResetReason = (uint32_t)rst_reason;
+  s_rtcRtc0Reason = (uint32_t)rtc0;
+  s_rtcRtc1Reason = (uint32_t)rtc1;
+
   // Disable brownout detector to prevent low-voltage reset loop
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
 
   // Initialize Serial & Protocol
   serialProtocol.begin();
-  delay(1000);
+  delay(100);
   
+  // Explicit hardware reset forensic banner (captured by Cockpit serial reader)
+  Serial.printf("\n[ESP32_BOOT] BootCount=%lu ResetReason=%lu (%s) ROM_Rst_CPU0=0x%lx (%s) ROM_Rst_CPU1=0x%lx (%s)\n",
+      (unsigned long)s_rtcBootCount,
+      (unsigned long)s_rtcResetReason, getEspResetReasonString(s_rtcResetReason),
+      (unsigned long)s_rtcRtc0Reason, getEspRtcResetReasonString(s_rtcRtc0Reason),
+      (unsigned long)s_rtcRtc1Reason, getEspRtcResetReasonString(s_rtcRtc1Reason)
+  );
+  delay(100);
+
   // Definitive firmware identification serial print
   LOG_SERIAL_PRINTLN("\n=================================");
   LOG_SERIAL_PRINTLN("Firmware Name: Maker-ESP32-Unified-Rover");

@@ -172,3 +172,40 @@ void saveTrimsRev(float left, float right) {
     preferences.putFloat("right_trim_rev", right);
     Serial.printf("[Config] Saved REV straight drive trims to NVS: Left=%.4f, Right=%.4f\n", left, right);
 }
+
+const char* getEspResetReasonString(uint32_t reason) {
+    switch (reason) {
+        case 1:  return "POWERON_RESET";
+        case 2:  return "EXT_PIN_RESET";
+        case 3:  return "SW_RESET";
+        case 4:  return "PANIC_RESET";
+        case 5:  return "INT_WDT_RESET";
+        case 6:  return "TASK_WDT_RESET";
+        case 7:  return "WDT_RESET";
+        case 8:  return "DEEPSLEEP_RESET";
+        case 9:  return "BROWNOUT_RESET";
+        case 10: return "SDIO_RESET";
+        default: return "UNKNOWN_RESET";
+    }
+}
+
+const char* getEspRtcResetReasonString(uint32_t reason) {
+    switch (reason) {
+        case 1:  return "POWERON_RESET (0x1)";
+        case 3:  return "SW_RESET (0x3)";
+        case 4:  return "OWDT_RESET (0x4)";
+        case 5:  return "DEEPSLEEP_RESET (0x5)";
+        case 6:  return "SDIO_RESET (0x6)";
+        case 7:  return "TG0WDT_SYS_RESET (0x7)";
+        case 8:  return "TG1WDT_SYS_RESET (0x8)";
+        case 9:  return "RTCWDT_SYS_RESET (0x9)";
+        case 10: return "INTRUSION_RESET (0xA)";
+        case 11: return "TGWDT_CPU_RESET (0xB)";
+        case 12: return "SW_CPU_RESET (0xC)";
+        case 13: return "RTCWDT_CPU_RESET (0xD)";
+        case 14: return "EXT_CPU_RESET (0xE)";
+        case 15: return "RTCWDT_BROWN_OUT_RESET (0xF)";
+        case 16: return "RTCWDT_RTC_RESET (0x10)";
+        default: return "UNKNOWN_RTC_RESET";
+    }
+}
