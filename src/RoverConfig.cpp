@@ -20,7 +20,8 @@ bool USE_UNIFORM_BREAKAWAY = true;
 bool WHEEL_BALANCE_ENABLED = false;
 bool DYNAMIC_BRAKE_ENABLED = true;
 uint16_t DYNAMIC_BRAKE_DURATION_MS = 100; // 100 ms bounded brake pulse
-float DYNAMIC_BRAKE_MAX_TRIGGER_RADPS = 0.35f; // Triggers in low-speed stopping window
+float DYNAMIC_BRAKE_MAX_TRIGGER_MPS = 0.35f;   // Linear speed trigger threshold (m/s)
+float DYNAMIC_BRAKE_MAX_TRIGGER_RADPS = 0.80f; // Angular speed trigger threshold (rad/s)
 
 // Default calibrations:
 // SS6625E motor driver board on the Maker Pro generally starts rotating wheels around 40-60 PWM

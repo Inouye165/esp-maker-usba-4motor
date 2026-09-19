@@ -618,8 +618,8 @@ void runMotionControlLoop() {
     // Target is zero (stopping or settled)
     if (DYNAMIC_BRAKE_ENABLED && commandManager.isNormalDriveArmed() && motorDriver.getMode() == MotorOutputMode::NORMAL_DRIVE) {
       if (brakePulseState == BrakePulseState::DRIVING) {
-        // Transition to stop: verify eligibility based on configured max trigger speed
-        bool eligibleForBrake = (lastActiveAngSpeed <= DYNAMIC_BRAKE_MAX_TRIGGER_RADPS) && (lastActiveLinSpeed <= DYNAMIC_BRAKE_MAX_TRIGGER_RADPS);
+        // Transition to stop: verify eligibility based on configured max trigger speeds (rad/s and m/s)
+        bool eligibleForBrake = (lastActiveAngSpeed <= DYNAMIC_BRAKE_MAX_TRIGGER_RADPS) && (lastActiveLinSpeed <= DYNAMIC_BRAKE_MAX_TRIGGER_MPS);
         if (eligibleForBrake) {
           brakePulseState = BrakePulseState::BRAKING;
           brakePulseStartMs = nowMs;

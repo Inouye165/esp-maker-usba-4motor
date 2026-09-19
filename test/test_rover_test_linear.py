@@ -299,6 +299,7 @@ class TestLinearCliAndDryRun(unittest.TestCase):
                 "wheelBalancing": False,
                 "dynamicBraking": True,
                 "brakeDurationMs": 120,
+                "maxTriggerSpeedMps": 0.25,
                 "maxTriggerSpeed": 0.25
             }
         }
@@ -339,6 +340,7 @@ class TestLinearCliAndDryRun(unittest.TestCase):
         self.assertTrue(trial.dynamic_braking_enabled)
         self.assertEqual(trial.dynamic_brake_duration_ms, 120)
         self.assertEqual(trial.dynamic_brake_max_speed, 0.25)
+        self.assertEqual(trial.dynamic_brake_max_speed_mps, 0.25)
         self.assertTrue(trial.anti_stall_confirmed)
 
         if os.path.exists("test_reports_tmp"):

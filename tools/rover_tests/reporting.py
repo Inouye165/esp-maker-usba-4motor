@@ -178,6 +178,7 @@ class TrialReport:
     dynamic_braking_enabled: bool = False
     dynamic_brake_duration_ms: Optional[int] = None
     dynamic_brake_max_speed: Optional[float] = None
+    dynamic_brake_max_speed_mps: Optional[float] = None
     anti_stall_confirmed: bool = False
     stopping_advance_deg: float = 0.0
     actuation_states_observed: List[str] = field(default_factory=list)
@@ -206,6 +207,7 @@ class MultiTrialSuiteReport:
     dynamic_braking_enabled: bool = False
     dynamic_brake_duration_ms: Optional[int] = None
     dynamic_brake_max_speed: Optional[float] = None
+    dynamic_brake_max_speed_mps: Optional[float] = None
     anti_stall_confirmed: bool = False
     stopping_advance_deg: float = 0.0
     trials: List[TrialReport] = field(default_factory=list)
@@ -341,8 +343,9 @@ class ReportGenerator:
         md.append(f"| Production Wheel Balancing | {bal_str} | Live Controller Readback (`/api/drive/config`) | Active straight-line tick synchronization |")
         if report.dynamic_braking_enabled:
             dur = report.dynamic_brake_duration_ms or 100
-            spd = report.dynamic_brake_max_speed or 0.35
-            brake_str = f"`ACTIVE ({dur}ms H-bridge brake pulse, max {spd:.2f} rad/s)`"
+            spd = report.dynamic_brake_max_speed_mps or report.dynamic_brake_max_speed or 0.35
+            unit = "m/s" if report.test_type == "linear" else "rad/s"
+            brake_str = f"`ACTIVE ({dur}ms H-bridge brake pulse, max {spd:.2f} {unit})`"
         else:
             brake_str = "`DISABLED`"
         md.append(f"| Production Dynamic Braking | {brake_str} | Live Controller Readback (`/api/drive/config`) | Low-side H-bridge dynamic brake state (no motor reversal) |")

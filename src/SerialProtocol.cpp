@@ -305,11 +305,11 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
                     DYNAMIC_BRAKE_DURATION_MS = (uint16_t)payloadBuf[2];
                 }
                 if (extLen >= 4 && payloadBuf[3] > 0) {
-                    DYNAMIC_BRAKE_MAX_TRIGGER_RADPS = (float)payloadBuf[3] / 100.0f;
+                    DYNAMIC_BRAKE_MAX_TRIGGER_MPS = (float)payloadBuf[3] / 100.0f;
                 }
                 preferences.putBool("dyn_brake", DYNAMIC_BRAKE_ENABLED);
-                LOG_SERIAL_PRINTF("[DriveConfig] Updated & Persisted: balance=%d, brake=%d, duration=%d ms, max_trig=%.2f rad/s\n",
-                    WHEEL_BALANCE_ENABLED ? 1 : 0, DYNAMIC_BRAKE_ENABLED ? 1 : 0, DYNAMIC_BRAKE_DURATION_MS, DYNAMIC_BRAKE_MAX_TRIGGER_RADPS);
+                LOG_SERIAL_PRINTF("[DriveConfig] Updated & Persisted: balance=%d, brake=%d, duration=%d ms, max_trig=%.2f m/s\n",
+                    WHEEL_BALANCE_ENABLED ? 1 : 0, DYNAMIC_BRAKE_ENABLED ? 1 : 0, DYNAMIC_BRAKE_DURATION_MS, DYNAMIC_BRAKE_MAX_TRIGGER_MPS);
             }
             break;
         }

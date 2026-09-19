@@ -116,6 +116,7 @@ const uint32_t FAULT_TIMEOUT_MS = 1000;    // Fully disable motor output trigger
 extern bool WHEEL_BALANCE_ENABLED;
 extern bool DYNAMIC_BRAKE_ENABLED;
 extern uint16_t DYNAMIC_BRAKE_DURATION_MS;
+extern float DYNAMIC_BRAKE_MAX_TRIGGER_MPS;
 extern float DYNAMIC_BRAKE_MAX_TRIGGER_RADPS;
 
 // Load/Save calibration settings to NVS

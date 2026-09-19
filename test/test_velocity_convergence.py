@@ -301,13 +301,13 @@ class TestPersistentDynamicBrakingConfig(unittest.TestCase):
 
     def test_braking_triggers_at_0p20_mps(self):
         """Transitioning from 0.20 m/s to zero command must qualify for dynamic brake pulse."""
-        # Max trigger speed is 0.35 m/s. 0.20 m/s is within the stopping window.
-        max_trigger_speed = 0.35
+        # Max trigger speed threshold is 0.35 m/s. 0.20 m/s is within the stopping window.
+        max_trigger_speed_mps = 0.35
         last_active_linear_speed = 0.20
         last_active_angular_speed = 0.0
 
-        eligible_for_brake = (last_active_angular_speed <= max_trigger_speed) and \
-                             (last_active_linear_speed <= max_trigger_speed)
+        eligible_for_brake = (last_active_angular_speed <= 0.80) and \
+                             (last_active_linear_speed <= max_trigger_speed_mps)
 
         self.assertTrue(eligible_for_brake, "0.20 m/s linear travel must be eligible for dynamic braking on stop")
 

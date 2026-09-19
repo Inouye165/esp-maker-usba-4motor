@@ -194,12 +194,7 @@ class PhysicalTestRunner:
         cleanup_st = disarm_and_stop(self.cockpit, self.ws, verbose=verbose)
         self._last_cleanup_state = cleanup_st
 
-        # Always restore drive configuration to baseline (false/true) on disarm/cleanup
-        if not self.params.dry_run:
-            try:
-                self.cockpit.configure_drive(wheel_balancing=False, dynamic_braking=True)
-            except Exception:
-                pass
+        # Disarm, zero, and disable autonomy only (do not touch persistent drive configuration)
 
         confirmed = (
             cleanup_st.get("armed") is False
@@ -508,8 +503,17 @@ class PhysicalTestRunner:
         if not self.params.dry_run:
             # If user explicitly requested drive parameter overrides via CLI flags, apply them
             if self.params.enable_balancing is not None or self.params.enable_braking is not None:
-                target_bal = bool(self.params.enable_balancing) if self.params.enable_balancing is not None else False
-                target_brk = bool(self.params.enable_braking) if self.params.enable_braking is not None else True
+                # Query current live config first so unspecified flags remain untouched
+                current_cfg = {}
+                try:
+                    cfg_pre = self.cockpit.get_drive_config()
+                    if cfg_pre.get("ok"):
+                        current_cfg = cfg_pre.get("config", {})
+                except Exception:
+                    pass
+
+                target_bal = bool(self.params.enable_balancing) if self.params.enable_balancing is not None else current_cfg.get("wheelBalancing", False)
+                target_brk = bool(self.params.enable_braking) if self.params.enable_braking is not None else current_cfg.get("dynamicBraking", True)
                 try:
                     self.cockpit.configure_drive(
                         wheel_balancing=target_bal,
@@ -542,6 +546,7 @@ class PhysicalTestRunner:
                 "wheelBalancing": bool(self.params.enable_balancing) if self.params.enable_balancing is not None else False,
                 "dynamicBraking": bool(self.params.enable_braking) if self.params.enable_braking is not None else True,
                 "brakeDurationMs": 100,
+                "maxTriggerSpeedMps": 0.35,
                 "maxTriggerSpeed": 0.35,
             }
             anti_stall_confirmed = True
@@ -549,12 +554,13 @@ class PhysicalTestRunner:
         confirmed_bal = bool(live_cfg.get("wheelBalancing", False))
         confirmed_brk = bool(live_cfg.get("dynamicBraking", True))
         confirmed_dur = int(live_cfg.get("brakeDurationMs", 100))
-        confirmed_max_spd = float(live_cfg.get("maxTriggerSpeed", 0.35))
+        confirmed_max_spd = float(live_cfg.get("maxTriggerSpeedMps", live_cfg.get("maxTriggerSpeed", 0.35)))
 
         trial_report.wheel_balancing_enabled = confirmed_bal
         trial_report.dynamic_braking_enabled = confirmed_brk
         trial_report.dynamic_brake_duration_ms = confirmed_dur
         trial_report.dynamic_brake_max_speed = confirmed_max_spd
+        trial_report.dynamic_brake_max_speed_mps = confirmed_max_spd
         trial_report.anti_stall_confirmed = anti_stall_confirmed
 
         # Step 1: Inter-Trial Approval
