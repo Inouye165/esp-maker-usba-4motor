@@ -2451,6 +2451,85 @@ class TestSettlingInstrumentationAndTelemetry(unittest.TestCase):
         self.assertEqual(report.final_settled_gyro_angle_deg, report.gyro_angle_at_zero_cmd_deg)
 
 
+class TestFailFastSafeguardIntegration(unittest.TestCase):
+    """
+    Verifies that the runner aborts early via the fail-fast safeguard when
+    wheels remain stopped while commanded for >= 1.5s, well before 8 seconds.
+    """
+
+    def test_fail_fast_safeguard_aborts_and_records_breakout(self):
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1, dry_run=False)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+        mock_ws.connected = True
+
+        mock_cockpit.get_status.return_value = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+        mock_cockpit.get_autonomy_status.return_value = {"state": "DISABLED", "zeroHandshakeCount": 0, "cmdSource": "NONE"}
+        mock_cockpit.get_imu.return_value = {
+            "ok": True, "rotVecValid": True, "dataAgeMs": 10,
+            "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "gyro": {"z": 0.0},
+            "orientation": {"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0}
+        }
+        mock_cockpit.get_encoders.return_value = {
+            "ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}
+        }
+        def mock_send_cmd(*args, **kwargs):
+            mock_cockpit.get_autonomy_status.return_value = {"state": "ACTIVE", "clampedAngular": 0.8}
+            mock_cockpit.get_status.return_value = {"armed": True, "mode": 3, "autonomyState": "ACTIVE", "cmdSource": "ROS_AUTONOMY"}
+            return {"ok": True}
+        mock_cockpit.send_cmd_vel.side_effect = mock_send_cmd
+
+        # Sequence of frames: initial stiction boost, then continuous stall
+        pid_frame_boost = {
+            "type": "pid_diagnostic",
+            "actuationState": "DRIVE",
+            "m1": {"targetRadps": -2.35, "measuredRadps": 0.0, "stictionState": "STICTION_BOOST"},
+            "m2": {"targetRadps":  2.35, "measuredRadps": 0.0, "stictionState": "STICTION_BOOST"},
+            "m3": {"targetRadps": -2.35, "measuredRadps": 0.0, "stictionState": "STICTION_BOOST"},
+            "m4": {"targetRadps":  2.35, "measuredRadps": 0.0, "stictionState": "STICTION_BOOST"},
+        }
+        pid_frame_stalled = {
+            "type": "pid_diagnostic",
+            "actuationState": "DRIVE",
+            "m1": {"targetRadps": -2.35, "measuredRadps": 0.0, "stictionState": "STICTION_KINETIC"},
+            "m2": {"targetRadps":  2.35, "measuredRadps": 0.0, "stictionState": "STICTION_KINETIC"},
+            "m3": {"targetRadps": -2.35, "measuredRadps": 0.0, "stictionState": "STICTION_KINETIC"},
+            "m4": {"targetRadps":  2.35, "measuredRadps": 0.0, "stictionState": "STICTION_KINETIC"},
+        }
+
+        # Return empty list for pre-motion drain, then boost frame, then stalled frames
+        frame_queue = [[]] + [[pid_frame_boost]] + [[pid_frame_stalled] for _ in range(200)]
+        mock_ws.recv_frames.side_effect = lambda: frame_queue.pop(0) if frame_queue else [pid_frame_stalled]
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+
+        def mock_handshake(*args, **kwargs):
+            mock_cockpit.get_status.return_value = {"armed": False, "autonomyState": "READY_DISARMED", "cmdSource": "NONE"}
+            mock_cockpit.get_autonomy_status.return_value = {"state": "READY_DISARMED", "zeroHandshakeCount": 3, "cmdSource": "NONE"}
+            return True
+
+        with patch("tools.rover_tests.runner.perform_zero_handshake", side_effect=mock_handshake):
+            with patch("tools.rover_tests.runner.wait_for_advancing_imu_sample", return_value=(True, mock_cockpit.get_imu(), "ok")):
+                with patch.object(PhysicalTestRunner, "_assert_pre_motion_invariants", return_value=None):
+                    with patch("tools.rover_tests.runner.arm_and_verify_ready_armed", return_value=True):
+                        # Fast-forward time inside the control loop
+                        t_sim = [1000.0]
+                        def mock_time():
+                            t_sim[0] += 0.05
+                            return t_sim[0]
+
+                        with patch("time.time", side_effect=mock_time):
+                            with patch("time.sleep", return_value=None):
+                                report = runner.execute_single_trial(1)
+
+        self.assertEqual(report.status, "ABORTED")
+        self.assertIn("Fail-fast safeguard triggered", report.abort_reason)
+        self.assertIn("WHEEL_STALL_FAILSAFE", report.watchdog_trips)
+        self.assertEqual(report.breakout_event_count, 1, "Must accurately record breakout event count on abort")
+        self.assertTrue(report.confirmed_final_zero_command)
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -843,12 +843,28 @@ class PhysicalTestRunner:
                                             ws_buf["is_currently_stopped"] = True
                                             ws_buf["stopped_entry_time"] = now
                                             ws_buf["stopped_events"] += 1
+                                        else:
+                                            # Continuous stopped-while-commanded dwell check (fail-fast safeguard)
+                                            stopped_dwell = now - (ws_buf["stopped_entry_time"] or now)
+                                            if stopped_dwell >= 1.5:  # Reacts in 1.5s, well before 8 seconds
+                                                abort_reason = (
+                                                    f"Fail-fast safeguard triggered: wheel {w_id} stopped while commanded "
+                                                    f"for {stopped_dwell:.2f}s (target={tgt_val:.2f} rad/s, meas={meas_val:.2f} rad/s)"
+                                                )
+                                                trial_report.watchdog_trips.append("WHEEL_STALL_FAILSAFE")
+                                                break
                                     else:
                                         if ws_buf["is_currently_stopped"]:
                                             dwell = max(0.02, now - (ws_buf["stopped_entry_time"] or now))
                                             ws_buf["stopped_duration_s"] += dwell
                                             ws_buf["is_currently_stopped"] = False
                                             ws_buf["stopped_entry_time"] = None
+
+                                if abort_reason:
+                                    break
+
+                        if abort_reason:
+                            break
 
                         if breakout_start_time and any(f.get(w, {}).get("stictionState") != "STICTION_BOOST" for w in ["m1", "m2", "m3", "m4"] for f in frames if f.get("type") == "pid_diagnostic"):
                             total_breakout_dwell_ms += (now - breakout_start_time) * 1000.0
@@ -919,6 +935,8 @@ class PhysicalTestRunner:
             self._validate_wheel_forensics_consistency(trial_report, wheel_metrics, wheel_samples)
             trial_report.status = "ABORTED"
             trial_report.abort_reason = abort_reason
+            trial_report.breakout_event_count = breakout_count
+            trial_report.breakout_dwell_time_ms_total = total_breakout_dwell_ms
             print(f"[TRIAL ABORTED] {abort_reason}")
             cleanup_st = self.cleanup()
             trial_report.confirmed_final_zero_command = True

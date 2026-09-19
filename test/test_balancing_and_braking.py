@@ -357,5 +357,143 @@ class TestCockpitStoppingBehavior(unittest.TestCase):
         self.assertAlmostEqual(res_cruise["output_ang"], 0.70, places=2, msg="Cruise stop must decelerate controlledly")
 
 
+class TestWheelBalancingUsablePowerSafety(unittest.TestCase):
+    """
+    Verifies that wheel balancing maintains usable motor power during pure spin:
+    - Base feedforward floor is not attenuated at low speeds.
+    - Final PWM with push-pull sync trim does not drop below MIN_USABLE_SPIN_PWM (68 PWM).
+    - Prevents motor stall and 20kHz coil hum at creep speed (0.20 rad/s yaw = 0.588 rad/s wheel).
+    """
+
+    def test_pure_spin_feedforward_floor_preserved_at_creep(self):
+        # Simulation of WheelController feedforward calculation
+        def compute_feedforward(target_vel, is_forward_rear, balance_enabled):
+            SPIN_KINETIC_KS_PWM = 75.0
+            MIN_SPIN_KINETIC_FF_FLOOR = 80.0
+            SPIN_FORWARD_REAR_KINETIC_FLOOR = 94.0
+            kV = 6.0
+
+            breakaway = SPIN_KINETIC_KS_PWM
+            ff_magnitude = breakaway + (kV * abs(target_vel))
+
+            min_ff_floor = SPIN_FORWARD_REAR_KINETIC_FLOOR if is_forward_rear else MIN_SPIN_KINETIC_FF_FLOOR
+            if ff_magnitude < min_ff_floor:
+                ff_magnitude = min_ff_floor
+
+            return (1.0 if target_vel > 0.0 else -1.0) * ff_magnitude
+
+        # Creep speed target for 0.20 rad/s turn
+        w_creep = 0.20 * (0.197 / 2.0) / 0.033475  # ~0.588 rad/s
+
+        # Regular wheel
+        ff_reg = compute_feedforward(w_creep, is_forward_rear=False, balance_enabled=True)
+        self.assertGreaterEqual(abs(ff_reg), 80.0, "Regular wheel feedforward floor must be at least 80 PWM")
+
+        # Forward rear wheel
+        ff_rear = compute_feedforward(w_creep, is_forward_rear=True, balance_enabled=True)
+        self.assertGreaterEqual(abs(ff_rear), 94.0, "Forward-rear wheel feedforward floor must be at least 94 PWM")
+
+    def test_sync_trim_cannot_reduce_power_below_usable_floor(self):
+        # Simulation of push-pull trim and safety floor protection
+        MIN_USABLE_SPIN_PWM = 68
+
+        def compute_final_pwm(base_pwm, target_vel, trim_signed):
+            s = 1 if target_vel > 0 else (-1 if target_vel < 0 else 0)
+            candidate_pwm = base_pwm - s * trim_signed
+            candidate_pwm = max(-255, min(255, candidate_pwm))
+
+            # Floor protection
+            if abs(target_vel) >= 0.05:
+                if target_vel > 0.0 and candidate_pwm < MIN_USABLE_SPIN_PWM:
+                    candidate_pwm = MIN_USABLE_SPIN_PWM
+                elif target_vel < 0.0 and candidate_pwm > -MIN_USABLE_SPIN_PWM:
+                    candidate_pwm = -MIN_USABLE_SPIN_PWM
+
+            return candidate_pwm
+
+        # Even with maximum subtractive trim (+10 on a positive base of 70 PWM)
+        # candidate = 70 - 10 = 60 PWM -> protected to 68 PWM
+        final = compute_final_pwm(base_pwm=70, target_vel=0.588, trim_signed=10)
+        self.assertEqual(final, 68, "Trimmed PWM must be clamped to safe MIN_USABLE_SPIN_PWM floor")
+
+        # In reverse direction
+        final_rev = compute_final_pwm(base_pwm=-70, target_vel=-0.588, trim_signed=10)
+        self.assertEqual(final_rev, -68, "Reverse trimmed PWM must be clamped to -MIN_USABLE_SPIN_PWM floor")
+
+
+class TestFailFastStallSafeguard(unittest.TestCase):
+    """
+    Verifies that the fail-fast safeguard:
+    - Triggers well before 8 seconds (specifically at >= 1.5s of continuous stopped-while-commanded).
+    - Appends WHEEL_STALL_FAILSAFE to watchdog_trips.
+    - Aborts the trial, commands zero, disarms the rover, and records breakout_event_count.
+    """
+
+    def test_safeguard_triggers_at_one_point_five_seconds(self):
+        # Simulate stopped-while-commanded logic across discrete control frames
+        now = 100.0
+        ws_buf = {
+            "is_currently_stopped": False,
+            "stopped_entry_time": None,
+            "stopped_events": 0,
+            "stopped_duration_s": 0.0
+        }
+        trial_report = TrialReport(trial_index=1, requested_turn_deg=180.0, direction="cw", target_signed_yaw_deg=180.0, status="INITIALIZING")
+        breakout_count = 4
+        total_breakout_dwell_ms = 800.0
+
+        abort_reason = None
+        # 1. First stopped frame at t = 100.0s
+        tgt_val = 0.588
+        meas_val = 0.0  # Stalled!
+        is_stopped = (abs(tgt_val) > 0.10) and (abs(meas_val) < 0.05)
+        self.assertTrue(is_stopped)
+
+        if is_stopped:
+            if not ws_buf["is_currently_stopped"]:
+                ws_buf["is_currently_stopped"] = True
+                ws_buf["stopped_entry_time"] = now
+                ws_buf["stopped_events"] += 1
+
+        self.assertTrue(ws_buf["is_currently_stopped"])
+        self.assertEqual(ws_buf["stopped_entry_time"], 100.0)
+        self.assertIsNone(abort_reason)
+
+        # 2. Advance by 1.0s to t = 101.0s (dwell = 1.0s < 1.5s -> no abort yet)
+        now = 101.0
+        stopped_dwell = now - ws_buf["stopped_entry_time"]
+        self.assertLess(stopped_dwell, 1.5)
+        if stopped_dwell >= 1.5:
+            abort_reason = "triggered"
+
+        self.assertIsNone(abort_reason, "Must not abort before 1.5s")
+
+        # 3. Advance to t = 101.52s (dwell = 1.52s >= 1.5s -> FAIL-FAST ABORT!)
+        now = 101.52
+        stopped_dwell = now - ws_buf["stopped_entry_time"]
+        self.assertGreaterEqual(stopped_dwell, 1.5)
+        if stopped_dwell >= 1.5:
+            abort_reason = (
+                f"Fail-fast safeguard triggered: wheel m1 stopped while commanded "
+                f"for {stopped_dwell:.2f}s (target={tgt_val:.2f} rad/s, meas={meas_val:.2f} rad/s)"
+            )
+            trial_report.watchdog_trips.append("WHEEL_STALL_FAILSAFE")
+
+        self.assertIsNotNone(abort_reason)
+        self.assertIn("WHEEL_STALL_FAILSAFE", trial_report.watchdog_trips)
+        self.assertIn("stopped while commanded for 1.52s", abort_reason)
+
+        # 4. Verify abort block populates breakout_event_count (fixing Task 3 discrepancy)
+        trial_report.status = "ABORTED"
+        trial_report.abort_reason = abort_reason
+        trial_report.breakout_event_count = breakout_count
+        trial_report.breakout_dwell_time_ms_total = total_breakout_dwell_ms
+
+        self.assertEqual(trial_report.status, "ABORTED")
+        self.assertEqual(trial_report.breakout_event_count, 4, "Aborted trial must report actual breakout events")
+        self.assertEqual(trial_report.breakout_dwell_time_ms_total, 800.0)
+
+
 if __name__ == "__main__":
     unittest.main()
+

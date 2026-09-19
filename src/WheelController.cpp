@@ -213,12 +213,7 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
     float breakaway;
     if (isSpinManeuver) {
         // Dedicated pure-spin kinetic feedforward base (75.0 PWM)
-        if (WHEEL_BALANCE_ENABLED && abs(targetVel) < 1.5f) {
-            float speedFactor = constrain(abs(targetVel) / 1.5f, 0.45f, 1.0f);
-            breakaway = SPIN_KINETIC_KS_PWM * speedFactor;
-        } else {
-            breakaway = SPIN_KINETIC_KS_PWM;
-        }
+        breakaway = SPIN_KINETIC_KS_PWM;
     } else {
         breakaway = (targetVel > 0.0f) ? (float)motorCalibrations[index].forwardBreakawayPwm
                                        : (float)motorCalibrations[index].reverseBreakawayPwm;
@@ -231,10 +226,6 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
         if (isSpinManeuver) {
             // Forward-driving rear wheel receives 94 PWM floor; others receive 80 PWM floor
             minFfFloor = isForwardRearWheel ? SPIN_FORWARD_REAR_KINETIC_FLOOR : MIN_SPIN_KINETIC_FF_FLOOR;
-            if (WHEEL_BALANCE_ENABLED && abs(targetVel) < 1.5f) {
-                float speedFactor = constrain(abs(targetVel) / 1.5f, 0.50f, 1.0f);
-                minFfFloor = minFfFloor * speedFactor;
-            }
         } else {
             minFfFloor = 45.0f;
         }
@@ -426,7 +417,7 @@ void WheelController::update(const float *measuredVelocities, const int32_t *tic
         lastSpinSyncTrimRight = 0;
     } else {
         float deadband = WHEEL_BALANCE_ENABLED ? 0.08f : 0.15f;
-        int trimMax    = WHEEL_BALANCE_ENABLED ? 18 : 8;
+        int trimMax    = WHEEL_BALANCE_ENABLED ? 10 : 8;
         int deltaMax   = WHEEL_BALANCE_ENABLED ? 2 : 1;
 
         // --- Left Side Sync Trim (M1 / LF [0] vs M3 / LR [2]) ---
@@ -485,6 +476,21 @@ void WheelController::update(const float *measuredVelocities, const int32_t *tic
 
         finalPwms[1] = constrain(basePwms[1] - s1 * lastSpinSyncTrimRight, -255, 255);
         finalPwms[3] = constrain(basePwms[3] + s3 * lastSpinSyncTrimRight, -255, 255);
+    }
+
+    // Usable power floor protection: ensure push-pull trim never reduces kinetic motor power below stall threshold
+    if (isSpinManeuver) {
+        const int MIN_USABLE_SPIN_PWM = 68; // Empirically safe floor preventing tire-scrub stall during pure spin
+        for (int i = 0; i < 4; i++) {
+            float t = controllers[i].getTarget();
+            if (abs(t) >= 0.05f && controllers[i].getStictionState() == STICTION_KINETIC) {
+                if (t > 0.0f && finalPwms[i] < MIN_USABLE_SPIN_PWM) {
+                    finalPwms[i] = MIN_USABLE_SPIN_PWM;
+                } else if (t < 0.0f && finalPwms[i] > -MIN_USABLE_SPIN_PWM) {
+                    finalPwms[i] = -MIN_USABLE_SPIN_PWM;
+                }
+            }
+        }
     }
 
     // Write final PWM outputs to driver and set diagnostic telemetry
