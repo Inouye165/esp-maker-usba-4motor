@@ -2996,6 +2996,152 @@ class TestFirmwareStallWatchdogAndFaultClearRegressions(unittest.TestCase):
                 self.assertEqual(rec["drivetrainMode"], 3)
                 self.assertTrue(rec["valid"])
 
+    def test_cli_repetitions_and_braking_options(self):
+        """Verify --repetitions, --reps, -r and --braking CLI arguments and parameter syncing."""
+        from tools.rover_tests.cli import build_parser
+
+        parser = build_parser()
+        args1 = parser.parse_args(["turn", "--degrees", "90", "--repetitions", "4", "--braking"])
+        self.assertEqual(args1.repetitions, 4)
+        self.assertTrue(args1.enable_braking)
+
+        args2 = parser.parse_args(["turn", "--degrees", "180", "--reps", "8"])
+        self.assertEqual(args2.repetitions, 8)
+
+        args3 = parser.parse_args(["turn", "--degrees", "45", "-r", "6"])
+        self.assertEqual(args3.repetitions, 6)
+
+        # TurnParameters syncing
+        p1 = TurnParameters(degrees=90.0, repetitions=4, enable_braking=True)
+        p1.validate()
+        self.assertEqual(p1.trials, 4)
+        self.assertEqual(p1.stopping_advance_deg, 0.5)
+
+        p2 = TurnParameters(degrees=90.0, trials=3)
+        p2.validate()
+        self.assertEqual(p2.trials, 3)
+
+    def _make_mock_clients(self, target_deg=90.0):
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+        mock_ws.connected = True
+        mock_ws.authenticate.return_value = True
+        mock_cockpit.token = "test-operator-token"
+
+        base_imu = {
+            "ok": True,
+            "rotVecValid": True,
+            "inResetRecovery": False,
+            "dataAgeMs": 15,
+            "orientationSource": "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC",
+            "gyro": {"z": 0.001}
+        }
+        imu_0 = dict(base_imu, orientation={"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0})
+        rad = math.radians(target_deg)
+        w = math.cos(rad / 2.0)
+        z = math.sin(rad / 2.0)
+        imu_target = dict(base_imu, orientation={"w": w, "x": 0.0, "y": 0.0, "z": z})
+
+        current_status = {
+            "armed": False,
+            "mode": 0,
+            "autonomyState": "DISABLED",
+            "cmdSource": "NONE"
+        }
+
+        mock_cockpit.get_imu.side_effect = itertools.chain([imu_0] * 8, itertools.repeat(imu_target))
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        mock_cockpit.get_status.side_effect = lambda: dict(current_status)
+        mock_cockpit.enable_autonomy.return_value = {"ok": True}
+        mock_cockpit.arm_drive.return_value = {"ok": True}
+        mock_cockpit.disarm_drive.return_value = {"ok": True}
+        mock_cockpit.disable_autonomy.return_value = {"ok": True}
+        mock_cockpit.set_command_source.return_value = {"ok": True}
+        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
+        mock_cockpit.configure_drive.return_value = {"ok": True}
+        mock_ws.recv_frames.return_value = []
+
+        return mock_cockpit, mock_ws
+
+    def test_phase_headings_tracking_in_trial(self):
+        """Verify that execute_single_trial captures starting, ending, and per-phase headings."""
+        params = TurnParameters(
+            degrees=90.0,
+            direction="cw",
+            trials=1,
+            dry_run=True,
+            enable_braking=True,
+            settle_seconds=0.5
+        )
+        mock_cockpit, mock_ws = self._make_mock_clients(target_deg=90.0)
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        report = runner.execute_single_trial(1, cumulative_continuous_heading=10.0)
+
+        self.assertIsNotNone(report.start_heading_raw_deg)
+        self.assertIsNotNone(report.final_settled_raw_heading_deg)
+        self.assertIsNotNone(report.start_heading_continuous_deg)
+        self.assertIsNotNone(report.final_settled_continuous_heading_deg)
+        self.assertEqual(report.start_heading_continuous_deg, 10.0)
+        self.assertEqual(report.final_settled_continuous_heading_deg, 100.0)
+
+        # Phase breakdown
+        self.assertTrue(len(report.phase_headings) >= 2)
+        phase_names = [p["phase_name"] for p in report.phase_headings]
+        self.assertIn("CRUISE", phase_names)
+        self.assertIn("CREEP", phase_names)
+        self.assertIn("BRAKE_COAST", phase_names)
+
+        for ph in report.phase_headings:
+            self.assertIn("start_abs_deg", ph)
+            self.assertIn("end_abs_deg", ph)
+            self.assertIn("start_rel_deg", ph)
+            self.assertIn("end_rel_deg", ph)
+            self.assertIn("delta_deg", ph)
+            self.assertIn("duration_s", ph)
+
+    def test_multi_repetition_trajectory_and_totals(self):
+        """Verify multi-repetition suite execution, trajectory table, and cumulative totals."""
+        params = TurnParameters(
+            degrees=90.0,
+            direction="cw",
+            repetitions=4,
+            dry_run=True,
+            enable_braking=True,
+            settle_seconds=0.5
+        )
+        mock_cockpit, mock_ws = self._make_mock_clients(target_deg=90.0)
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+        suite = runner.execute_suite()
+
+        self.assertEqual(suite.repetitions, 4)
+        self.assertEqual(len(suite.repetition_trajectory), 4)
+        self.assertEqual(suite.total_cumulative_commanded_deg, 360.0)
+        self.assertEqual(suite.total_cumulative_measured_deg, 360.0)
+        self.assertEqual(suite.total_cumulative_error_deg, 0.0)
+
+        # Verify step trajectory continuity
+        step1 = suite.repetition_trajectory[0]
+        step2 = suite.repetition_trajectory[1]
+        step3 = suite.repetition_trajectory[2]
+        step4 = suite.repetition_trajectory[3]
+
+        self.assertEqual(step1["repetition"], 1)
+        self.assertEqual(step1["start_continuous_deg"], 0.0)
+        self.assertEqual(step1["end_continuous_deg"], 90.0)
+        self.assertEqual(step2["start_continuous_deg"], 90.0)
+        self.assertEqual(step2["end_continuous_deg"], 180.0)
+        self.assertEqual(step3["start_continuous_deg"], 180.0)
+        self.assertEqual(step3["end_continuous_deg"], 270.0)
+        self.assertEqual(step4["start_continuous_deg"], 270.0)
+        self.assertEqual(step4["end_continuous_deg"], 360.0)
+
+        # Verify markdown output contains the Repetition Trajectory & Totals Summary table
+        md = ReportGenerator.format_markdown_summary(suite)
+        self.assertIn("## Repetition Trajectory & Totals Summary", md)
+        self.assertIn("Step 1", md)
+        self.assertIn("Step 4", md)
+        self.assertIn("Phase-by-Phase Heading Transitions", md)
+
 
 if __name__ == "__main__":
     unittest.main()

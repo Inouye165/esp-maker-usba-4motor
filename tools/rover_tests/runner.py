@@ -37,6 +37,7 @@ from .transport import (
 )
 from .sensors import (
     quat_to_yaw,
+    normalize_angle_deg,
     YawUnwrapper,
     BiasCorrectedGyroIntegrator,
     verify_non_magnetic_imu,
@@ -152,6 +153,7 @@ class PhysicalTestRunner:
             target_degrees=self.params.degrees,
             direction=self.params.direction,
             total_trials=self.params.trials,
+            repetitions=self.params.trials,
             is_dry_run=self.params.dry_run,
             wheel_balancing_enabled=self.params.enable_balancing,
             dynamic_braking_enabled=self.params.enable_braking,
@@ -160,7 +162,7 @@ class PhysicalTestRunner:
 
         print("=" * 80)
         print(f"ROVER ONE REUSABLE PHYSICAL TEST FRAMEWORK: TURN {self.params.degrees:.1f}° {self.params.direction.upper()}")
-        print(f"Trials: {self.params.trials} | Max Speed: {self.params.max_angular_speed:.2f} rad/s | Creep: {self.params.creep_angular_speed:.2f} rad/s")
+        print(f"Repetitions: {self.params.trials} | Max Speed: {self.params.max_angular_speed:.2f} rad/s | Creep: {self.params.creep_angular_speed:.2f} rad/s")
         print(f"Balancing: {'ENABLED' if self.params.enable_balancing else 'DISABLED'} | Braking: {'ENABLED' if self.params.enable_braking else 'DISABLED'} | Stopping Advance: {self.params.stopping_advance_deg or 0.0:.2f}°")
         print(f"Mode: {'DRY RUN (STATIONARY - NO MOTOR POWER)' if self.params.dry_run else 'PHYSICAL MOTION EXECUTION'}")
         print("=" * 80)
@@ -175,18 +177,66 @@ class PhysicalTestRunner:
                 raise TransportException("Operator authentication rejected")
             print("[OK] Connected and authenticated with Cockpit WebSocket.")
 
+        cumulative_continuous_heading: Optional[float] = None
+        total_cmd_deg = 0.0
+        total_meas_deg = 0.0
+
+        if not self.params.dry_run:
+            try:
+                init_imu = self.cockpit.get_imu()
+                if init_imu and init_imu.get("ok", False):
+                    suite_start_raw = math.degrees(quat_to_yaw(init_imu.get("orientation", {})))
+                    suite_report.suite_start_raw_heading_deg = round(suite_start_raw, 4)
+                    suite_report.suite_start_continuous_heading_deg = round(suite_start_raw, 4)
+                    cumulative_continuous_heading = suite_start_raw
+            except Exception:
+                pass
+        else:
+            suite_report.suite_start_raw_heading_deg = 0.0
+            suite_report.suite_start_continuous_heading_deg = 0.0
+            cumulative_continuous_heading = 0.0
+
         try:
             for trial_idx in range(1, self.params.trials + 1):
-                trial_report = self.execute_single_trial(trial_idx)
+                trial_report = self.execute_single_trial(trial_idx, cumulative_continuous_heading=cumulative_continuous_heading)
                 suite_report.trials.append(trial_report)
                 if trial_report.status in ("SUCCESS", "DRY_RUN_PASSED"):
                     suite_report.successful_trials += 1
                 else:
                     suite_report.aborted_trials += 1
 
+                if suite_report.suite_start_raw_heading_deg is None and trial_report.start_heading_raw_deg is not None:
+                    suite_report.suite_start_raw_heading_deg = trial_report.start_heading_raw_deg
+                    suite_report.suite_start_continuous_heading_deg = trial_report.start_heading_continuous_deg
+
+                if trial_report.final_settled_raw_heading_deg is not None:
+                    suite_report.suite_end_raw_heading_deg = trial_report.final_settled_raw_heading_deg
+                    suite_report.suite_end_continuous_heading_deg = trial_report.final_settled_continuous_heading_deg
+
+                step_target = self.params.signed_target_deg
+                step_meas = trial_report.final_settled_gyro_angle_deg
+                if step_meas is not None:
+                    total_cmd_deg += step_target
+                    total_meas_deg += step_meas
+                    if cumulative_continuous_heading is not None:
+                        cumulative_continuous_heading += step_meas
+
+                suite_report.repetition_trajectory.append({
+                    "repetition": trial_idx,
+                    "start_raw_heading_deg": trial_report.start_heading_raw_deg,
+                    "end_raw_heading_deg": trial_report.final_settled_raw_heading_deg,
+                    "start_continuous_deg": trial_report.start_heading_continuous_deg,
+                    "end_continuous_deg": trial_report.final_settled_continuous_heading_deg,
+                    "target_deg": step_target,
+                    "measured_deg": step_meas,
+                    "error_deg": trial_report.settled_heading_error_deg,
+                    "post_zero_coast_deg": trial_report.post_zero_rotation_deg,
+                    "status": trial_report.status
+                })
+
                 # If aborted and not dry run, do not automatically retry without operator intervention
                 if trial_report.status == "ABORTED" and not self.params.dry_run:
-                    print(f"\n[SAFETY STOP] Trial {trial_idx} aborted. Routine halted for forensic preservation.")
+                    print(f"\n[SAFETY STOP] Step/Trial {trial_idx} aborted. Routine halted for forensic preservation.")
                     break
         finally:
             final_cleanup = self.cleanup(verbose=False)
@@ -200,6 +250,10 @@ class PhysicalTestRunner:
             for t in suite_report.trials:
                 if not final_disarmed:
                     t.confirmed_final_disarmed_state = False
+
+        suite_report.total_cumulative_commanded_deg = round(total_cmd_deg, 4)
+        suite_report.total_cumulative_measured_deg = round(total_meas_deg, 4)
+        suite_report.total_cumulative_error_deg = round(total_meas_deg - total_cmd_deg, 4)
 
         # Compute suite statistics across successful trials with valid final measurements
         successful_trials = [t for t in suite_report.trials if t.status in ("SUCCESS", "DRY_RUN_PASSED")]
@@ -217,6 +271,20 @@ class PhysicalTestRunner:
         estimate_deltas = [t.estimate_vs_gyro_delta_deg for t in successful_trials if t.estimate_vs_gyro_delta_deg is not None]
         if estimate_deltas:
             suite_report.mean_estimate_delta_deg = round(statistics.mean(estimate_deltas), 4)
+
+        # Console totals summary for multi-repetition runs
+        if len(suite_report.repetition_trajectory) > 1:
+            print("\n" + "=" * 80)
+            print(f"MULTI-REPETITION TOTALS SUMMARY ({len(suite_report.repetition_trajectory)} STEPS)")
+            print("=" * 80)
+            st_s = f"{suite_report.suite_start_raw_heading_deg:+.2f}°" if suite_report.suite_start_raw_heading_deg is not None else "N/A"
+            end_s = f"{suite_report.suite_end_raw_heading_deg:+.2f}°" if suite_report.suite_end_raw_heading_deg is not None else "N/A"
+            print(f"  • Initial Heading (Step 1 Start):  {st_s}")
+            print(f"  • Final Settled (Step {len(suite_report.repetition_trajectory)} End):   {end_s}")
+            print(f"  • Cumulative Commanded Rotation:   {suite_report.total_cumulative_commanded_deg:+.2f}°")
+            print(f"  • Cumulative Measured Rotation:    {suite_report.total_cumulative_measured_deg:+.2f}°")
+            print(f"  • Total Net Trajectory Error:      {suite_report.total_cumulative_error_deg:+.2f}°")
+            print("=" * 80)
 
         # Generate output files
         json_path = ReportGenerator.save_json(suite_report, self.params.report_directory)
@@ -295,14 +363,14 @@ class PhysicalTestRunner:
                 w_metric.stopped_while_commanded = None
                 trial_report.wheel_forensics_valid = False
 
-    def execute_single_trial(self, trial_idx: int) -> TrialReport:
+    def execute_single_trial(self, trial_idx: int, cumulative_continuous_heading: Optional[float] = None) -> TrialReport:
         """Executes one physical turn trial adhering to all exact-motion invariants."""
-        print(f"\n--- Starting Trial {trial_idx}/{self.params.trials} ---")
+        print(f"\n--- Starting Trial/Step {trial_idx}/{self.params.trials} ---")
 
         # 1. Inter-Trial Operator Approval
         if self.params.inter_trial_approval or not self.params.dry_run:
             print("\n[OPERATOR APPROVAL REQUIRED]")
-            print(f"  • Target Maneuver: {self.params.degrees:.1f}° {self.params.direction.upper()}")
+            print(f"  • Maneuver (Step {trial_idx}/{self.params.trials}): {self.params.degrees:.1f}° {self.params.direction.upper()}")
             print(f"  • Target Signed Yaw: {self.params.signed_target_deg:+.1f}°")
             print(f"  • Speeds: Cruise = {self.params.max_angular_speed:.2f} rad/s | Creep = {self.params.creep_angular_speed:.2f} rad/s")
             print("  Please confirm rover area is clear and authorize physical motion.")
@@ -380,6 +448,14 @@ class PhysicalTestRunner:
         raw_yaw_0 = quat_to_yaw(imu_snap.get("orientation", {"w": 1, "x": 0, "y": 0, "z": 0}))
         unwrapper = YawUnwrapper(initial_raw_yaw=raw_yaw_0)
         gyro_integrator = BiasCorrectedGyroIntegrator()
+
+        initial_raw_yaw_deg = round(math.degrees(raw_yaw_0), 4)
+        if self.params.dry_run and cumulative_continuous_heading is not None:
+            trial_report.start_heading_raw_deg = round(normalize_angle_deg(cumulative_continuous_heading), 4)
+            trial_report.start_heading_continuous_deg = round(cumulative_continuous_heading, 4)
+        else:
+            trial_report.start_heading_raw_deg = initial_raw_yaw_deg
+            trial_report.start_heading_continuous_deg = round(cumulative_continuous_heading, 4) if cumulative_continuous_heading is not None else initial_raw_yaw_deg
 
         # Gather pre-turn stationary samples for gyro bias calibration while DISARMED
         pre_turn_samples = [imu_snap.get("gyro", {}).get("z", 0.0)]
@@ -512,6 +588,9 @@ class PhysicalTestRunner:
             if fresh_imu:
                 fresh_raw_yaw = quat_to_yaw(fresh_imu.get("orientation", {}))
                 unwrapper.update_orientation_yaw(fresh_raw_yaw)
+                fresh_raw_deg = round(math.degrees(fresh_raw_yaw), 4)
+                trial_report.start_heading_raw_deg = fresh_raw_deg
+                trial_report.start_heading_continuous_deg = round(cumulative_continuous_heading, 4) if cumulative_continuous_heading is not None else fresh_raw_deg
             print(f"[OK] Advancing fresh IMU sample synchronized in READY_DISARMED: {adv_reason}")
 
         # Step 7: Arm Drivetrain and Verify READY_ARMED
@@ -1343,6 +1422,57 @@ class PhysicalTestRunner:
         trial_report.post_zero_rotation_deg = round(post_zero_coast, 4) if post_zero_coast is not None else None
         trial_report.settled_heading_error_deg = round(settled_heading_error, 4) if settled_heading_error is not None else None
 
+        raw_start = trial_report.start_heading_raw_deg if trial_report.start_heading_raw_deg is not None else 0.0
+        cont_start = trial_report.start_heading_continuous_deg if trial_report.start_heading_continuous_deg is not None else raw_start
+
+        if final_settled_yaw is not None:
+            trial_report.final_settled_raw_heading_deg = round(normalize_angle_deg(raw_start + final_settled_yaw), 4)
+            trial_report.final_settled_continuous_heading_deg = round(cont_start + final_settled_yaw, 4)
+
+        # Step 13b: Construct phase heading breakdown
+        phase_records = []
+        history = [h for h in controller.phase_history]
+        for i in range(len(history)):
+            entry = history[i]
+            p_name = entry.get("phase", "").replace("ApproachPhase.", "")
+            if p_name == "SETTLED":
+                continue
+
+            t_entry = entry.get("t_rel", 0.0)
+            yaw_entry = entry.get("yaw_deg", 0.0)
+
+            if i + 1 < len(history):
+                next_entry = history[i + 1]
+                t_exit = next_entry.get("t_rel", t_entry)
+                yaw_exit = next_entry.get("yaw_deg", yaw_entry)
+            else:
+                t_exit = time.time() - t_trial_start
+                yaw_exit = final_settled_yaw if final_settled_yaw is not None else angle_at_zero_cmd
+
+            dur = max(0.0, t_exit - t_entry)
+            delta = yaw_exit - yaw_entry
+            s_abs = normalize_angle_deg(raw_start + yaw_entry)
+            e_abs = normalize_angle_deg(raw_start + yaw_exit)
+            s_cont = cont_start + yaw_entry
+            e_cont = cont_start + yaw_exit
+
+            phase_label = p_name
+            if p_name == "ZERO":
+                phase_label = "BRAKE_COAST"
+
+            phase_records.append({
+                "phase_name": phase_label,
+                "start_abs_deg": round(s_abs, 4),
+                "end_abs_deg": round(e_abs, 4),
+                "start_rel_deg": round(yaw_entry, 4),
+                "end_rel_deg": round(yaw_exit, 4),
+                "start_continuous_deg": round(s_cont, 4),
+                "end_continuous_deg": round(e_cont, 4),
+                "delta_deg": round(delta, 4),
+                "duration_s": round(dur, 4)
+            })
+        trial_report.phase_headings = phase_records
+
         # Capture final encoders
         enc_final = self.cockpit.get_encoders().get("encoders", enc_start)
         for w_id in ["m1", "m2", "m3", "m4"]:
@@ -1375,14 +1505,25 @@ class PhysicalTestRunner:
         trial_report.active_pid_packets = active_pid_packets
         trial_report.status = "DRY_RUN_PASSED" if self.params.dry_run else "SUCCESS"
 
-        print(f"[OK] Trial Completed ({trial_report.status})")
-        print(f"  • Angle at Zero Cmd: {angle_at_zero_cmd:+.2f}°")
+        print(f"[OK] Step {trial_idx}/{self.params.trials} Completed ({trial_report.status})")
+        st_head_str = f"{trial_report.start_heading_raw_deg:+.2f}°" if trial_report.start_heading_raw_deg is not None else "N/A"
+        end_head_str = f"{trial_report.final_settled_raw_heading_deg:+.2f}°" if trial_report.final_settled_raw_heading_deg is not None else "N/A"
         final_str = f"{final_settled_yaw:+.2f}°" if final_settled_yaw is not None else "Unavailable"
-        print(f"  • Final Settled Yaw: {final_str} (Target: {self.params.signed_target_deg:+.2f}°)")
         coast_str = f"{post_zero_coast:+.2f}°" if post_zero_coast is not None else "Unavailable"
-        print(f"  • Post-Zero Coast:   {coast_str}")
         err_str = f"{settled_heading_error:+.2f}°" if settled_heading_error is not None else "Unavailable"
-        print(f"  • Settled Error:     {err_str}")
+        print(f"  • Step Heading:      Start: {st_head_str} -> End: {end_head_str} (Net: {final_str}, Target: {self.params.signed_target_deg:+.2f}°, Error: {err_str})")
+        if trial_report.phase_headings:
+            print("  • Phase Breakdown:")
+            for ph in trial_report.phase_headings:
+                ph_name = ph.get("phase_name", "")
+                p_st = f"{ph.get('start_abs_deg', 0.0):+.2f}°"
+                p_end = f"{ph.get('end_abs_deg', 0.0):+.2f}°"
+                p_del = f"{ph.get('delta_deg', 0.0):+.2f}°"
+                print(f"    - {ph_name:<11}: {p_st} -> {p_end} (Delta: {p_del}, {ph.get('duration_s', 0.0):.2f}s)")
+        print(f"  • Angle at Zero Cmd: {angle_at_zero_cmd:+.2f}°")
+        print(f"  • Post-Zero Coast:   {coast_str}")
+        if trial_report.final_settled_continuous_heading_deg is not None:
+            print(f"  • Continuous Angle:  {trial_report.final_settled_continuous_heading_deg:+.2f}°")
 
         # Ingest Ron's Physical Estimate
         if self.params.inter_trial_approval and not self.params.dry_run:

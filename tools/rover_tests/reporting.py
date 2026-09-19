@@ -66,6 +66,19 @@ class WheelTrialMetrics:
 
 
 @dataclass
+class PhaseHeadingRecord:
+    phase_name: str                     # "CRUISE", "CREEP", "BRAKE_COAST", "SETTLE"
+    start_abs_deg: float                # Absolute IMU heading [-180, 180] at entry
+    end_abs_deg: float                  # Absolute IMU heading [-180, 180] at exit
+    start_rel_deg: float                # Relative heading from trial start
+    end_rel_deg: float                  # Relative heading from trial start
+    start_continuous_deg: float         # Continuous unwrapped heading from suite start
+    end_continuous_deg: float           # Continuous unwrapped heading from suite start
+    delta_deg: float                    # Net rotation in phase
+    duration_s: float                   # Phase duration
+
+
+@dataclass
 class TrialReport:
     trial_index: int
     requested_turn_deg: float
@@ -83,6 +96,13 @@ class TrialReport:
     final_measurement_valid: bool = False
     rons_physical_angle_estimate_deg: Optional[float] = None
     estimate_vs_gyro_delta_deg: Optional[float] = None
+
+    # Step-by-Step & Phase Heading Tracking
+    start_heading_raw_deg: Optional[float] = None
+    start_heading_continuous_deg: Optional[float] = None
+    final_settled_raw_heading_deg: Optional[float] = None
+    final_settled_continuous_heading_deg: Optional[float] = None
+    phase_headings: List[Dict[str, Any]] = field(default_factory=list)
 
     # Wheel & Actuation Metrics
     wheel_metrics: Dict[str, WheelTrialMetrics] = field(default_factory=dict)
@@ -144,6 +164,7 @@ class MultiTrialSuiteReport:
     target_degrees: float = 0.0
     direction: str = "cw"
     total_trials: int = 0
+    repetitions: int = 0
     successful_trials: int = 0
     aborted_trials: int = 0
     is_dry_run: bool = False
@@ -155,6 +176,20 @@ class MultiTrialSuiteReport:
     std_dev_settled_error_deg: Optional[float] = None
     repeatability_deg: Optional[float] = None
     mean_estimate_delta_deg: Optional[float] = None
+
+    # Multi-Repetition Trajectory & Totals
+    suite_start_raw_heading_deg: Optional[float] = None
+    suite_start_continuous_heading_deg: Optional[float] = None
+    suite_end_raw_heading_deg: Optional[float] = None
+    suite_end_continuous_heading_deg: Optional[float] = None
+    total_cumulative_commanded_deg: float = 0.0
+    total_cumulative_measured_deg: float = 0.0
+    total_cumulative_error_deg: float = 0.0
+    repetition_trajectory: List[Dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self):
+        if not self.repetitions:
+            self.repetitions = self.total_trials
 
 
 class ReportGenerator:
@@ -199,6 +234,35 @@ class ReportGenerator:
             md.append(f"| Mean Delta vs Ron's Estimate | {report.mean_estimate_delta_deg:+.2f}° |")
         md.append("")
 
+        # Multi-Repetition Trajectory & Totals Summary
+        if report.repetition_trajectory:
+            md.append("## Repetition Trajectory & Totals Summary")
+            md.append("| Step / Rep | Start Heading (Abs) | End Heading (Abs) | Continuous Angle | Commanded | Measured Turn | Error | Post-Zero Coast | Status |")
+            md.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+            for r in report.repetition_trajectory:
+                rep_idx = r.get("repetition", 1)
+                st_abs = f"`{r.get('start_raw_heading_deg'):+.2f}°`" if r.get('start_raw_heading_deg') is not None else "`N/A`"
+                end_abs = f"`{r.get('end_raw_heading_deg'):+.2f}°`" if r.get('end_raw_heading_deg') is not None else "`N/A`"
+                st_cont = r.get('start_continuous_deg')
+                end_cont = r.get('end_continuous_deg')
+                cont_str = f"`[{st_cont:+.2f}°, {end_cont:+.2f}°]`" if (st_cont is not None and end_cont is not None) else "`N/A`"
+                cmd_deg = f"`{r.get('target_deg'):+.2f}°`" if r.get('target_deg') is not None else "`N/A`"
+                meas_deg = f"`{r.get('measured_deg'):+.2f}°`" if r.get('measured_deg') is not None else "`N/A`"
+                err_deg = f"`{r.get('error_deg'):+.2f}°`" if r.get('error_deg') is not None else "`N/A`"
+                coast_deg = f"`{r.get('post_zero_coast_deg'):+.2f}°`" if r.get('post_zero_coast_deg') is not None else "`N/A`"
+                stat = f"`{r.get('status', 'UNKNOWN')}`"
+                md.append(f"| **Step {rep_idx}** | {st_abs} | {end_abs} | {cont_str} | {cmd_deg} | {meas_deg} | {err_deg} | {coast_deg} | {stat} |")
+
+            st_suite = f"`{report.suite_start_raw_heading_deg:+.2f}°` (Step 1 Start)" if report.suite_start_raw_heading_deg is not None else "`N/A`"
+            end_suite = f"`{report.suite_end_raw_heading_deg:+.2f}°` (Step {len(report.repetition_trajectory)} End)" if report.suite_end_raw_heading_deg is not None else "`N/A`"
+            net_cont = f"Net: `{report.total_cumulative_measured_deg:+.2f}°`"
+            tot_cmd = f"`{report.total_cumulative_commanded_deg:+.2f}°`"
+            tot_meas = f"`{report.total_cumulative_measured_deg:+.2f}°`"
+            tot_err = f"`{report.total_cumulative_error_deg:+.2f}°`"
+            succ_str = f"`{report.successful_trials}/{report.total_trials} Succeeded`"
+            md.append(f"| **TOTALS** | {st_suite} | {end_suite} | {net_cont} | {tot_cmd} | {tot_meas} | {tot_err} | - | {succ_str} |")
+            md.append("")
+
         # Per-Trial Breakdown
         md.append("## Per-Trial Forensics")
         for t in report.trials:
@@ -209,6 +273,10 @@ class ReportGenerator:
 
             md.append("| Measurement | Value | Description |")
             md.append("| :--- | :--- | :--- |")
+            if t.start_heading_raw_deg is not None:
+                md.append(f"| Step Start Heading | `{t.start_heading_raw_deg:+.2f}°` | IMU raw heading at motion start |")
+            if t.final_settled_raw_heading_deg is not None:
+                md.append(f"| Step Settled Heading | `{t.final_settled_raw_heading_deg:+.2f}°` | IMU raw heading after settle period |")
             md.append(f"| Target Signed Angle | `{t.target_signed_yaw_deg:+.2f}°` | Intended continuous rotation |")
             md.append(f"| Angle at Zero Command | `{t.gyro_angle_at_zero_cmd_deg:+.2f}°` | IMU reading when $\\omega_z=0$ issued |")
             settled_str = f"`{t.final_settled_gyro_angle_deg:+.2f}°`" if t.final_settled_gyro_angle_deg is not None else "`Unavailable`"
@@ -245,6 +313,22 @@ class ReportGenerator:
                 md.append(f"| Brake Pulse Duration | `{t.brake_active_duration_ms:.1f} ms` | Active dynamic brake period |")
             md.append(f"| Final Zero & Disarmed Confirmed | `{'YES' if (t.confirmed_final_zero_command and t.confirmed_final_disarmed_state) else 'NO (FAIL-SAFE ERROR)'}` | Drivetrain locked & safe |")
             md.append("")
+
+            # Phase Breakdown
+            if t.phase_headings:
+                md.append("#### Phase-by-Phase Heading Transitions")
+                md.append("| Motion Phase | Start Heading (Abs) | End Heading (Abs) | Start (Rel) | End (Rel) | Phase Rotation | Duration |")
+                md.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+                for ph in t.phase_headings:
+                    ph_name = ph.get("phase_name", "UNKNOWN")
+                    s_abs = f"`{ph.get('start_abs_deg', 0.0):+.2f}°`"
+                    e_abs = f"`{ph.get('end_abs_deg', 0.0):+.2f}°`"
+                    s_rel = f"`{ph.get('start_rel_deg', 0.0):+.2f}°`"
+                    e_rel = f"`{ph.get('end_rel_deg', 0.0):+.2f}°`"
+                    d_rot = f"`{ph.get('delta_deg', 0.0):+.2f}°`"
+                    dur = f"{ph.get('duration_s', 0.0):.2f}s"
+                    md.append(f"| **{ph_name}** | {s_abs} | {e_abs} | {s_rel} | {e_rel} | {d_rot} | {dur} |")
+                md.append("")
 
             # Wheel Details
             md.append("#### Wheel Actuation & Encoder Performance")

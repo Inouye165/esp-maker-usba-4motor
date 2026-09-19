@@ -36,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     turn_parser.add_argument("--degrees", type=float, required=True, help="Target turn angle magnitude in degrees (e.g. 90, 180, 360)")
     turn_parser.add_argument("--direction", type=str, choices=["cw", "ccw"], default="cw", help="Turn direction: cw (clockwise) or ccw (counter-clockwise)")
     turn_parser.add_argument("--trials", type=int, default=1, help="Number of consecutive trials to perform (default: 1)")
+    turn_parser.add_argument("--repetitions", "--reps", "-r", type=int, default=None, help="Number of repetitions / steps to perform (overrides --trials)")
     turn_parser.add_argument("--max-angular-speed", type=float, default=0.80, help="Cruise angular velocity in rad/s (default: 0.80 per contract)")
     turn_parser.add_argument("--creep-angular-speed", type=float, default=0.20, help="Creep approach angular velocity in rad/s (default: 0.20 per contract)")
     turn_parser.add_argument("--creep-threshold-deg", type=float, default=30.0, help="Approach zone threshold in degrees where creep begins (default: 30.0)")
@@ -44,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     turn_parser.add_argument("--inter-trial-approval", action="store_true", help="Prompt operator for approval before every trial and ask for Ron's physical angle estimate after settling")
     turn_parser.add_argument("--dry-run", action="store_true", help="Simulate execution without sending motor power or arming (safe stationary verification)")
     turn_parser.add_argument("--enable-balancing", action="store_true", help="Enable improved wheel-balancing controls and sync trim")
-    turn_parser.add_argument("--enable-braking", action="store_true", help="Enable shared low-speed dynamic braking pulse")
+    turn_parser.add_argument("--enable-braking", "--braking", action="store_true", help="Enable shared low-speed dynamic braking pulse")
     turn_parser.add_argument("--clear-faults", action="store_true", help="Clear latched firmware safety faults if rover is confirmed stationary, zero-commanded, and disarmed (operator-authorized)")
     turn_parser.add_argument("--stopping-advance-deg", type=float, default=None, help="Adjustable stopping advance angle in degrees (default: 0.5 when braking is enabled, 0.0 otherwise)")
     turn_parser.add_argument("--report-directory", type=str, default="reports", help="Directory where JSON and Markdown test reports are saved (default: reports)")
@@ -59,10 +60,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     if args.subcommand == "turn":
+        reps = args.repetitions if getattr(args, "repetitions", None) is not None else args.trials
         params = TurnParameters(
             degrees=args.degrees,
             direction=args.direction,
-            trials=args.trials,
+            trials=reps,
+            repetitions=reps,
             max_angular_speed=args.max_angular_speed,
             creep_angular_speed=args.creep_angular_speed,
             creep_threshold_deg=args.creep_threshold_deg,
