@@ -24,6 +24,41 @@ def get_default_host() -> str:
     return "10.0.0.246"
 
 
+def prompt_target_degrees(default: float = 180.0, prompt_fn=input) -> float:
+    while True:
+        try:
+            val_str = prompt_fn(f"Enter target turn degrees (e.g. 90, 180, 350) [{default:.0f}]: ").strip()
+            if not val_str:
+                return default
+            val = float(val_str)
+            if val <= 0:
+                print("Degrees must be positive. Please try again.")
+                continue
+            return val
+        except ValueError:
+            print("Invalid input. Please enter a valid number for degrees (e.g. 90, 180, 350).")
+        except (EOFError, KeyboardInterrupt):
+            print("\nOperation cancelled by operator.")
+            sys.exit(130)
+
+
+def prompt_repetitions_count(default: int = 1, prompt_fn=input) -> int:
+    while True:
+        try:
+            val_str = prompt_fn(f"Enter number of repetitions (1-8) [{default}]: ").strip()
+            if not val_str:
+                return default
+            val = int(val_str)
+            if 1 <= val <= 8:
+                return val
+            print("Repetitions must be between 1 and 8. Please try again.")
+        except ValueError:
+            print("Invalid input. Please enter an integer between 1 and 8.")
+        except (EOFError, KeyboardInterrupt):
+            print("\nOperation cancelled by operator.")
+            sys.exit(130)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="rover-test",
@@ -33,10 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     # turn subcommand
     turn_parser = subparsers.add_parser("turn", help="Execute in-place rotation test")
-    turn_parser.add_argument("--degrees", type=float, required=True, help="Target turn angle magnitude in degrees (e.g. 90, 180, 360)")
+    turn_parser.add_argument("--degrees", type=float, default=None, help="Target turn angle magnitude in degrees (e.g. 90, 180, 360)")
     turn_parser.add_argument("--direction", type=str, choices=["cw", "ccw"], default="cw", help="Turn direction: cw (clockwise) or ccw (counter-clockwise)")
     turn_parser.add_argument("--trials", type=int, default=1, help="Number of consecutive trials to perform (default: 1)")
-    turn_parser.add_argument("--repetitions", "--reps", "-r", type=int, default=None, help="Number of repetitions / steps to perform (overrides --trials)")
+    turn_parser.add_argument("--repetitions", "--reps", "-r", type=int, default=None, help="Number of repetitions / steps to perform (1-8, overrides --trials)")
+    turn_parser.add_argument("--interactive", "-i", action="store_true", help="Prompt operator interactively for degrees and repetitions")
     turn_parser.add_argument("--max-angular-speed", type=float, default=0.80, help="Cruise angular velocity in rad/s (default: 0.80 per contract)")
     turn_parser.add_argument("--creep-angular-speed", type=float, default=0.20, help="Creep approach angular velocity in rad/s (default: 0.20 per contract)")
     turn_parser.add_argument("--creep-threshold-deg", type=float, default=30.0, help="Approach zone threshold in degrees where creep begins (default: 30.0)")
@@ -55,14 +91,34 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[List[str]] = None, prompt_fn=input, is_interactive: Optional[bool] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if args.subcommand == "turn":
-        reps = args.repetitions if getattr(args, "repetitions", None) is not None else args.trials
+        if is_interactive is None:
+            is_interactive = sys.stdin.isatty() or getattr(args, "interactive", False)
+
+        degrees = args.degrees
+        reps = args.repetitions
+
+        # Prompt for target degrees if missing or interactive requested
+        if getattr(args, "interactive", False) or (degrees is None and is_interactive):
+            default_deg = degrees if degrees is not None else 180.0
+            degrees = prompt_target_degrees(default=default_deg, prompt_fn=prompt_fn)
+        elif degrees is None:
+            print("[CONFIGURATION ERROR] Target degrees must be specified (e.g. --degrees 180) in non-interactive mode.", file=sys.stderr)
+            return 2
+
+        # Prompt for repetitions if missing or interactive requested
+        if getattr(args, "interactive", False) or (reps is None and is_interactive):
+            default_reps = reps if reps is not None else (args.trials if 1 <= args.trials <= 8 else 1)
+            reps = prompt_repetitions_count(default=default_reps, prompt_fn=prompt_fn)
+        elif reps is None:
+            reps = args.trials
+
         params = TurnParameters(
-            degrees=args.degrees,
+            degrees=degrees,
             direction=args.direction,
             trials=reps,
             repetitions=reps,

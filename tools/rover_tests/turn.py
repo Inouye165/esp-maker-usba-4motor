@@ -18,7 +18,7 @@ class TurnConfigurationException(Exception):
 
 @dataclass
 class TurnParameters:
-    degrees: float
+    degrees: Optional[float] = None
     direction: str = "cw"  # "cw" or "ccw"
     trials: int = 1
     repetitions: Optional[int] = None
@@ -38,21 +38,22 @@ class TurnParameters:
     port: int = 3000
 
     def validate(self):
+        if self.degrees is None or self.degrees <= 0.0:
+            raise TurnConfigurationException(f"degrees must be positive, got {self.degrees}")
+
         if self.repetitions is not None:
-            if self.repetitions < 1:
-                raise TurnConfigurationException(f"Repetitions must be >= 1, got {self.repetitions}")
+            if not (1 <= self.repetitions <= 8):
+                raise TurnConfigurationException(f"Repetitions must be between 1 and 8, got {self.repetitions}")
             self.trials = self.repetitions
 
         if self.stopping_advance_deg is None:
             self.stopping_advance_deg = 0.5 if self.enable_braking else 0.0
 
-        if self.degrees <= 0.0:
-            raise TurnConfigurationException(f"Turn degrees must be positive, got {self.degrees}")
-        norm_dir = self.direction.strip().lower()
+        norm_dir = self.direction.lower()
         if norm_dir not in ("cw", "ccw"):
             raise TurnConfigurationException(f"Direction must be 'cw' or 'ccw', got '{self.direction}'")
-        if self.trials < 1:
-            raise TurnConfigurationException(f"Trials/repetitions must be >= 1, got {self.trials}")
+        if not (1 <= self.trials <= 8):
+            raise TurnConfigurationException(f"Trials/repetitions must be between 1 and 8, got {self.trials}")
         if self.max_angular_speed <= 0.0:
             raise TurnConfigurationException(f"max_angular_speed must be positive, got {self.max_angular_speed}")
         if self.creep_angular_speed <= 0.0:

@@ -3142,9 +3142,66 @@ class TestFirmwareStallWatchdogAndFaultClearRegressions(unittest.TestCase):
         self.assertIn("Step 4", md)
         self.assertIn("Phase-by-Phase Heading Transitions", md)
 
+    def test_interactive_prompt_target_degrees(self):
+        """Verify prompt_target_degrees handles custom numbers, defaults, and invalid inputs."""
+        from tools.rover_tests.cli import prompt_target_degrees
+
+        # Custom degrees (e.g. 350)
+        self.assertEqual(prompt_target_degrees(default=180.0, prompt_fn=lambda _: "350"), 350.0)
+        # Empty input defaults
+        self.assertEqual(prompt_target_degrees(default=90.0, prompt_fn=lambda _: "   "), 90.0)
+
+        # Invalid then valid
+        inputs = iter(["-20", "abc", "180"])
+        self.assertEqual(prompt_target_degrees(default=180.0, prompt_fn=lambda _: next(inputs)), 180.0)
+
+    def test_interactive_prompt_repetitions_count(self):
+        """Verify prompt_repetitions_count enforces 1-8 bounds and handles defaults."""
+        from tools.rover_tests.cli import prompt_repetitions_count
+
+        # Custom repetitions
+        self.assertEqual(prompt_repetitions_count(default=1, prompt_fn=lambda _: "4"), 4)
+        self.assertEqual(prompt_repetitions_count(default=1, prompt_fn=lambda _: "8"), 8)
+        # Empty input defaults
+        self.assertEqual(prompt_repetitions_count(default=2, prompt_fn=lambda _: ""), 2)
+
+        # Out of bounds (>8, <1) then valid
+        inputs = iter(["9", "0", "abc", "6"])
+        self.assertEqual(prompt_repetitions_count(default=1, prompt_fn=lambda _: next(inputs)), 6)
+
+    def test_cli_main_interactive_prompting(self):
+        """Verify main() prompts for degrees and repetitions when running interactively."""
+        from tools.rover_tests.cli import main
+
+        # Non-interactive without degrees returns configuration error code 2
+        code_non_interactive = main(["turn"], is_interactive=False)
+        self.assertEqual(code_non_interactive, 2)
+
+        # Interactive without degrees prompts for degrees and reps
+        prompts = iter(["350", "2"])
+        with patch("tools.rover_tests.cli.PhysicalTestRunner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_suite = MagicMock()
+            mock_suite.aborted_trials = 0
+            mock_runner.execute_suite.return_value = mock_suite
+            mock_runner_cls.return_value = mock_runner
+
+            code_interactive = main(
+                ["turn", "--dry-run"],
+                prompt_fn=lambda _: next(prompts),
+                is_interactive=True
+            )
+            self.assertEqual(code_interactive, 0)
+            mock_runner_cls.assert_called_once()
+            call_params = mock_runner_cls.call_args[0][0]
+            self.assertEqual(call_params.degrees, 350.0)
+            self.assertEqual(call_params.repetitions, 2)
+            self.assertEqual(call_params.trials, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 
