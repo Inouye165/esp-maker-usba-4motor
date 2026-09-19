@@ -130,7 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
     linear_parser.add_argument("--trials", type=int, default=1, help="Number of consecutive trials to perform (default: 1)")
     linear_parser.add_argument("--repetitions", "--reps", "-r", type=int, default=None, help="Number of repetitions / steps to perform (1-8, overrides --trials)")
     linear_parser.add_argument("--interactive", "-i", action="store_true", help="Prompt operator interactively for distance, direction, and repetitions")
-    linear_parser.add_argument("--max-linear-speed", type=float, default=0.20, help="Cruise linear velocity in m/s (default: 0.20 per contract)")
+    linear_parser.add_argument("--max-linear-speed", "--speed-mps", "--speed", type=float, default=0.20, help="Cruise linear velocity in m/s (default: 0.20 per contract)")
     linear_parser.add_argument("--creep-linear-speed", type=float, default=0.05, help="Creep approach linear velocity in m/s (default: 0.05 per contract)")
     linear_parser.add_argument("--creep-threshold-m", type=float, default=0.15, help="Approach zone threshold in meters where creep begins (default: 0.15 per contract)")
     linear_parser.add_argument("--settle-seconds", type=float, default=2.0, help="Post-motion standstill settling duration in seconds (default: 2.0)")
