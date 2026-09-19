@@ -2529,8 +2529,8 @@ class TestFailFastSafeguardIntegration(unittest.TestCase):
         self.assertEqual(report.breakout_event_count, 1, "Must accurately record breakout event count on abort")
         self.assertTrue(report.confirmed_final_zero_command)
 
-    def test_transient_stale_imu_reading_recovers_via_bounded_confirmation(self):
-        """A single marginal/stale IMU reading (e.g. 271ms) followed by fresh advancing sample does not abort motion."""
+    def test_transient_stale_imu_reading_commands_zero_and_aborts_without_auto_resume(self):
+        """On transient stale IMU reading, zero is commanded immediately, confirmation runs stopped, and test aborts without auto-resuming."""
         params = TurnParameters(degrees=180.0, direction="cw", trials=1)
         mock_cockpit = MagicMock(spec=CockpitClient)
         mock_ws = MagicMock(spec=NativeWSClient)
@@ -2545,24 +2545,44 @@ class TestFailFastSafeguardIntegration(unittest.TestCase):
             "cmdSource": "ROS_AUTONOMY"
         }
         mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
-        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
-        mock_cockpit.disarm_drive.return_value = {"ok": True}
-        mock_cockpit.disable_autonomy.return_value = {"ok": True}
-        mock_cockpit.set_command_source.return_value = {"ok": True}
+        sent_commands = []
+        def mock_send_cmd(vx=0.0, wz=0.0, **kwargs):
+            sent_commands.append((vx, wz))
+            return {"ok": True}
+        mock_cockpit.send_cmd_vel.side_effect = mock_send_cmd
+        def mock_disarm():
+            current_status["armed"] = False
+            current_status["autonomyState"] = "DISABLED"
+            return {"ok": True}
+        def mock_set_source(s):
+            current_status["cmdSource"] = s
+            return {"ok": True, "source": s}
+        mock_cockpit.disarm_drive.side_effect = mock_disarm
+        mock_cockpit.disable_autonomy.side_effect = lambda: {"ok": True}
+        mock_cockpit.set_command_source.side_effect = mock_set_source
         mock_ws.connected = True
         mock_ws.recv_frames.return_value = []
 
         q_start = {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
-        q_target = {"x": 0.0, "y": 0.0, "z": 1.0, "w": 0.0}
-
         sample_1 = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 100, "dataAgeMs": 15, "orientation": q_start}
         sample_2_stale = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 100, "dataAgeMs": 271, "orientation": q_start}
         sample_2_confirm = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 101, "dataAgeMs": 20, "orientation": q_start}
-        sample_3_target = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 102, "dataAgeMs": 15, "orientation": q_target}
-        sample_settle = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 103, "dataAgeMs": 15, "orientation": q_target}
 
-        imu_stream = [sample_1, sample_2_stale, sample_2_confirm, sample_3_target, sample_settle]
-        mock_cockpit.get_imu.side_effect = lambda *a, **k: imu_stream.pop(0) if imu_stream else sample_settle
+        in_motion = [False]
+        sent_commands = []
+        def mock_send_cmd(vx=0.0, wz=0.0, **kwargs):
+            sent_commands.append((vx, wz))
+            if abs(wz) > 0.01:
+                in_motion[0] = True
+            return {"ok": True}
+        mock_cockpit.send_cmd_vel.side_effect = mock_send_cmd
+
+        motion_imu_stream = [sample_2_stale, sample_2_confirm]
+        def mock_get_imu(*a, **k):
+            if not in_motion[0]:
+                return dict(sample_1)
+            return motion_imu_stream.pop(0) if motion_imu_stream else sample_2_confirm
+        mock_cockpit.get_imu.side_effect = mock_get_imu
 
         runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
 
@@ -2573,9 +2593,79 @@ class TestFailFastSafeguardIntegration(unittest.TestCase):
                         with patch("time.sleep", return_value=None):
                             report = runner.execute_single_trial(1)
 
-        self.assertNotEqual(report.status, "ABORTED")
-        self.assertNotIn("STALE_IMU_DATA", report.watchdog_trips)
-        self.assertEqual(report.status, "SUCCESS")
+        # Must abort rather than automatically resume
+        self.assertEqual(report.status, "ABORTED")
+        self.assertIn("TRANSIENT_IMU_SAFE_STOP", report.watchdog_trips)
+        self.assertIn("Transient stale IMU reading", report.abort_reason)
+        # Verify zero velocity command was sent immediately upon detecting suspect data
+        self.assertTrue(any(vx == 0.0 and wz == 0.0 for vx, wz in sent_commands))
+        self.assertTrue(report.confirmed_final_zero_command)
+        self.assertTrue(report.confirmed_final_disarmed_state)
+
+    def test_esp32_hardware_reset_during_motion_triggers_immediate_zero_and_abort(self):
+        """Detection of an ESP32 sequence drop or reset during motion immediately commands zero and aborts."""
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+
+        current_status = {"armed": True, "mode": 3, "autonomyState": "ACTIVE", "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.token = "test"
+        mock_cockpit.get_status.side_effect = lambda: dict(current_status)
+        mock_cockpit.get_autonomy_status.side_effect = lambda: {
+            "state": "ACTIVE",
+            "clampedAngular": 0.8,
+            "zeroHandshakeCount": 3,
+            "cmdSource": "ROS_AUTONOMY"
+        }
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        sent_commands = []
+        in_motion = [False]
+        def mock_send_cmd_reset(vx=0.0, wz=0.0, **kw):
+            sent_commands.append((vx, wz))
+            if abs(wz) > 0.01:
+                in_motion[0] = True
+            return {"ok": True}
+        mock_cockpit.send_cmd_vel.side_effect = mock_send_cmd_reset
+        def mock_disarm():
+            current_status["armed"] = False
+            current_status["autonomyState"] = "DISABLED"
+            return {"ok": True}
+        def mock_set_source(s):
+            current_status["cmdSource"] = s
+            return {"ok": True, "source": s}
+        mock_cockpit.disarm_drive.side_effect = mock_disarm
+        mock_cockpit.disable_autonomy.side_effect = lambda: {"ok": True}
+        mock_cockpit.set_command_source.side_effect = mock_set_source
+        mock_ws.connected = True
+        mock_ws.recv_frames.return_value = []
+
+        q_start = {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        # Sample 1: sequence 5000, uptime 100s
+        sample_1 = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 5000, "espTimestampUs": 100000000, "resetCount": 1, "dataAgeMs": 15, "orientation": q_start}
+        # Sample 2: reset occurred! sequence dropped to 2, uptime reset to 40ms
+        sample_reset = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 2, "espTimestampUs": 40000, "resetCount": 2, "dataAgeMs": 15, "orientation": q_start}
+
+        motion_imu_stream = [sample_1, sample_reset]
+        def mock_get_imu_reset(*a, **k):
+            if not in_motion[0]:
+                return dict(sample_1)
+            return motion_imu_stream.pop(0) if motion_imu_stream else sample_reset
+        mock_cockpit.get_imu.side_effect = mock_get_imu_reset
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+
+        with patch("tools.rover_tests.runner.perform_zero_handshake", return_value=True):
+            with patch("tools.rover_tests.runner.wait_for_advancing_imu_sample", return_value=(True, sample_1, "ok")):
+                with patch.object(PhysicalTestRunner, "_assert_pre_motion_invariants", return_value=None):
+                    with patch("tools.rover_tests.runner.arm_and_verify_ready_armed", return_value=True):
+                        with patch("time.sleep", return_value=None):
+                            report = runner.execute_single_trial(1)
+
+        self.assertEqual(report.status, "ABORTED")
+        self.assertIn("ESP32_HARDWARE_RESET", report.watchdog_trips)
+        self.assertIn("ESP32 hardware reset detected during motion", report.abort_reason)
+        self.assertTrue(report.confirmed_final_zero_command)
+        self.assertTrue(report.confirmed_final_disarmed_state)
 
     def test_sustained_stale_imu_reading_triggers_safe_stop(self):
         """Sustained stale IMU readings across the bounded confirmation window abort motion safely."""
@@ -2593,7 +2683,12 @@ class TestFailFastSafeguardIntegration(unittest.TestCase):
             "cmdSource": "ROS_AUTONOMY"
         }
         mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
-        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
+        in_motion = [False]
+        def mock_send_cmd_sustained(vx=0.0, wz=0.0, **kw):
+            if abs(wz) > 0.01:
+                in_motion[0] = True
+            return {"ok": True}
+        mock_cockpit.send_cmd_vel.side_effect = mock_send_cmd_sustained
         def mock_disarm():
             current_status["armed"] = False
             current_status["autonomyState"] = "DISABLED"
@@ -2612,8 +2707,12 @@ class TestFailFastSafeguardIntegration(unittest.TestCase):
         sample_stale_1 = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 100, "dataAgeMs": 271, "orientation": q_start}
         sample_stale_confirm = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 100, "dataAgeMs": 310, "orientation": q_start}
 
-        imu_stream = [sample_1, sample_stale_1, sample_stale_confirm]
-        mock_cockpit.get_imu.side_effect = lambda *a, **k: imu_stream.pop(0) if imu_stream else sample_stale_confirm
+        motion_imu_stream = [sample_stale_1, sample_stale_confirm]
+        def mock_get_imu_sustained(*a, **k):
+            if not in_motion[0]:
+                return dict(sample_1)
+            return motion_imu_stream.pop(0) if motion_imu_stream else sample_stale_confirm
+        mock_cockpit.get_imu.side_effect = mock_get_imu_sustained
 
         runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
 

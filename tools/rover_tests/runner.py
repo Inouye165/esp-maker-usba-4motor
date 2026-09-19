@@ -741,6 +741,8 @@ class PhysicalTestRunner:
             else:
                 # Physical motion loop
                 last_motion_imu_seq: Optional[int] = None
+                last_motion_esp_ts: Optional[int] = None
+                last_motion_reset_count: Optional[int] = None
                 last_motion_imu_advance_time: float = t_motion_start
 
                 while True:
@@ -756,37 +758,89 @@ class PhysicalTestRunner:
                     # Ingest latest IMU data
                     latest_imu = self.cockpit.get_imu()
                     cur_seq = latest_imu.get("sequence") if latest_imu else None
+                    cur_esp_ts = latest_imu.get("espTimestampUs") if latest_imu else None
+                    cur_reset_cnt = latest_imu.get("resetCount") if latest_imu else None
+
+                    # Check for explicit ESP32 hardware reset during motion
+                    is_hardware_reset = False
+                    reset_msg = ""
+                    if cur_seq is not None and last_motion_imu_seq is not None and cur_seq < last_motion_imu_seq:
+                        is_hardware_reset = True
+                        reset_msg = f"ESP32 sequence dropped ({last_motion_imu_seq} -> {cur_seq})"
+                    elif cur_esp_ts is not None and last_motion_esp_ts is not None and cur_esp_ts < last_motion_esp_ts:
+                        is_hardware_reset = True
+                        reset_msg = f"ESP32 uptime reset ({last_motion_esp_ts}us -> {cur_esp_ts}us)"
+                    elif cur_reset_cnt is not None and last_motion_reset_count is not None and cur_reset_cnt > last_motion_reset_count:
+                        is_hardware_reset = True
+                        reset_msg = f"ESP32 resetCount incremented ({last_motion_reset_count} -> {cur_reset_cnt})"
+
+                    is_fresh, freshness_msg = check_imu_freshness(latest_imu, max_age_ms=250.0)
+
                     if cur_seq is not None:
                         if last_motion_imu_seq is None or cur_seq != last_motion_imu_seq:
                             last_motion_imu_seq = cur_seq
                             last_motion_imu_advance_time = now
+                    elif cur_esp_ts is not None:
+                        if last_motion_esp_ts is None or cur_esp_ts != last_motion_esp_ts:
+                            last_motion_imu_advance_time = now
+                    else:
+                        if is_fresh:
+                            last_motion_imu_advance_time = now
 
-                    is_fresh, freshness_msg = check_imu_freshness(latest_imu, max_age_ms=250.0)
+                    if cur_esp_ts is not None:
+                        last_motion_esp_ts = cur_esp_ts
+                    if cur_reset_cnt is not None:
+                        last_motion_reset_count = cur_reset_cnt
+
                     is_non_advancing = (now - last_motion_imu_advance_time) > 0.250
 
-                    if not is_fresh or is_non_advancing:
-                        # Bounded confirmation check: do not abort immediately on a single transient delayed reading.
-                        # Allow a short bounded pause (40ms, covering two 50Hz/20ms IMU packet periods) to recheck.
+                    if is_hardware_reset or not is_fresh or is_non_advancing:
+                        # CRITICAL SAFETY INVARIANT:
+                        # 1. Immediately command zero to rover over both ROS2 bridge and WebSocket.
+                        # Never leave a nonzero velocity command active while sensor integrity is suspect.
+                        self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
+                        if self.ws and self.ws.connected:
+                            try:
+                                self.ws.send_drive(0.0, 0.0)
+                            except Exception:
+                                pass
+
+                        # 2. Perform bounded confirmation check strictly while zero motion is commanded
                         time.sleep(0.04)
                         confirm_imu = self.cockpit.get_imu()
                         is_confirm_fresh, confirm_msg = check_imu_freshness(confirm_imu, max_age_ms=250.0)
                         confirm_seq = confirm_imu.get("sequence") if confirm_imu else None
+                        confirm_esp_ts = confirm_imu.get("espTimestampUs") if confirm_imu else None
+                        confirm_reset_cnt = confirm_imu.get("resetCount") if confirm_imu else None
+
+                        if not is_hardware_reset:
+                            if confirm_seq is not None and last_motion_imu_seq is not None and confirm_seq < last_motion_imu_seq:
+                                is_hardware_reset = True
+                                reset_msg = f"ESP32 sequence dropped ({last_motion_imu_seq} -> {confirm_seq})"
+                            elif confirm_esp_ts is not None and last_motion_esp_ts is not None and confirm_esp_ts < last_motion_esp_ts:
+                                is_hardware_reset = True
+                                reset_msg = f"ESP32 uptime reset ({last_motion_esp_ts}us -> {confirm_esp_ts}us)"
+                            elif confirm_reset_cnt is not None and last_motion_reset_count is not None and confirm_reset_cnt > last_motion_reset_count:
+                                is_hardware_reset = True
+                                reset_msg = f"ESP32 resetCount incremented ({last_motion_reset_count} -> {confirm_reset_cnt})"
 
                         confirm_advancing = True
                         if confirm_seq is not None and last_motion_imu_seq is not None:
                             if confirm_seq == last_motion_imu_seq and (time.time() - last_motion_imu_advance_time) > 0.250:
                                 confirm_advancing = False
 
-                        if (not is_confirm_fresh) or (not confirm_advancing):
+                        # 3. Always abort rather than automatically resume once zero motion is commanded
+                        if is_hardware_reset:
+                            abort_reason = f"ESP32 hardware reset detected during motion: {reset_msg}"
+                            trial_report.watchdog_trips.append("ESP32_HARDWARE_RESET")
+                        elif (not is_confirm_fresh) or (not confirm_advancing):
                             fail_detail = freshness_msg if not is_fresh else (confirm_msg if not is_confirm_fresh else f"Non-advancing IMU sequence ({last_motion_imu_seq}) for {(time.time() - last_motion_imu_advance_time)*1000:.0f}ms")
                             abort_reason = f"Confirmed stale/non-advancing IMU data: {fail_detail}"
                             trial_report.watchdog_trips.append("STALE_IMU_DATA")
-                            break
                         else:
-                            latest_imu = confirm_imu
-                            if confirm_seq is not None and confirm_seq != last_motion_imu_seq:
-                                last_motion_imu_seq = confirm_seq
-                                last_motion_imu_advance_time = time.time()
+                            abort_reason = f"Transient stale IMU reading ({freshness_msg}); stopped immediately for safety, aborted without auto-resume"
+                            trial_report.watchdog_trips.append("TRANSIENT_IMU_SAFE_STOP")
+                        break
 
                     cur_raw_yaw = quat_to_yaw(latest_imu.get("orientation", {}))
                     unwrapper.update_orientation_yaw(cur_raw_yaw)
