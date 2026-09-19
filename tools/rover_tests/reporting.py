@@ -122,6 +122,7 @@ class TrialReport:
     settle_pid_post_zero_packet_rate_hz: float = 0.0
     settle_imu_samples: List[Dict[str, Any]] = field(default_factory=list)
     settle_pid_packets: List[Dict[str, Any]] = field(default_factory=list)
+    active_pid_packets: List[Dict[str, Any]] = field(default_factory=list)
 
     # Balancing & Dynamic Braking Instrumentation
     wheel_balancing_enabled: bool = False

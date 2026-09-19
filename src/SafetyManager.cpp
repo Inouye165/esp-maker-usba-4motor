@@ -43,20 +43,22 @@ uint32_t SafetyManager::update(const float *targets, const float *measured, cons
         nonzeroTargetTicks[i]++;
         lastTargets[i] = target;
         
-        // Breakaway grace period: ignore faults for the first 100 ticks (1.0 second) of motion
-        if (nonzeroTargetTicks[i] <= 100) {
-            continue;
-        }
-        
-        // 1. Motor Stall Detection:
-        // Commanded non-zero, high PWM output, but wheel speed remains near-zero
-        if (abs(target) > 0.5f && abs(pwm) > 90 && abs(speed) < 0.1f) {
+        // 1. Motor Stall Detection (Continuous stopped-while-commanded watchdog):
+        // Protects Nav2, ROS 2, teleop, and test runner across all motion phases.
+        // If commanded non-zero (|target| >= 0.10 rad/s) and measured speed remains near-zero (|speed| < 0.05 rad/s)
+        // continuously for >= 1.5 seconds (150 cycles @ 100Hz): trigger stall fault
+        if (abs(target) >= 0.10f && abs(speed) < 0.05f) {
             stallTicks[i]++;
-            if (stallTicks[i] > 200) { // 2.0 seconds at 100Hz
+            if (stallTicks[i] >= 150) { // 1.5 seconds at 100Hz
                 activeFaults |= (FAULT_STALL_M1 << i);
             }
         } else {
             stallTicks[i] = 0;
+        }
+
+        // Breakaway grace period: ignore encoder line faults and direction mismatches for first 100 ticks (1.0s)
+        if (nonzeroTargetTicks[i] <= 100) {
+            continue;
         }
         
         // 2. Encoder Fault Detection (disconnected lines):

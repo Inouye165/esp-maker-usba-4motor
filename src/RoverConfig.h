@@ -65,7 +65,11 @@ const float MAX_ANGULAR_JERK_RADPS3 = 200.0f;     // Snappy angular jerk respons
 const float KP_SPEED = 2.2f;
 const float KI_SPEED = 1.2f;
 const float KD_SPEED = 0.05f;
-const float SPIN_PID_KP = 6.0f; // Pure-spin proportional gain (6.0), active strictly during pure-spin maneuvers
+const float SPIN_PID_KP = 10.0f; // Pure-spin proportional gain (increased from 6.0 to 10.0 for closed-loop response)
+const float SPIN_PID_KI = 4.0f;  // Pure-spin integral gain (active during pure-spin maneuvers to eliminate steady-state offset)
+const float SPIN_SYNC_TRIM_GAIN = 12.0f; // Push-pull front/rear equalization trim gain
+const int SPIN_SYNC_TRIM_MAX = 18;       // Maximum push-pull sync trim authority (PWM)
+const int MIN_USABLE_SPIN_PWM = 68;      // Empirically safe floor preventing tire-scrub stall during pure spin
 
 
 // Breakaway and Static Friction Compensation Limits (Feedforward Constants)

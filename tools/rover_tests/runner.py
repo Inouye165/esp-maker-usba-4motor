@@ -700,6 +700,7 @@ class PhysicalTestRunner:
 
         abort_reason = None
         t_motion_start = time.time()
+        active_pid_packets: List[Dict[str, Any]] = []
 
         try:
             if self.params.dry_run:
@@ -811,6 +812,18 @@ class PhysicalTestRunner:
                                 act_st = f.get("actuationState")
                                 if act_st and act_st not in trial_report.actuation_states_observed:
                                     trial_report.actuation_states_observed.append(act_st)
+                                active_pid_packets.append({
+                                    "host_receipt_time_monotonic": round(time.monotonic(), 6),
+                                    "t_rel_s": round(now - t_motion_start, 4),
+                                    "source_timestamp_ms": f.get("timestamp"),
+                                    "source_sequence": f.get("sequence"),
+                                    "actuationState": act_st,
+                                    "m1": f.get("m1", {}),
+                                    "m2": f.get("m2", {}),
+                                    "m3": f.get("m3", {}),
+                                    "m4": f.get("m4", {}),
+                                    "outerYaw": f.get("outerYaw")
+                                })
                                 for w_id in ["m1", "m2", "m3", "m4"]:
                                     w_data = f.get(w_id, {})
                                     tgt = w_data.get("targetRadps")
@@ -937,6 +950,7 @@ class PhysicalTestRunner:
             trial_report.abort_reason = abort_reason
             trial_report.breakout_event_count = breakout_count
             trial_report.breakout_dwell_time_ms_total = total_breakout_dwell_ms
+            trial_report.active_pid_packets = active_pid_packets
             print(f"[TRIAL ABORTED] {abort_reason}")
             cleanup_st = self.cleanup()
             trial_report.confirmed_final_zero_command = True
@@ -1163,6 +1177,7 @@ class PhysicalTestRunner:
             trial_report.settle_achieved_pid_rate_hz = trial_report.settle_pid_post_zero_packet_rate_hz
             trial_report.settle_imu_samples = settle_imu_samples
             trial_report.settle_pid_packets = settle_pid_packets
+            trial_report.active_pid_packets = active_pid_packets
 
             # Calculate brake pulse duration if observed
             brake_packets = [p for p in settle_pid_packets if p.get("actuationState") == "BRAKE"]

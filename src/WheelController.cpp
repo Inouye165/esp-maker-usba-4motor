@@ -58,6 +58,11 @@ void SingleWheelController::setTargetVelocity(float targetRadps, bool isSpin, bo
         errorSum = 0.0f;
         lastError = 0.0f;
     }
+    else if (isSpin && abs(targetRadps - targetVel) > 0.5f) {
+        // Step change during spin (e.g. cruise to creep transition): clear integral accumulator to avoid negative windup
+        errorSum = 0.0f;
+        lastError = 0.0f;
+    }
     targetVel = targetRadps;
 }
 
@@ -202,7 +207,8 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
     errorSum += error * dt;
     
     // Integral anti-windup: clamp the integral contribution
-    float integralTerm = errorSum * Ki;
+    float activeKi = isSpinManeuver ? SPIN_PID_KI : Ki;
+    float integralTerm = errorSum * activeKi;
     integralTerm = constrain(integralTerm, -150.0f, 150.0f);
     
     // Derivative term
@@ -417,8 +423,9 @@ void WheelController::update(const float *measuredVelocities, const int32_t *tic
         lastSpinSyncTrimRight = 0;
     } else {
         float deadband = WHEEL_BALANCE_ENABLED ? 0.08f : 0.15f;
-        int trimMax    = WHEEL_BALANCE_ENABLED ? 10 : 8;
+        int trimMax    = WHEEL_BALANCE_ENABLED ? SPIN_SYNC_TRIM_MAX : 8;
         int deltaMax   = WHEEL_BALANCE_ENABLED ? 2 : 1;
+        float syncGain = WHEEL_BALANCE_ENABLED ? SPIN_SYNC_TRIM_GAIN : 5.0f;
 
         // --- Left Side Sync Trim (M1 / LF [0] vs M3 / LR [2]) ---
         float v0 = measuredVelocities[0];
@@ -432,7 +439,7 @@ void WheelController::update(const float *measuredVelocities, const int32_t *tic
             effLeftDiff = leftDiffMag + deadband;
         }
 
-        int rawLeftTrim = (int)round(5.0f * effLeftDiff);
+        int rawLeftTrim = (int)round(syncGain * effLeftDiff);
         rawLeftTrim = constrain(rawLeftTrim, -trimMax, trimMax);
 
         int leftDelta = rawLeftTrim - lastSpinSyncTrimLeft;
@@ -451,7 +458,7 @@ void WheelController::update(const float *measuredVelocities, const int32_t *tic
             effRightDiff = rightDiffMag + deadband;
         }
 
-        int rawRightTrim = (int)round(5.0f * effRightDiff);
+        int rawRightTrim = (int)round(syncGain * effRightDiff);
         rawRightTrim = constrain(rawRightTrim, -trimMax, trimMax);
 
         int rightDelta = rawRightTrim - lastSpinSyncTrimRight;
@@ -480,7 +487,6 @@ void WheelController::update(const float *measuredVelocities, const int32_t *tic
 
     // Usable power floor protection: ensure push-pull trim never reduces kinetic motor power below stall threshold
     if (isSpinManeuver) {
-        const int MIN_USABLE_SPIN_PWM = 68; // Empirically safe floor preventing tire-scrub stall during pure spin
         for (int i = 0; i < 4; i++) {
             float t = controllers[i].getTarget();
             if (abs(t) >= 0.05f && controllers[i].getStictionState() == STICTION_KINETIC) {

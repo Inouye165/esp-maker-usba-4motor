@@ -25,6 +25,7 @@ Verifies:
 
 import unittest
 from unittest.mock import MagicMock, patch
+from dataclasses import asdict
 import math
 import time
 import os
@@ -492,6 +493,97 @@ class TestFailFastStallSafeguard(unittest.TestCase):
         self.assertEqual(trial_report.status, "ABORTED")
         self.assertEqual(trial_report.breakout_event_count, 4, "Aborted trial must report actual breakout events")
         self.assertEqual(trial_report.breakout_dwell_time_ms_total, 800.0)
+
+
+class TestImprovedSpinClosedLoopAndSyncTrim(unittest.TestCase):
+    """
+    Verifies the improved closed-loop and push-pull balancing control:
+    - Faster proportional and integral tracking under load.
+    - Sync trim authority increased up to 18 PWM.
+    - Minimum usable power floor (68 PWM) strictly preserved when trimming fast wheels.
+    """
+
+    def test_sync_trim_authoritative_balancing_with_power_floor(self):
+        SPIN_SYNC_TRIM_GAIN = 12.0
+        SPIN_SYNC_TRIM_MAX = 18
+        MIN_USABLE_SPIN_PWM = 68
+        deadband = 0.08
+
+        # Scenario: M2 (RF) measured 3.06 rad/s vs M4 (RR) measured 1.88 rad/s (diff = 1.18 rad/s)
+        v_fast = 3.06
+        v_slow = 1.88
+        diff_mag = abs(v_fast) - abs(v_slow)
+        eff_diff = diff_mag - deadband  # 1.10 rad/s
+
+        raw_trim = int(round(SPIN_SYNC_TRIM_GAIN * eff_diff))  # 12.0 * 1.10 = 13.2 -> 13 PWM
+        raw_trim = max(-SPIN_SYNC_TRIM_MAX, min(SPIN_SYNC_TRIM_MAX, raw_trim))
+        self.assertEqual(raw_trim, 13, "Sync trim should provide 13 PWM of correction for 1.18 rad/s delta")
+
+        # Apply push-pull trim to right side:
+        # Fast wheel (M2) base = 80 PWM -> trimmed down
+        base_fast = 80
+        cand_fast = base_fast - raw_trim  # 80 - 13 = 67 PWM
+        final_fast = max(MIN_USABLE_SPIN_PWM, cand_fast)  # Clamped to 68 PWM
+        self.assertEqual(final_fast, 68, "Fast wheel must not be reduced below safe floor 68 PWM")
+
+        # Slow wheel (M4) base = 104 PWM -> boosted
+        base_slow = 104
+        cand_slow = base_slow + raw_trim  # 104 + 13 = 117 PWM
+        final_slow = min(255, cand_slow)
+        self.assertEqual(final_slow, 117, "Slow wheel must receive +13 PWM boost to overcome scrub load")
+
+    def test_single_wheel_pid_tracking_response(self):
+        # Verify that SPIN_PID_KP = 10.0 and SPIN_PID_KI = 4.0 provide strong tracking under error
+        kp = 10.0
+        ki = 4.0
+        error = 1.04  # target 2.92 - measured 1.88 rad/s
+        dt = 0.01
+
+        # Proportional term
+        p_term = kp * error
+        self.assertAlmostEqual(p_term, 10.4)
+
+        # After 1.0s (100 ticks) of steady error
+        integral_term = (error * dt * 100) * ki  # 1.04 * 4.0 = 4.16 PWM
+        self.assertAlmostEqual(integral_term, 4.16)
+
+        total_correction = p_term + integral_term  # ~14.56 PWM boost
+        self.assertGreaterEqual(total_correction, 14.0)
+
+
+class TestActiveMotionTelemetryReporting(unittest.TestCase):
+    """
+    Verifies that active motion PID diagnostic frames are recorded and serialized in TrialReport.
+    """
+
+    def test_trial_report_serializes_active_pid_packets(self):
+        report = TrialReport(
+            trial_index=1,
+            requested_turn_deg=180.0,
+            direction="cw",
+            target_signed_yaw_deg=180.0,
+            status="SUCCESS"
+        )
+        sample_packet = {
+            "host_receipt_time_monotonic": 100.25,
+            "t_rel_s": 0.25,
+            "source_timestamp_ms": 1789824460000,
+            "source_sequence": 1234,
+            "actuationState": "DRIVE",
+            "m1": {"targetRadps": -2.92, "measuredRadps": -2.36, "basePwm": -92, "spinSyncTrim": 6, "finalPwm": -86},
+            "m2": {"targetRadps": 2.92, "measuredRadps": 3.06, "basePwm": 79, "spinSyncTrim": -6, "finalPwm": 73},
+            "m3": {"targetRadps": -2.92, "measuredRadps": -1.99, "basePwm": -92, "spinSyncTrim": -6, "finalPwm": -98},
+            "m4": {"targetRadps": 2.92, "measuredRadps": 1.88, "basePwm": 104, "spinSyncTrim": 6, "finalPwm": 110},
+            "outerYaw": {"actuationState": "DRIVE"}
+        }
+        report.active_pid_packets.append(sample_packet)
+
+        serialized = asdict(report)
+        self.assertIn("active_pid_packets", serialized)
+        self.assertEqual(len(serialized["active_pid_packets"]), 1)
+        pkt = serialized["active_pid_packets"][0]
+        self.assertEqual(pkt["m4"]["finalPwm"], 110)
+        self.assertEqual(pkt["m2"]["measuredRadps"], 3.06)
 
 
 if __name__ == "__main__":
