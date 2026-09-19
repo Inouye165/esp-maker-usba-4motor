@@ -16,7 +16,7 @@ import time
 import math
 import statistics
 import traceback
-from typing import Optional, Dict, Any, List, Callable, Tuple
+from typing import Optional, Dict, Any, List, Callable, Tuple, Union
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -25,6 +25,14 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 
 from .turn import TurnParameters, compute_wheel_speed_targets, verify_wheel_command_symmetry
+from .linear import (
+    LinearParameters,
+    LinearConfigurationException,
+    compute_linear_wheel_speed_targets,
+    verify_linear_wheel_command_symmetry,
+    ticks_to_meters,
+    meters_to_ticks
+)
 from .transport import (
     NativeWSClient,
     CockpitClient,
@@ -46,7 +54,7 @@ from .sensors import (
     MagneticImuException,
     SensorException
 )
-from .controllers import AngularApproachController, ApproachPhase
+from .controllers import AngularApproachController, LinearApproachController, ApproachPhase
 from .reporting import (
     TrialReport,
     WheelTrialMetrics,
@@ -124,7 +132,7 @@ class PhysicalTestRunner:
     """
     def __init__(
         self,
-        params: TurnParameters,
+        params: Union[TurnParameters, LinearParameters],
         prompt_fn: Optional[Callable[[str], str]] = None,
         cockpit_client: Optional[CockpitClient] = None,
         ws_client: Optional[NativeWSClient] = None
@@ -149,6 +157,14 @@ class PhysicalTestRunner:
           armed=False, autonomyState=DISABLED, cmdSource=NONE.
         - Does not suppress a retry after a failed or unverified cleanup.
         """
+        if self.params.dry_run:
+            self._cleaned_up = True
+            cleanup_st = {"armed": False, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+            self._last_cleanup_state = cleanup_st
+            if verbose:
+                print(f"[CLEANUP VERIFIED] Final safety state: armed=False autonomyState=DISABLED cmdSource=NONE")
+            return cleanup_st
+
         if self._cleaned_up:
             try:
                 st = self.cockpit.get_status()
@@ -190,7 +206,13 @@ class PhysicalTestRunner:
         return cleanup_st
 
     def execute_suite(self) -> MultiTrialSuiteReport:
-        """Executes the full suite of trials."""
+        """Executes the full suite of trials (dispatches to turn or linear)."""
+        if isinstance(self.params, LinearParameters):
+            return self.execute_linear_suite()
+        return self.execute_turn_suite()
+
+    def execute_turn_suite(self) -> MultiTrialSuiteReport:
+        """Executes the full suite of turn trials."""
         suite_id = str(int(time.time()))
         cmd_parts = [
             f"rover-test turn --degrees {self.params.degrees} --direction {self.params.direction} --trials {self.params.trials}"
@@ -351,9 +373,605 @@ class PhysicalTestRunner:
         print(f"\n[REPORT SAVED] Full JSON telemetry report: {json_path}")
         return suite_report
 
+    def execute_linear_suite(self) -> MultiTrialSuiteReport:
+        """Executes the full suite of linear trials."""
+        suite_id = str(int(time.time()))
+        cmd_parts = [
+            f"rover-test linear --distance {self.params.distance} --direction {self.params.direction} --trials {self.params.trials}"
+        ]
+        if self.params.enable_balancing:
+            cmd_parts.append("--enable-balancing")
+        if self.params.enable_braking:
+            cmd_parts.append("--enable-braking")
+        cmd_str = " ".join(cmd_parts)
+
+        suite_report = MultiTrialSuiteReport(
+            suite_id=suite_id,
+            test_type="linear",
+            command_line=cmd_str,
+            timestamp_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            target_distance_m=self.params.distance,
+            direction=self.params.direction,
+            total_trials=self.params.trials,
+            repetitions=self.params.trials,
+            is_dry_run=self.params.dry_run,
+            wheel_balancing_enabled=self.params.enable_balancing,
+            dynamic_braking_enabled=self.params.enable_braking
+        )
+
+        print("=" * 80)
+        print(f"ROVER ONE REUSABLE PHYSICAL TEST FRAMEWORK: LINEAR {self.params.distance:.3f}m {self.params.direction.upper()}")
+        print(f"Repetitions: {self.params.trials} | Requested Velocity: {self.params.max_linear_speed:.2f} m/s (Constant Production Speed)")
+        print(f"Balancing: {'ENABLED' if self.params.enable_balancing else 'DISABLED'} | Braking: {'ENABLED' if self.params.enable_braking else 'DISABLED'}")
+        print(f"Mode: {'DRY RUN (STATIONARY - NO MOTOR POWER)' if self.params.dry_run else 'PHYSICAL MOTION EXECUTION'}")
+        print("=" * 80)
+
+        # Connect WebSocket unless in pure offline mock mode
+        if not self.params.dry_run:
+            if not self.ws.connect():
+                print(f"[TRANSPORT ERROR] Failed to connect to Cockpit WebSocket on {self.params.host}:{self.params.port}")
+                raise TransportException("Cannot connect to Cockpit WebSocket")
+            if not self.ws.authenticate(self.cockpit.token):
+                print("[AUTH ERROR] Failed to authenticate with Cockpit using operator token")
+                raise TransportException("Operator authentication rejected")
+            print("[OK] Connected and authenticated with Cockpit WebSocket.")
+
+        try:
+            for trial_idx in range(1, self.params.trials + 1):
+                trial_report = self.execute_single_linear_trial(trial_idx)
+                suite_report.trials.append(trial_report)
+                if trial_report.status in ("SUCCESS", "DRY_RUN_PASSED"):
+                    suite_report.successful_trials += 1
+                else:
+                    suite_report.aborted_trials += 1
+                    print(f"\n[SUITE ABORTED] Trial {trial_idx} aborted: {trial_report.abort_reason}")
+                    break
+
+            # Aggregate linear metrics across successful trials
+            successful_trials = [t for t in suite_report.trials if t.status in ("SUCCESS", "DRY_RUN_PASSED")]
+            errors = [t.settled_distance_error_m for t in successful_trials if t.settled_distance_error_m is not None]
+            if errors:
+                suite_report.mean_settled_distance_error_m = round(statistics.mean(errors), 5)
+                suite_report.std_dev_settled_distance_error_m = round(statistics.stdev(errors), 5) if len(errors) > 1 else 0.0
+                suite_report.repeatability_distance_m = round(max(errors) - min(errors), 5) if len(errors) > 1 else 0.0
+
+            hdg_changes = [t.imu_heading_change_deg for t in successful_trials if t.imu_heading_change_deg is not None]
+            if hdg_changes:
+                suite_report.mean_heading_change_deg = round(statistics.mean(hdg_changes), 3)
+
+            cum_cmd = 0.0
+            cum_meas = 0.0
+            for t in suite_report.trials:
+                step_cmd = t.requested_distance_m if t.requested_distance_m is not None else self.params.distance
+                step_meas = t.measured_distance_m if t.measured_distance_m is not None else 0.0
+                step_err = t.settled_distance_error_m if t.settled_distance_error_m is not None else 0.0
+                step_coast = t.post_zero_coast_m if t.post_zero_coast_m is not None else 0.0
+                step_hdg = t.imu_heading_change_deg if t.imu_heading_change_deg is not None else 0.0
+                cum_cmd += step_cmd
+                cum_meas += step_meas
+                suite_report.repetition_trajectory.append({
+                    "repetition": t.trial_index,
+                    "target_m": round(step_cmd, 4),
+                    "measured_m": round(step_meas, 4),
+                    "error_m": round(step_err, 4),
+                    "post_zero_coast_m": round(step_coast, 4),
+                    "heading_change_deg": round(step_hdg, 2),
+                    "status": t.status
+                })
+
+            suite_report.total_cumulative_commanded_m = round(cum_cmd, 4)
+            suite_report.total_cumulative_measured_m = round(cum_meas, 4)
+            suite_report.total_cumulative_error_m = round(cum_meas - cum_cmd, 4)
+
+            # Generate output files
+            json_path = ReportGenerator.save_json(suite_report, self.params.report_directory)
+            md_summary = ReportGenerator.format_markdown_summary(suite_report)
+            print("\n" + md_summary)
+            print(f"\n[REPORT SAVED] Full JSON telemetry report: {json_path}")
+            return suite_report
+        finally:
+            self.cleanup()
+
+    def execute_single_linear_trial(self, trial_idx: int) -> TrialReport:
+        """Executes a single forward or reverse linear translation trial."""
+        trial_report = TrialReport(
+            trial_index=trial_idx,
+            test_type="linear",
+            direction=self.params.direction,
+            requested_distance_m=self.params.distance,
+            target_signed_distance_m=self.params.signed_target_m,
+            status="INITIALIZING",
+            wheel_balancing_enabled=self.params.enable_balancing,
+            dynamic_braking_enabled=self.params.enable_braking
+        )
+
+        t_trial_start = time.time()
+        wheel_metrics = {w_id: WheelTrialMetrics(wheel_id=w_id) for w_id in ["m1", "m2", "m3", "m4"]}
+        trial_report.wheel_metrics = wheel_metrics
+
+        # Step 1: Inter-Trial Approval
+        if self.params.inter_trial_approval or (trial_idx == 1 and not self.params.dry_run):
+            print("\n" + "-" * 60)
+            print(f"OPERATOR INTER-TRIAL APPROVAL REQUIRED FOR TRIAL {trial_idx}/{self.params.trials}")
+            print(f"  • Distance:         {self.params.distance:.3f} m ({self.params.direction.upper()})")
+            print(f"  • Requested Speed:  {self.params.max_linear_speed:.2f} m/s (Constant Production Speed)")
+            print(f"  • Wheel Balancing:  {'ENABLED' if self.params.enable_balancing else 'DISABLED'}")
+            print(f"  • Dynamic Braking:  {'ENABLED' if self.params.enable_braking else 'DISABLED'}")
+            print(f"  • Execution Mode:   {'DRY RUN (STATIONARY)' if self.params.dry_run else 'PHYSICAL MOTION'}")
+            print("-" * 60)
+            ans = self.prompt_fn("Authorize motion for this trial? [y/N]: ").strip().lower()
+            if ans not in ("y", "yes"):
+                trial_report.status = "ABORTED"
+                trial_report.abort_reason = "Operator declined authorization"
+                return trial_report
+
+        # Step 2: Clear faults if requested
+        if self.params.clear_faults and not self.params.dry_run:
+            self.cockpit.clear_faults()
+            time.sleep(0.1)
+
+        # Step 3: Configure drive
+        if not self.params.dry_run:
+            self.cockpit.configure_drive(
+                wheel_balancing=self.params.enable_balancing,
+                dynamic_braking=self.params.enable_braking
+            )
+
+        # Step 4: Fresh sensor baselines
+        start_yaw_deg = 0.0
+        start_ticks = {w: 0 for w in ["m1", "m2", "m3", "m4"]}
+        if not self.params.dry_run:
+            try:
+                init_imu = self.cockpit.get_imu()
+                is_non_mag, imu_msg = verify_non_magnetic_imu(init_imu)
+                if not is_non_mag:
+                    trial_report.status = "ABORTED"
+                    trial_report.abort_reason = f"IMU Safety Failure: {imu_msg}"
+                    return trial_report
+                start_yaw_deg = math.degrees(quat_to_yaw(init_imu.get("orientation", {})))
+                trial_report.start_heading_raw_deg = round(start_yaw_deg, 4)
+
+                enc_res = self.cockpit.get_encoders()
+                if enc_res and "encoders" in enc_res:
+                    for w in ["m1", "m2", "m3", "m4"]:
+                        start_ticks[w] = enc_res["encoders"].get(w, 0)
+                        wheel_metrics[w].encoder_start_ticks = start_ticks[w]
+            except Exception as e:
+                trial_report.status = "ABORTED"
+                trial_report.abort_reason = f"Preflight sensor verification fault: {e}"
+                return trial_report
+        else:
+            trial_report.start_heading_raw_deg = 0.0
+
+        # Step 5: Zero Handshake
+        if not self.params.dry_run:
+            try:
+                complete_zero_handshake(self.cockpit, self.ws, transitions=trial_report.autonomy_state_transitions)
+            except HandshakeException as e:
+                trial_report.status = "ABORTED"
+                trial_report.abort_reason = f"Handshake failure: {e}"
+                cleanup_st = self.cleanup()
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
+                return trial_report
+        else:
+            trial_report.autonomy_state_transitions.append(
+                {"timestamp": time.time(), "state": "READY_DISARMED", "trigger": "zero_handshake (dry run)"}
+            )
+
+        # Step 6: Arm Drivetrain
+        if not self.params.dry_run:
+            try:
+                arm_and_verify_ready_armed(self.cockpit, transitions=trial_report.autonomy_state_transitions)
+            except HandshakeException as e:
+                trial_report.status = "ABORTED"
+                trial_report.abort_reason = f"Arming failure: {e}"
+                cleanup_st = self.cleanup()
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
+                return trial_report
+        else:
+            trial_report.autonomy_state_transitions.append(
+                {"timestamp": time.time(), "state": "READY_ARMED", "trigger": "arm_drive (dry run)"}
+            )
+
+        # Step 7: Pre-motion assertions
+        if not self.params.dry_run:
+            inv_err = self._assert_pre_motion_invariants()
+            if inv_err:
+                trial_report.status = "ABORTED"
+                trial_report.abort_reason = inv_err
+                cleanup_st = self.cleanup()
+                trial_report.confirmed_final_zero_command = True
+                trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
+                return trial_report
+
+        # Step 8: Setup LinearApproachController
+        controller = LinearApproachController(
+            cruise_speed_mps=self.params.max_linear_speed,
+            creep_speed_mps=self.params.creep_linear_speed,
+            approach_zone_m=self.params.creep_threshold_m
+        )
+        controller.reset(target=self.params.signed_target_m, start_time=time.time())
+
+        # Step 9: Execution Loop (Dry Run or Physical)
+        wheel_samples = {
+            w_id: {
+                "targets": [],
+                "measured": [],
+                "pwms": [],
+                "stopped_events": 0,
+                "stopped_duration_s": 0.0,
+                "is_currently_stopped": False,
+                "stopped_entry_time": None,
+            }
+            for w_id in ["m1", "m2", "m3", "m4"]
+        }
+        total_telemetry_samples = 0
+        active_pid_packets: List[Dict[str, Any]] = []
+
+        try:
+            if self.params.dry_run:
+                sim_target = self.params.signed_target_m
+                sim_target = self.params.signed_target_m
+                sim_progress_stages = [
+                    0.0,
+                    sim_target * 0.10,
+                    sim_target * 0.50,
+                    sim_target * 0.85,
+                    sim_target
+                ]
+                for sim_dist in sim_progress_stages:
+                    cmd_vx = controller.update(current_progress=sim_dist, current_time=time.time())
+                    wheel_cmds = compute_linear_wheel_speed_targets(cmd_vx)
+                    sym_ok, sym_msg = verify_linear_wheel_command_symmetry(wheel_cmds)
+                    if not sym_ok:
+                        raise TestAbortException(f"Symmetry check failed: {sym_msg}")
+                    if controller.phase == ApproachPhase.CRUISE:
+                        for w_id in ["m1", "m2", "m3", "m4"]:
+                            cmd_val = wheel_cmds[w_id]
+                            wheel_samples[w_id]["targets"].append(cmd_val)
+                            wheel_samples[w_id]["measured"].append(cmd_val)
+                            wheel_samples[w_id]["pwms"].append(55)
+                        total_telemetry_samples += 1
+                    time.sleep(0.01)
+
+                t_dry_mono = time.monotonic()
+                trial_report.zero_command_send_time_monotonic = t_dry_mono
+                trial_report.zero_command_response_time_monotonic = t_dry_mono
+                trial_report.zero_command_latency_ms = 0.0
+                trial_report.zero_command_response = {"ok": True, "dry_run": True}
+                if self.params.enable_braking:
+                    trial_report.actuation_states_observed = ["DRIVE", "BRAKE", "COAST"]
+                    trial_report.brake_active_duration_ms = 100.0
+                else:
+                    trial_report.actuation_states_observed = ["DRIVE", "COAST"]
+                    trial_report.brake_active_duration_ms = 0.0
+
+                trial_report.status = "DRY_RUN_PASSED"
+                trial_report.measured_distance_m = sim_target
+                trial_report.final_settled_distance_m = sim_target
+                trial_report.settled_distance_error_m = 0.0
+                trial_report.post_zero_coast_m = 0.0
+                trial_report.imu_heading_change_deg = 0.0
+                trial_report.front_to_rear_diff_left_radps = 0.0
+                trial_report.front_to_rear_diff_right_radps = 0.0
+
+                # Simulated Phase Breakdown
+                dir_sign = 1.0 if sim_target >= 0.0 else -1.0
+                acc_dur = 0.20
+                acc_dist = round(0.025 * dir_sign, 4)
+                acc_spd = round(0.125 * dir_sign, 3)
+                trial_report.acceleration_phase = {
+                    "duration_s": acc_dur,
+                    "distance_m": acc_dist,
+                    "mean_speed_mps": acc_spd,
+                    "peak_pwm": 65
+                }
+
+                std_dist = round((abs(sim_target) - 0.08) * dir_sign, 4)
+                std_dur = round(abs(std_dist) / self.params.max_linear_speed, 2)
+                std_spd = round(self.params.max_linear_speed * dir_sign, 3)
+                trial_report.steady_speed_phase = {
+                    "duration_s": std_dur,
+                    "distance_m": std_dist,
+                    "mean_speed_mps": std_spd,
+                    "left_to_right_speed_diff_radps": 0.0,
+                    "left_to_right_pwm_diff": 0.0
+                }
+
+                stp_dur = 0.35
+                stp_dist = round(0.055 * dir_sign, 4)
+                trial_report.stopping_phase = {
+                    "duration_s": stp_dur,
+                    "distance_m": stp_dist
+                }
+                trial_report.stopping_distance_m = stp_dist
+                trial_report.stopping_duration_s = stp_dur
+                trial_report.steady_speed_front_to_rear_left_radps = 0.0
+                trial_report.steady_speed_front_to_rear_right_radps = 0.0
+                trial_report.steady_speed_left_to_right_speed_diff_radps = 0.0
+                trial_report.steady_speed_left_to_right_pwm_diff = 0.0
+
+                delta_ticks_sim = int(meters_to_ticks(sim_target))
+                for w_id in ["m1", "m2", "m3", "m4"]:
+                    w_metric = wheel_metrics[w_id]
+                    w_metric.encoder_delta_ticks = delta_ticks_sim
+                    w_metric.encoder_final_ticks = w_metric.encoder_start_ticks + delta_ticks_sim
+                    w_metric.stopped_while_commanded = False
+                    w_metric.commanded_speed_source = "calculated_expected"
+                    speed_sign = 1.0 if sim_target >= 0.0 else -1.0
+                    w_metric.commanded_speed_radps_mean = round(speed_sign * (self.params.max_linear_speed / 0.033475), 2)
+                    w_metric.measured_speed_radps_mean = w_metric.commanded_speed_radps_mean
+                    w_metric.commanded_speed_radps_max = w_metric.commanded_speed_radps_mean
+                    w_metric.measured_speed_radps_max = w_metric.commanded_speed_radps_mean
+                    w_metric.measured_speed_radps_min = w_metric.commanded_speed_radps_mean
+                    w_metric.measured_speed_radps_abs_mean = abs(w_metric.commanded_speed_radps_mean)
+                    w_metric.pwm_mean = 55.0
+                    w_metric.pwm_max = 65
+                    w_metric.active_samples_count = len(sim_progress_stages)
+                trial_report.steady_speed_wheel_metrics = dict(wheel_metrics)
+            else:
+                # Physical motion loop
+                first_cmd_vx = controller.update(current_progress=0.0, current_time=time.time())
+                first_res = self.cockpit.send_cmd_vel(vx=first_cmd_vx, wz=0.0)
+                trial_report.first_command_response = first_res
+                if not first_res.get("ok", False):
+                    raise TestAbortException(f"First command rejected: {first_res.get('error')}")
+
+                # Wait up to 500ms for ACTIVE state
+                t_chk = time.time()
+                while time.time() - t_chk < 0.5:
+                    a_st = self.cockpit.get_autonomy_status()
+                    if a_st.get("state") == "ACTIVE" or abs(a_st.get("clampedLinear", 0.0)) > 1e-4:
+                        break
+                    time.sleep(0.04)
+
+                t_start_motion = time.time()
+                t_steady_start: Optional[float] = None
+                t_zero_issued: Optional[float] = None
+                dist_at_steady_start = 0.0
+                dist_at_zero_issued = 0.0
+                max_duration = 25.0
+                curr_dist_m = 0.0
+                last_yaw_deg = start_yaw_deg
+                breakout_start_time = None
+                breakout_count = 0
+                total_breakout_dwell_ms = 0.0
+
+                steady_wheel_samples: Dict[str, Dict[str, List[float]]] = {
+                    w: {"targets": [], "measured": [], "pwms": []} for w in ["m1", "m2", "m3", "m4"]
+                }
+                accel_pwms: List[int] = []
+
+                while True:
+                    now = time.time()
+                    if now - t_start_motion > max_duration:
+                        raise TestAbortException(f"Linear trial exceeded max duration ({max_duration}s)")
+
+                    # Process incoming telemetry
+                    if self.ws and self.ws.connected:
+                        frames = self.ws.recv_frames()
+                        for f in frames:
+                            ftype = f.get("type")
+                            if ftype == "encoder_status" or ftype == "encoders":
+                                encs = f.get("encoders", {})
+                                if encs:
+                                    tick_deltas = [encs.get(w, start_ticks[w]) - start_ticks[w] for w in ["m1", "m2", "m3", "m4"]]
+                                    avg_ticks = sum(tick_deltas) / 4.0
+                                    curr_dist_m = ticks_to_meters(avg_ticks)
+                            elif ftype == "imu":
+                                ori = f.get("orientation", {})
+                                if ori:
+                                    last_yaw_deg = math.degrees(quat_to_yaw(ori))
+                            elif ftype == "pid_diagnostic":
+                                total_telemetry_samples += 1
+                                active_pid_packets.append(f)
+                                
+                                # Check if steady speed is reached
+                                meas_speeds = []
+                                for w_id in ["m1", "m2", "m3", "m4"]:
+                                    w_f = f.get(w_id, {})
+                                    m_val = w_f.get("measuredRadps")
+                                    if m_val is not None:
+                                        meas_speeds.append(abs(float(m_val)))
+                                
+                                expected_wheel_radps = abs(self.params.max_linear_speed / 0.033475)
+                                if meas_speeds and t_steady_start is None:
+                                    avg_meas = sum(meas_speeds) / len(meas_speeds)
+                                    if avg_meas >= 0.85 * expected_wheel_radps:
+                                        t_steady_start = now
+                                        dist_at_steady_start = curr_dist_m
+
+                                for w_id in ["m1", "m2", "m3", "m4"]:
+                                    w_f = f.get(w_id, {})
+                                    tgt = w_f.get("targetRadps")
+                                    meas = w_f.get("measuredRadps")
+                                    pwm = w_f.get("finalPwm", w_f.get("basePwm"))
+                                    stict = w_f.get("stictionState")
+                                    if tgt is not None:
+                                        wheel_samples[w_id]["targets"].append(float(tgt))
+                                    if meas is not None:
+                                        wheel_samples[w_id]["measured"].append(float(meas))
+                                    if pwm is not None:
+                                        pwm_int = int(pwm)
+                                        wheel_samples[w_id]["pwms"].append(pwm_int)
+                                        if t_steady_start is None:
+                                            accel_pwms.append(pwm_int)
+                                        else:
+                                            steady_wheel_samples[w_id]["pwms"].append(pwm_int)
+
+                                    if t_steady_start is not None and t_zero_issued is None:
+                                        if tgt is not None:
+                                            steady_wheel_samples[w_id]["targets"].append(float(tgt))
+                                        if meas is not None:
+                                            steady_wheel_samples[w_id]["measured"].append(float(meas))
+
+                                    if stict == "STICTION_BOOST":
+                                        wheel_metrics[w_id].stiction_boost_events += 1
+                                        if breakout_start_time is None:
+                                            breakout_start_time = now
+                                            breakout_count += 1
+                                    elif stict == "BLOCKED":
+                                        wheel_metrics[w_id].blocked_state_events += 1
+
+                    # Update controller (constant requested velocity until target reached)
+                    cmd_vx = controller.update(current_progress=curr_dist_m, current_time=now)
+                    wheel_cmds = compute_linear_wheel_speed_targets(cmd_vx)
+                    sym_ok, sym_msg = verify_linear_wheel_command_symmetry(wheel_cmds)
+                    if not sym_ok:
+                        raise TestAbortException(f"Command symmetry fault: {sym_msg}")
+
+                    if controller.phase == ApproachPhase.ZERO:
+                        # Target reached: issue zero command immediately
+                        t_zero_issued = now
+                        dist_at_zero_issued = curr_dist_m
+                        t_zero_start = time.monotonic()
+                        z_res = self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
+                        t_zero_end = time.monotonic()
+                        trial_report.zero_command_send_time_monotonic = t_zero_start
+                        trial_report.zero_command_response_time_monotonic = t_zero_end
+                        trial_report.zero_command_latency_ms = (t_zero_end - t_zero_start) * 1000.0
+                        trial_report.zero_command_response = z_res
+                        break
+
+                    self.cockpit.send_cmd_vel(vx=cmd_vx, wz=0.0)
+                    time.sleep(0.02)
+
+                # Standstill settling period
+                time.sleep(self.params.settle_seconds)
+                t_settled_time = time.time()
+                final_enc = self.cockpit.get_encoders()
+                final_imu = self.cockpit.get_imu()
+                final_yaw = math.degrees(quat_to_yaw(final_imu.get("orientation", {}))) if final_imu else last_yaw_deg
+                settled_ticks = [final_enc.get("encoders", {}).get(w, start_ticks[w]) - start_ticks[w] for w in ["m1", "m2", "m3", "m4"]]
+                settled_dist = ticks_to_meters(sum(settled_ticks) / 4.0)
+
+                controller.mark_settled(settled_dist, current_time=t_settled_time)
+                trial_report.status = "SUCCESS"
+                trial_report.measured_distance_m = round(settled_dist, 5)
+                trial_report.final_settled_distance_m = round(settled_dist, 5)
+                trial_report.settled_distance_error_m = round(settled_dist - self.params.signed_target_m, 5)
+                trial_report.post_zero_coast_m = round(settled_dist - dist_at_zero_issued, 5)
+                trial_report.imu_heading_change_deg = round(normalize_angle_deg(final_yaw - start_yaw_deg), 3)
+
+                # Construct Phase Breakdown for Physical Run
+                t_accel_end = t_steady_start if t_steady_start is not None else (t_zero_issued or t_settled_time)
+                accel_dur = max(0.0, round(t_accel_end - t_start_motion, 3))
+                accel_dist = round(dist_at_steady_start, 4)
+                accel_spd = round(accel_dist / accel_dur, 3) if accel_dur > 0 else 0.0
+                trial_report.acceleration_phase = {
+                    "duration_s": accel_dur,
+                    "distance_m": accel_dist,
+                    "mean_speed_mps": accel_spd,
+                    "peak_pwm": max(accel_pwms) if accel_pwms else 0
+                }
+
+                if t_zero_issued is not None and t_steady_start is not None and t_zero_issued > t_steady_start:
+                    std_dur = round(t_zero_issued - t_steady_start, 3)
+                    std_dist = round(dist_at_zero_issued - dist_at_steady_start, 4)
+                    std_spd = round(std_dist / std_dur, 3) if std_dur > 0 else 0.0
+                else:
+                    std_dur = 0.0
+                    std_dist = 0.0
+                    std_spd = 0.0
+
+                # Compute steady-speed wheel metrics
+                steady_metrics: Dict[str, WheelTrialMetrics] = {}
+                for w_id in ["m1", "m2", "m3", "m4"]:
+                    sm = WheelTrialMetrics(wheel_id=w_id)
+                    sw = steady_wheel_samples[w_id]
+                    if sw["targets"]:
+                        sm.commanded_speed_radps_mean = round(sum(sw["targets"]) / len(sw["targets"]), 3)
+                    if sw["measured"]:
+                        sm.measured_speed_radps_mean = round(sum(sw["measured"]) / len(sw["measured"]), 3)
+                        sm.measured_speed_radps_max = round(max(sw["measured"]), 3)
+                        sm.measured_speed_radps_min = round(min(sw["measured"]), 3)
+                    if sw["pwms"]:
+                        sm.pwm_mean = round(sum(sw["pwms"]) / len(sw["pwms"]), 1)
+                        sm.pwm_max = max(sw["pwms"])
+                    steady_metrics[w_id] = sm
+                trial_report.steady_speed_wheel_metrics = steady_metrics
+
+                # Left vs Right Steady Disparities
+                left_meas = [steady_metrics[w].measured_speed_radps_mean for w in ["m1", "m3"] if steady_metrics[w].measured_speed_radps_mean is not None]
+                right_meas = [steady_metrics[w].measured_speed_radps_mean for w in ["m2", "m4"] if steady_metrics[w].measured_speed_radps_mean is not None]
+                left_pwms = [steady_metrics[w].pwm_mean for w in ["m1", "m3"] if steady_metrics[w].pwm_mean is not None]
+                right_pwms = [steady_metrics[w].pwm_mean for w in ["m2", "m4"] if steady_metrics[w].pwm_mean is not None]
+
+                lr_spd_diff = round((sum(left_meas)/len(left_meas)) - (sum(right_meas)/len(right_meas)), 3) if left_meas and right_meas else 0.0
+                lr_pwm_diff = round((sum(left_pwms)/len(left_pwms)) - (sum(right_pwms)/len(right_pwms)), 1) if left_pwms and right_pwms else 0.0
+
+                trial_report.steady_speed_phase = {
+                    "duration_s": std_dur,
+                    "distance_m": std_dist,
+                    "mean_speed_mps": std_spd,
+                    "left_to_right_speed_diff_radps": lr_spd_diff,
+                    "left_to_right_pwm_diff": lr_pwm_diff
+                }
+                trial_report.steady_speed_left_to_right_speed_diff_radps = lr_spd_diff
+                trial_report.steady_speed_left_to_right_pwm_diff = lr_pwm_diff
+
+                if steady_metrics["m1"].measured_speed_radps_mean is not None and steady_metrics["m3"].measured_speed_radps_mean is not None:
+                    trial_report.steady_speed_front_to_rear_left_radps = round(
+                        steady_metrics["m1"].measured_speed_radps_mean - steady_metrics["m3"].measured_speed_radps_mean, 3
+                    )
+                if steady_metrics["m2"].measured_speed_radps_mean is not None and steady_metrics["m4"].measured_speed_radps_mean is not None:
+                    trial_report.steady_speed_front_to_rear_right_radps = round(
+                        steady_metrics["m2"].measured_speed_radps_mean - steady_metrics["m4"].measured_speed_radps_mean, 3
+                    )
+
+                # Stopping Phase
+                stp_dur = round(t_settled_time - (t_zero_issued or t_settled_time), 3)
+                stp_dist = round(settled_dist - dist_at_zero_issued, 4)
+                trial_report.stopping_phase = {
+                    "duration_s": stp_dur,
+                    "distance_m": stp_dist
+                }
+                trial_report.stopping_distance_m = stp_dist
+                trial_report.stopping_duration_s = stp_dur
+
+                # Overall wheel metrics
+                for w_id in ["m1", "m2", "m3", "m4"]:
+                    w_metric = wheel_metrics[w_id]
+                    ws = wheel_samples[w_id]
+                    w_metric.encoder_final_ticks = final_enc.get("encoders", {}).get(w_id, start_ticks[w_id])
+                    w_metric.encoder_delta_ticks = w_metric.encoder_final_ticks - w_metric.encoder_start_ticks
+                    if ws["targets"]:
+                        w_metric.commanded_speed_radps_mean = round(sum(ws["targets"]) / len(ws["targets"]), 3)
+                        w_metric.commanded_speed_radps_max = round(max(ws["targets"], key=abs), 3)
+                    if ws["measured"]:
+                        w_metric.measured_speed_radps_mean = round(sum(ws["measured"]) / len(ws["measured"]), 3)
+                        w_metric.measured_speed_radps_max = round(max(ws["measured"]), 3)
+                        w_metric.measured_speed_radps_min = round(min(ws["measured"]), 3)
+                        w_metric.measured_speed_radps_abs_mean = round(sum(abs(x) for x in ws["measured"]) / len(ws["measured"]), 3)
+                    if ws["pwms"]:
+                        w_metric.pwm_mean = round(sum(ws["pwms"]) / len(ws["pwms"]), 1)
+                        w_metric.pwm_max = max(ws["pwms"])
+
+                # Front-to-rear differences
+                if active_pid_packets:
+                    bal = compute_phase_balancing_metrics(active_pid_packets)
+                    if bal:
+                        trial_report.front_to_rear_diff_left_radps = round(bal[0]["pair_error_left"], 3)
+                        trial_report.front_to_rear_diff_right_radps = round(bal[0]["pair_error_right"], 3)
+
+        except Exception as e:
+            trial_report.status = "ABORTED"
+            trial_report.abort_reason = str(e)
+            print(f"[TRIAL ABORTED] {e}")
+        finally:
+            cleanup_st = self.cleanup()
+            trial_report.confirmed_final_zero_command = True
+            trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
+
+        trial_report.approach_milestones = controller.get_telemetry_summary()
+        return trial_report
+
     def _assert_pre_motion_invariants(self) -> Optional[str]:
         """
         Immediately before the first nonzero command, assert:
+
         - armed == true
         - autonomyState == READY_ARMED
         - expected command ownership is valid (NONE or ROS_AUTONOMY)

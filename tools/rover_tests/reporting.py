@@ -43,6 +43,10 @@ class WheelTrialMetrics:
     encoder_final_ticks: int = 0
     encoder_delta_ticks: int = 0
 
+    # PWM Metrics
+    pwm_mean: Optional[float] = None
+    pwm_max: Optional[int] = None
+
     stopped_while_commanded: Optional[bool] = None  # None = Unknown, True = Stalled while commanded, False = Commanded and moving
     stopped_while_commanded_count: int = 0
     stopped_while_commanded_duration_s: float = 0.0
@@ -81,12 +85,37 @@ class PhaseHeadingRecord:
 @dataclass
 class TrialReport:
     trial_index: int
-    requested_turn_deg: float
-    direction: str
-    target_signed_yaw_deg: float
-    status: str  # "SUCCESS", "ABORTED", "DRY_RUN_PASSED"
+    requested_turn_deg: float = 0.0
+    direction: str = "cw"
+    target_signed_yaw_deg: float = 0.0
+    status: str = "SUCCESS"  # "SUCCESS", "ABORTED", "DRY_RUN_PASSED"
     abort_reason: Optional[str] = None
     duration_s: float = 0.0
+    test_type: str = "turn"  # "turn" or "linear"
+
+    # Linear Motion Metrics
+    requested_distance_m: Optional[float] = None
+    target_signed_distance_m: Optional[float] = None
+    measured_distance_m: Optional[float] = None
+    final_settled_distance_m: Optional[float] = None
+    post_zero_coast_m: Optional[float] = None
+    settled_distance_error_m: Optional[float] = None
+    imu_heading_change_deg: Optional[float] = None
+    lateral_drift_m: Optional[float] = None
+    front_to_rear_diff_left_radps: Optional[float] = None
+    front_to_rear_diff_right_radps: Optional[float] = None
+
+    # Linear Characterization Phase Breakdown (Acceleration, Steady-Speed, Stopping)
+    acceleration_phase: Optional[Dict[str, Any]] = None
+    steady_speed_phase: Optional[Dict[str, Any]] = None
+    stopping_phase: Optional[Dict[str, Any]] = None
+    steady_speed_wheel_metrics: Dict[str, WheelTrialMetrics] = field(default_factory=dict)
+    steady_speed_front_to_rear_left_radps: Optional[float] = None
+    steady_speed_front_to_rear_right_radps: Optional[float] = None
+    steady_speed_left_to_right_speed_diff_radps: Optional[float] = None
+    steady_speed_left_to_right_pwm_diff: Optional[float] = None
+    stopping_distance_m: Optional[float] = None
+    stopping_duration_s: Optional[float] = None
 
     # Gyro & Orientation Metrics
     gyro_angle_at_zero_cmd_deg: float = 0.0
@@ -158,10 +187,11 @@ class TrialReport:
 @dataclass
 class MultiTrialSuiteReport:
     suite_id: str
-    test_type: str = "turn"
+    test_type: str = "turn"  # "turn" or "linear"
     command_line: str = ""
     timestamp_utc: str = ""
     target_degrees: float = 0.0
+    target_distance_m: Optional[float] = None
     direction: str = "cw"
     total_trials: int = 0
     repetitions: int = 0
@@ -177,6 +207,12 @@ class MultiTrialSuiteReport:
     repeatability_deg: Optional[float] = None
     mean_estimate_delta_deg: Optional[float] = None
 
+    # Linear Suite Metrics
+    mean_settled_distance_error_m: Optional[float] = None
+    std_dev_settled_distance_error_m: Optional[float] = None
+    repeatability_distance_m: Optional[float] = None
+    mean_heading_change_deg: Optional[float] = None
+
     # Multi-Repetition Trajectory & Totals
     suite_start_raw_heading_deg: Optional[float] = None
     suite_start_continuous_heading_deg: Optional[float] = None
@@ -185,11 +221,15 @@ class MultiTrialSuiteReport:
     total_cumulative_commanded_deg: float = 0.0
     total_cumulative_measured_deg: float = 0.0
     total_cumulative_error_deg: float = 0.0
+    total_cumulative_commanded_m: float = 0.0
+    total_cumulative_measured_m: float = 0.0
+    total_cumulative_error_m: float = 0.0
     repetition_trajectory: List[Dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.repetitions:
             self.repetitions = self.total_trials
+
 
 
 def compute_phase_balancing_metrics(active_pid_packets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -255,7 +295,12 @@ class ReportGenerator:
     @staticmethod
     def save_json(report: MultiTrialSuiteReport, output_dir: str) -> str:
         os.makedirs(output_dir, exist_ok=True)
-        filename = f"turn_{report.direction}_{int(report.target_degrees)}deg_{report.suite_id}.json"
+        if report.test_type == "linear":
+            dist_val = report.target_distance_m if report.target_distance_m is not None else 0.0
+            dist_str = f"{dist_val:.3f}".replace(".", "p")
+            filename = f"linear_{report.direction}_{dist_str}m_{report.suite_id}.json"
+        else:
+            filename = f"turn_{report.direction}_{int(report.target_degrees)}deg_{report.suite_id}.json"
         filepath = os.path.join(output_dir, filename)
 
         # Custom serializer for dataclasses
@@ -267,6 +312,159 @@ class ReportGenerator:
 
     @staticmethod
     def format_markdown_summary(report: MultiTrialSuiteReport) -> str:
+        if report.test_type == "linear":
+            return ReportGenerator._format_linear_markdown_summary(report)
+        return ReportGenerator._format_turn_markdown_summary(report)
+
+    @staticmethod
+    def _format_linear_markdown_summary(report: MultiTrialSuiteReport) -> str:
+        md = []
+        target_dist = report.target_distance_m or 0.0
+        md.append(f"# Physical Linear Motion Test Report: {target_dist:.3f}m {report.direction.upper()}")
+        md.append(f"**Suite ID:** `{report.suite_id}` | **Mode:** `{'DRY RUN (STATIONARY)' if report.is_dry_run else 'PHYSICAL EXECUTION'}`")
+        md.append(f"**Command:** `{report.command_line}`")
+        md.append(f"**Result:** {report.successful_trials}/{report.total_trials} Trials Succeeded\n")
+
+        # Active Production Controller Configuration
+        md.append("## Production Controller Configuration")
+        md.append("| Parameter | Setting | Description |")
+        md.append("| :--- | :--- | :--- |")
+        md.append(f"| Requested Linear Velocity | `0.200 m/s` (Constant) | Constant production speed (no test-layer creep or trims) |")
+        bal_str = "`ACTIVE (K_sync = 0.005)`" if report.wheel_balancing_enabled else "`DISABLED`"
+        md.append(f"| Production Wheel Balancing | {bal_str} | Active straight-line tick synchronization |")
+        brake_str = "`ACTIVE (Firmware pulse)`" if report.dynamic_braking_enabled else "`DISABLED`"
+        md.append(f"| Production Dynamic Braking | {brake_str} | Low-speed firmware braking pulse |")
+        md.append(f"| Slew Rate / Acceleration | `Production ESP32 MotionLimiter` | Unmodified production acceleration & decel profiles |\n")
+
+        # Multi-Trial Summary
+        md.append("## Multi-Trial Summary")
+        md.append("| Metric | Value |")
+        md.append("| :--- | :--- |")
+        md.append(f"| Requested Distance | {target_dist:.3f} m ({report.direction.upper()}) |")
+        md.append(f"| Total Trials Executed | {report.total_trials} |")
+        md.append(f"| Successful Trials | {report.successful_trials} |")
+        md.append(f"| Aborted Trials | {report.aborted_trials} |")
+        if report.mean_settled_distance_error_m is not None:
+            mean_err_str = f"{report.mean_settled_distance_error_m:+.4f} m ({report.mean_settled_distance_error_m * 1000.0:+.1f} mm)"
+        else:
+            mean_err_str = "Unavailable"
+        md.append(f"| Mean Settled Distance Error (Informational) | {mean_err_str} |")
+        std_err_str = f"{report.std_dev_settled_distance_error_m:.4f} m" if report.std_dev_settled_distance_error_m is not None else "Unavailable"
+        md.append(f"| Error Standard Deviation | {std_err_str} |")
+        rep_str = f"{report.repeatability_distance_m:.4f} m" if report.repeatability_distance_m is not None else "Unavailable"
+        md.append(f"| Repeatability Span | {rep_str} |")
+        if report.mean_heading_change_deg is not None:
+            md.append(f"| Mean Heading Change (IMU Yaw Drift) | `{report.mean_heading_change_deg:+.2f}°` |")
+        md.append("")
+
+        # Per-Trial Breakdown
+        for t in report.trials:
+            status_icon = "[PASS]" if t.status in ("SUCCESS", "DRY_RUN_PASSED") else "[FAIL]"
+            md.append(f"## Trial {t.trial_index} Forensics: {status_icon} {t.status}")
+            if t.abort_reason:
+                md.append(f"> [!WARNING]\n> Abort Reason: {t.abort_reason}\n")
+
+            # Phase Separation Summary
+            md.append("### Phase Separation Summary")
+            md.append("| Phase | Duration | Distance | Mean Speed | L/R Speed Diff | L/R PWM Diff | Notes |")
+            md.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+
+            p_acc = t.acceleration_phase or {}
+            acc_dur = f"`{p_acc.get('duration_s', 0.0):.2f} s`"
+            acc_dist = f"`{p_acc.get('distance_m', 0.0):+.4f} m`"
+            acc_spd = f"`{p_acc.get('mean_speed_mps', 0.0):+.3f} m/s`"
+            acc_peak_pwm = p_acc.get('peak_pwm', 0)
+            md.append(f"| **1. Acceleration** | {acc_dur} | {acc_dist} | {acc_spd} | - | - | Peak PWM: `{acc_peak_pwm}` |")
+
+            p_std = t.steady_speed_phase or {}
+            std_dur = f"`{p_std.get('duration_s', 0.0):.2f} s`"
+            std_dist = f"`{p_std.get('distance_m', 0.0):+.4f} m`"
+            std_spd = f"`{p_std.get('mean_speed_mps', 0.0):+.3f} m/s`"
+            std_lr_spd = f"`{p_std.get('left_to_right_speed_diff_radps', 0.0):+.3f} rad/s`"
+            std_lr_pwm = f"`{p_std.get('left_to_right_pwm_diff', 0.0):+.1f}`"
+            md.append(f"| **2. Steady-Speed** | {std_dur} | {std_dist} | {std_spd} | {std_lr_spd} | {std_lr_pwm} | **Primary Characterization Phase** |")
+
+            p_stp = t.stopping_phase or {}
+            stp_dur = f"`{p_stp.get('duration_s', 0.0):.2f} s`"
+            stp_dist = f"`{p_stp.get('distance_m', 0.0):+.4f} m`"
+            stp_brake = f"Brake pulse: `{t.brake_active_duration_ms:.1f} ms`" if t.brake_active_duration_ms else "Coast"
+            md.append(f"| **3. Stopping** | {stp_dur} | {stp_dist} | `0.000 m/s` | - | - | {stp_brake} |")
+            md.append("")
+
+            # Primary Analysis: Steady-Speed Wheel Balancing & Symmetry
+            md.append("### Primary Analysis: Steady-Speed Wheel Balancing & Symmetry")
+            md.append("> [!NOTE]")
+            md.append("> Wheel comparisons and calibration assessments are evaluated strictly during the steady-speed phase to isolate motor/drivetrain dynamics from acceleration and braking transients.\n")
+
+            md.append("| Wheel (Slot / Corner) | Commanded Target (rad/s) | Steady Measured Mean (rad/s) | Steady PWM (Mean / Max) | Steady Encoder Delta (ticks) | Stopped While Commanded |")
+            md.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
+
+            active_metrics = t.steady_speed_wheel_metrics if t.steady_speed_wheel_metrics else t.wheel_metrics
+            for w_id in ["m1", "m2", "m3", "m4"]:
+                w = active_metrics.get(w_id, WheelTrialMetrics(wheel_id=w_id))
+                wheel_label = f"**{w_id.upper()}** ({w.slot_mapping} / {w.corner})"
+                cmd_str = f"`{w.commanded_speed_radps_mean:+.2f}`" if w.commanded_speed_radps_mean is not None else "*Unavailable*"
+                meas_str = f"`{w.measured_speed_radps_mean:+.2f}`" if w.measured_speed_radps_mean is not None else "*Unavailable*"
+                pwm_str = f"`{w.pwm_mean:.1f} / {w.pwm_max}`" if (w.pwm_mean is not None and w.pwm_max is not None) else "`N/A`"
+
+                if w.stopped_while_commanded is True:
+                    stopped_str = f"**YES ({w.stopped_while_commanded_count} ev)**"
+                elif w.stopped_while_commanded is False:
+                    stopped_str = "No (0s)"
+                else:
+                    stopped_str = "Unknown"
+
+                md.append(f"| {wheel_label} | {cmd_str} | {meas_str} | {pwm_str} | {w.encoder_delta_ticks:+d} | {stopped_str} |")
+            md.append("")
+
+            # Disparities and diagnostics
+            md.append("#### Steady-Speed Disparities & Symmetry Metrics")
+            md.append("| Diagnostic Metric | Value | Reference / Diagnostic Evaluation |")
+            md.append("| :--- | :--- | :--- |")
+            fl_diff = t.steady_speed_front_to_rear_left_radps if t.steady_speed_front_to_rear_left_radps is not None else t.front_to_rear_diff_left_radps
+            fr_diff = t.steady_speed_front_to_rear_right_radps if t.steady_speed_front_to_rear_right_radps is not None else t.front_to_rear_diff_right_radps
+            fl_str = f"`{fl_diff:+.3f} rad/s`" if fl_diff is not None else "`Unavailable`"
+            fr_str = f"`{fr_diff:+.3f} rad/s`" if fr_diff is not None else "`Unavailable`"
+            lr_spd_str = f"`{t.steady_speed_left_to_right_speed_diff_radps:+.3f} rad/s`" if t.steady_speed_left_to_right_speed_diff_radps is not None else "`Unavailable`"
+            lr_pwm_str = f"`{t.steady_speed_left_to_right_pwm_diff:+.1f}`" if t.steady_speed_left_to_right_pwm_diff is not None else "`Unavailable`"
+            yaw_str = f"`{t.imu_heading_change_deg:+.2f}°`" if t.imu_heading_change_deg is not None else "`Unavailable`"
+
+            md.append(f"| Left Front-to-Rear Diff (LF - LR) | {fl_str} | M1 vs M3 speed difference (< 0.15 rad/s ideal) |")
+            md.append(f"| Right Front-to-Rear Diff (RF - RR) | {fr_str} | M2 vs M4 speed difference (< 0.15 rad/s ideal) |")
+            md.append(f"| Left-to-Right Speed Difference | {lr_spd_str} | Mean left vs mean right speed (< 0.10 rad/s ideal) |")
+            md.append(f"| Left-to-Right PWM Disparity | {lr_pwm_str} | Mean left PWM vs mean right PWM (< 3 counts ideal) |")
+            md.append(f"| IMU Heading Deviation (Yaw Drift) | {yaw_str} | Heading deviation during straight motion (< 1.5°/m ideal) |")
+            md.append("")
+
+            # Informational: Endpoint Accuracy & Stopping
+            md.append("### Informational: Endpoint Accuracy & Stopping")
+            md.append("> [!NOTE]")
+            md.append("> Endpoint accuracy is recorded for production characterization purposes only. It is NOT the purpose or pass/fail criterion of this characterization test.\n")
+
+            md.append("| Measurement | Value | Description |")
+            md.append("| :--- | :--- | :--- |")
+            req_dist = t.requested_distance_m if t.requested_distance_m is not None else target_dist
+            md.append(f"| Requested Distance | `{req_dist:.3f} m` ({t.direction.upper()}) | Target travel distance |")
+            meas_str = f"`{t.measured_distance_m:+.4f} m`" if t.measured_distance_m is not None else "`Unavailable`"
+            md.append(f"| Total Measured Distance | {meas_str} | Total 4-wheel encoder odometry displacement |")
+            settled_str = f"`{t.final_settled_distance_m:+.4f} m`" if t.final_settled_distance_m is not None else "`Unavailable`"
+            md.append(f"| Final Settled Distance | {settled_str} | Displacement after standstill settle |")
+            stp_dist_val = t.stopping_distance_m if t.stopping_distance_m is not None else t.post_zero_coast_m
+            stp_dist_str = f"`{stp_dist_val:+.4f} m`" if stp_dist_val is not None else "`Unavailable`"
+            md.append(f"| Stopping Phase Displacement | {stp_dist_str} | Displacement between zero command and full stop |")
+            err_m = t.settled_distance_error_m if t.settled_distance_error_m is not None else (
+                (t.measured_distance_m - req_dist) if t.measured_distance_m is not None else None
+            )
+            err_str = f"`{err_m:+.4f} m ({err_m * 1000.0:+.1f} mm)`" if err_m is not None else "`Unavailable`"
+            md.append(f"| Net Distance Deviation | {err_str} | Measured vs target deviation (informational) |")
+            md.append(f"| Zero Command Latency | `{t.zero_command_latency_ms:.1f} ms` | HTTP cmd_vel(0,0) turn-around |" if t.zero_command_latency_ms is not None else "| Zero Command Latency | `N/A` | HTTP cmd_vel(0,0) |")
+            md.append(f"| Final Zero & Disarmed Confirmed | `{'YES' if (t.confirmed_final_zero_command and t.confirmed_final_disarmed_state) else 'NO (FAIL-SAFE ERROR)'}` | Drivetrain locked & safe |")
+            md.append("")
+
+        return "\n".join(md)
+
+    @staticmethod
+    def _format_turn_markdown_summary(report: MultiTrialSuiteReport) -> str:
         md = []
         md.append(f"# Physical Turn Test Report: {report.target_degrees:.1f}° {report.direction.upper()}")
         md.append(f"**Suite ID:** `{report.suite_id}` | **Mode:** `{'DRY RUN (STATIONARY)' if report.is_dry_run else 'PHYSICAL EXECUTION'}`")
@@ -458,3 +656,4 @@ class ReportGenerator:
             md.append("")
 
         return "\n".join(md)
+

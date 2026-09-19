@@ -157,3 +157,120 @@ class AngularApproachController(BaseApproachController):
             "settled_error_deg": self.settled_error_deg,
             "phase_history": self.phase_history
         }
+
+
+class LinearApproachController(BaseApproachController):
+    """
+    Production-measuring linear characterization controller:
+    - Commands constant requested linear velocity throughout measurement travel.
+    - Does NOT use test-layer creep, heading correction, wheel trims, stopping advance,
+      or exact-distance optimization.
+    - Relies entirely on production ESP32 motion limiter, wheel PID, synchronization,
+      anti-stall, and dynamic braking.
+    - Zero velocity is commanded immediately when requested distance is reached.
+    - Preserves direction sign: positive for forward, negative for reverse.
+    """
+    def __init__(
+        self,
+        cruise_speed_mps: float = 0.20,
+        approach_zone_m: float = 0.0,       # Unused in production measurement test
+        creep_speed_mps: Optional[float] = None  # Deprecated; defaults to cruise_speed_mps
+    ):
+        self.cruise_speed_mps = abs(cruise_speed_mps)
+        self.approach_zone_m = 0.0  # No creep approach zone
+        self.creep_speed_mps = self.cruise_speed_mps  # No step-down creep
+
+        self.target_dist_m = 0.0
+        self.direction_sign = 1.0
+        self.phase = ApproachPhase.IDLE
+
+        # Milestones & Timing
+        self.start_time: Optional[float] = None
+        self.steady_entry_time: Optional[float] = None
+        self.steady_entry_dist_m: Optional[float] = None
+        self.threshold_crossing_time: Optional[float] = None
+        self.threshold_crossing_dist_m: Optional[float] = None
+        self.zero_command_time: Optional[float] = None
+        self.settled_dist_m: Optional[float] = None
+        self.settled_error_m: Optional[float] = None
+        self.post_zero_dist_m: Optional[float] = None
+        self.phase_history: List[Dict[str, Any]] = []
+
+    def reset(self, target: float, start_time: Optional[float] = None):
+        self.target_dist_m = target
+        self.direction_sign = 1.0 if target >= 0.0 else -1.0
+        self.phase = ApproachPhase.IDLE
+
+        self.start_time = start_time if start_time is not None else time.time()
+        self.steady_entry_time = None
+        self.steady_entry_dist_m = None
+        self.threshold_crossing_time = None
+        self.threshold_crossing_dist_m = None
+        self.zero_command_time = None
+        self.settled_dist_m = None
+        self.settled_error_m = None
+        self.post_zero_dist_m = None
+        self.phase_history = []
+
+        self._set_phase(ApproachPhase.CRUISE, self.start_time, 0.0)
+
+    def _set_phase(self, new_phase: ApproachPhase, current_time: float, current_dist_m: float):
+        if self.phase != new_phase:
+            self.phase = new_phase
+            rel_t = current_time - self.start_time if self.start_time is not None else 0.0
+            self.phase_history.append({
+                "phase": str(new_phase),
+                "t_rel": rel_t,
+                "dist_m": current_dist_m
+            })
+
+    def update(self, current_progress: float, current_time: Optional[float] = None) -> float:
+        """
+        Returns commanded constant linear velocity (m/s) until target distance is reached,
+        then commands 0.0 m/s. No test-side creep or trims.
+        """
+        if current_time is None:
+            current_time = time.time()
+
+        target_mag = abs(self.target_dist_m)
+        signed_progress = current_progress * self.direction_sign
+        remaining_m = target_mag - signed_progress
+
+        # 1. Target Reached or Exceeded -> ZERO phase (production motion limiter & braking take over)
+        if remaining_m <= 1e-4:
+            if self.phase not in (ApproachPhase.ZERO, ApproachPhase.SETTLED):
+                self._set_phase(ApproachPhase.ZERO, current_time, current_progress)
+                rel_t = current_time - self.start_time if self.start_time is not None else 0.0
+                if self.threshold_crossing_time is None:
+                    self.threshold_crossing_time = rel_t
+                    self.threshold_crossing_dist_m = current_progress
+                if self.zero_command_time is None:
+                    self.zero_command_time = rel_t
+            return 0.0
+
+        # 2. Measurement Travel -> Constant Cruise Velocity (no creep, no early stopping)
+        if self.phase != ApproachPhase.CRUISE:
+            self._set_phase(ApproachPhase.CRUISE, current_time, current_progress)
+        return self.direction_sign * self.cruise_speed_mps
+
+    def mark_settled(self, settled_val: float, current_time: Optional[float] = None):
+        if current_time is None:
+            current_time = time.time()
+        self._set_phase(ApproachPhase.SETTLED, current_time, settled_val)
+        self.settled_dist_m = settled_val
+        self.settled_error_m = settled_val - self.target_dist_m
+        if self.threshold_crossing_dist_m is not None:
+            self.post_zero_dist_m = (settled_val - self.threshold_crossing_dist_m) * self.direction_sign
+
+    def get_telemetry_summary(self) -> Dict[str, Any]:
+        return {
+            "target_dist_m": self.target_dist_m,
+            "current_phase": str(self.phase),
+            "threshold_crossing_time_s": self.threshold_crossing_time,
+            "threshold_crossing_dist_m": self.threshold_crossing_dist_m,
+            "zero_command_time_s": self.zero_command_time,
+            "settled_dist_m": self.settled_dist_m,
+            "settled_error_m": self.settled_error_m,
+            "post_zero_dist_m": self.post_zero_dist_m,
+            "phase_history": self.phase_history
+        }
