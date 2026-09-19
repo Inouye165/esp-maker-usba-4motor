@@ -2529,6 +2529,107 @@ class TestFailFastSafeguardIntegration(unittest.TestCase):
         self.assertEqual(report.breakout_event_count, 1, "Must accurately record breakout event count on abort")
         self.assertTrue(report.confirmed_final_zero_command)
 
+    def test_transient_stale_imu_reading_recovers_via_bounded_confirmation(self):
+        """A single marginal/stale IMU reading (e.g. 271ms) followed by fresh advancing sample does not abort motion."""
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+
+        current_status = {"armed": True, "mode": 3, "autonomyState": "ACTIVE", "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.token = "test"
+        mock_cockpit.get_status.side_effect = lambda: dict(current_status)
+        mock_cockpit.get_autonomy_status.side_effect = lambda: {
+            "state": "ACTIVE",
+            "clampedAngular": 0.8,
+            "zeroHandshakeCount": 3,
+            "cmdSource": "ROS_AUTONOMY"
+        }
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
+        mock_cockpit.disarm_drive.return_value = {"ok": True}
+        mock_cockpit.disable_autonomy.return_value = {"ok": True}
+        mock_cockpit.set_command_source.return_value = {"ok": True}
+        mock_ws.connected = True
+        mock_ws.recv_frames.return_value = []
+
+        q_start = {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        q_target = {"x": 0.0, "y": 0.0, "z": 1.0, "w": 0.0}
+
+        sample_1 = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 100, "dataAgeMs": 15, "orientation": q_start}
+        sample_2_stale = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 100, "dataAgeMs": 271, "orientation": q_start}
+        sample_2_confirm = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 101, "dataAgeMs": 20, "orientation": q_start}
+        sample_3_target = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 102, "dataAgeMs": 15, "orientation": q_target}
+        sample_settle = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 103, "dataAgeMs": 15, "orientation": q_target}
+
+        imu_stream = [sample_1, sample_2_stale, sample_2_confirm, sample_3_target, sample_settle]
+        mock_cockpit.get_imu.side_effect = lambda *a, **k: imu_stream.pop(0) if imu_stream else sample_settle
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+
+        with patch("tools.rover_tests.runner.perform_zero_handshake", return_value=True):
+            with patch("tools.rover_tests.runner.wait_for_advancing_imu_sample", return_value=(True, sample_1, "ok")):
+                with patch.object(PhysicalTestRunner, "_assert_pre_motion_invariants", return_value=None):
+                    with patch("tools.rover_tests.runner.arm_and_verify_ready_armed", return_value=True):
+                        with patch("time.sleep", return_value=None):
+                            report = runner.execute_single_trial(1)
+
+        self.assertNotEqual(report.status, "ABORTED")
+        self.assertNotIn("STALE_IMU_DATA", report.watchdog_trips)
+        self.assertEqual(report.status, "SUCCESS")
+
+    def test_sustained_stale_imu_reading_triggers_safe_stop(self):
+        """Sustained stale IMU readings across the bounded confirmation window abort motion safely."""
+        params = TurnParameters(degrees=180.0, direction="cw", trials=1)
+        mock_cockpit = MagicMock(spec=CockpitClient)
+        mock_ws = MagicMock(spec=NativeWSClient)
+
+        current_status = {"armed": True, "mode": 3, "autonomyState": "ACTIVE", "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.token = "test"
+        mock_cockpit.get_status.side_effect = lambda: dict(current_status)
+        mock_cockpit.get_autonomy_status.side_effect = lambda: {
+            "state": "ACTIVE",
+            "clampedAngular": 0.8,
+            "zeroHandshakeCount": 3,
+            "cmdSource": "ROS_AUTONOMY"
+        }
+        mock_cockpit.get_encoders.return_value = {"ok": True, "encoders": {"m1": 0, "m2": 0, "m3": 0, "m4": 0}}
+        mock_cockpit.send_cmd_vel.return_value = {"ok": True}
+        def mock_disarm():
+            current_status["armed"] = False
+            current_status["autonomyState"] = "DISABLED"
+            return {"ok": True}
+        def mock_set_source(s):
+            current_status["cmdSource"] = s
+            return {"ok": True, "source": s}
+        mock_cockpit.disarm_drive.side_effect = mock_disarm
+        mock_cockpit.disable_autonomy.side_effect = lambda: {"ok": True}
+        mock_cockpit.set_command_source.side_effect = mock_set_source
+        mock_ws.connected = True
+        mock_ws.recv_frames.return_value = []
+
+        q_start = {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        sample_1 = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 100, "dataAgeMs": 15, "orientation": q_start}
+        sample_stale_1 = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 100, "dataAgeMs": 271, "orientation": q_start}
+        sample_stale_confirm = {"ok": True, "rotVecValid": True, "inResetRecovery": False, "sequence": 100, "dataAgeMs": 310, "orientation": q_start}
+
+        imu_stream = [sample_1, sample_stale_1, sample_stale_confirm]
+        mock_cockpit.get_imu.side_effect = lambda *a, **k: imu_stream.pop(0) if imu_stream else sample_stale_confirm
+
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y", cockpit_client=mock_cockpit, ws_client=mock_ws)
+
+        with patch("tools.rover_tests.runner.perform_zero_handshake", return_value=True):
+            with patch("tools.rover_tests.runner.wait_for_advancing_imu_sample", return_value=(True, sample_1, "ok")):
+                with patch.object(PhysicalTestRunner, "_assert_pre_motion_invariants", return_value=None):
+                    with patch("tools.rover_tests.runner.arm_and_verify_ready_armed", return_value=True):
+                        with patch("time.sleep", return_value=None):
+                            report = runner.execute_single_trial(1)
+
+        self.assertEqual(report.status, "ABORTED")
+        self.assertIn("STALE_IMU_DATA", report.watchdog_trips)
+        self.assertIn("Confirmed stale/non-advancing IMU data", report.abort_reason)
+        self.assertTrue(report.confirmed_final_zero_command)
+        self.assertTrue(report.confirmed_final_disarmed_state)
+
 
 if __name__ == "__main__":
     unittest.main()

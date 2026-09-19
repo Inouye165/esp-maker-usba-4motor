@@ -740,6 +740,9 @@ class PhysicalTestRunner:
                     trial_report.brake_active_duration_ms = 0.0
             else:
                 # Physical motion loop
+                last_motion_imu_seq: Optional[int] = None
+                last_motion_imu_advance_time: float = t_motion_start
+
                 while True:
                     now = time.time()
                     dt_motion = now - t_motion_start
@@ -752,11 +755,38 @@ class PhysicalTestRunner:
 
                     # Ingest latest IMU data
                     latest_imu = self.cockpit.get_imu()
+                    cur_seq = latest_imu.get("sequence") if latest_imu else None
+                    if cur_seq is not None:
+                        if last_motion_imu_seq is None or cur_seq != last_motion_imu_seq:
+                            last_motion_imu_seq = cur_seq
+                            last_motion_imu_advance_time = now
+
                     is_fresh, freshness_msg = check_imu_freshness(latest_imu, max_age_ms=250.0)
-                    if not is_fresh:
-                        abort_reason = f"Stale IMU data detected: {freshness_msg}"
-                        trial_report.watchdog_trips.append("STALE_IMU_DATA")
-                        break
+                    is_non_advancing = (now - last_motion_imu_advance_time) > 0.250
+
+                    if not is_fresh or is_non_advancing:
+                        # Bounded confirmation check: do not abort immediately on a single transient delayed reading.
+                        # Allow a short bounded pause (40ms, covering two 50Hz/20ms IMU packet periods) to recheck.
+                        time.sleep(0.04)
+                        confirm_imu = self.cockpit.get_imu()
+                        is_confirm_fresh, confirm_msg = check_imu_freshness(confirm_imu, max_age_ms=250.0)
+                        confirm_seq = confirm_imu.get("sequence") if confirm_imu else None
+
+                        confirm_advancing = True
+                        if confirm_seq is not None and last_motion_imu_seq is not None:
+                            if confirm_seq == last_motion_imu_seq and (time.time() - last_motion_imu_advance_time) > 0.250:
+                                confirm_advancing = False
+
+                        if (not is_confirm_fresh) or (not confirm_advancing):
+                            fail_detail = freshness_msg if not is_fresh else (confirm_msg if not is_confirm_fresh else f"Non-advancing IMU sequence ({last_motion_imu_seq}) for {(time.time() - last_motion_imu_advance_time)*1000:.0f}ms")
+                            abort_reason = f"Confirmed stale/non-advancing IMU data: {fail_detail}"
+                            trial_report.watchdog_trips.append("STALE_IMU_DATA")
+                            break
+                        else:
+                            latest_imu = confirm_imu
+                            if confirm_seq is not None and confirm_seq != last_motion_imu_seq:
+                                last_motion_imu_seq = confirm_seq
+                                last_motion_imu_advance_time = time.time()
 
                     cur_raw_yaw = quat_to_yaw(latest_imu.get("orientation", {}))
                     unwrapper.update_orientation_yaw(cur_raw_yaw)
@@ -1276,6 +1306,7 @@ class PhysicalTestRunner:
         trial_report.breakout_event_count = breakout_count
         trial_report.breakout_dwell_time_ms_total = total_breakout_dwell_ms
         trial_report.approach_milestones = controller.get_telemetry_summary()
+        trial_report.active_pid_packets = active_pid_packets
         trial_report.status = "DRY_RUN_PASSED" if self.params.dry_run else "SUCCESS"
 
         print(f"[OK] Trial Completed ({trial_report.status})")
