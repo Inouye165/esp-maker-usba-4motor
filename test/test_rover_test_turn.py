@@ -43,6 +43,7 @@ from tools.rover_tests.transport import (
     HandshakeException
 )
 from tools.rover_tests.runner import PhysicalTestRunner
+from tools.rover_tests.linear import LinearParameters
 from tools.rover_tests.reporting import (
     WheelTrialMetrics,
     TrialReport,
@@ -509,9 +510,21 @@ class TestInterTrialApprovalAndEstimateCollection(unittest.TestCase):
             {"state": "READY_ARMED", "zeroHandshakeCount": 3, "cmdSource": "ROS_AUTONOMY"},
             {"state": "ACTIVE", "clampedAngular": 0.8, "cmdSource": "ROS_AUTONOMY"}
         ] + [{"state": "ACTIVE", "clampedAngular": 0.8, "cmdSource": "ROS_AUTONOMY"}] * 30
-        mock_cockpit.get_autonomy_status.side_effect = auto_states
-        mock_cockpit.arm_drive.return_value = {"ok": True}
-        mock_cockpit.get_status.return_value = {"armed": True, "mode": 3, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+        mock_cockpit.get_autonomy_status.side_effect = itertools.chain(auto_states, itertools.repeat(auto_states[-1]))
+        def mock_arm_test():
+            status_state["armed"] = True
+            status_state["autonomyState"] = "READY_ARMED"
+            status_state["cmdSource"] = "ROS_AUTONOMY"
+            return {"ok": True}
+        mock_cockpit.arm_drive.side_effect = mock_arm_test
+        status_state = {"armed": False, "mode": 3, "autonomyState": "DISABLED", "cmdSource": "NONE"}
+        def mock_disarm_test():
+            status_state["armed"] = False
+            status_state["autonomyState"] = "DISABLED"
+            status_state["cmdSource"] = "NONE"
+            return {"ok": True}
+        mock_cockpit.disarm_drive.side_effect = mock_disarm_test
+        mock_cockpit.get_status.side_effect = lambda: dict(status_state)
         mock_cockpit.send_cmd_vel.return_value = {"ok": True}
         mock_ws.recv_frames.return_value = []
         mock_ws.send_drive.return_value = True
@@ -878,6 +891,7 @@ class TestWheelTelemetryAndForensics(unittest.TestCase):
             current_status["armed"] = False
             current_status["mode"] = 0
             current_status["autonomyState"] = "DISABLED"
+            current_status["cmdSource"] = "NONE"
             return {"ok": True, "armed": False}
 
         mock_cockpit.arm_drive.side_effect = mock_arm
@@ -1571,6 +1585,73 @@ class TestStateSequencingAndIdempotentCleanup(unittest.TestCase):
         self.assertEqual(len(suite.trials), 1)
         trial = suite.trials[0]
         self.assertFalse(trial.confirmed_final_disarmed_state, "Report must NEVER report confirmed_final_disarmed_state=True when final armed=True")
+        self.assertEqual(trial.status, "ABORTED", "Trial must be ABORTED when final safety invariant fails")
+        self.assertEqual(suite.successful_trials, 0)
+        self.assertEqual(suite.aborted_trials, 1)
+
+    def test_turn_trial_never_reports_success_when_cmd_source_remains_calibration_test(self):
+        """
+        Regression for suite 1789853697:
+        Rover ended armed=False, autonomyState=DISABLED, but cmdSource=CALIBRATION_TEST.
+        The trial must NOT report SUCCESS when confirmed_final_disarmed_state is False.
+        """
+        params = TurnParameters(degrees=90.0, direction="cw", trials=1, dry_run=True)
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y")
+
+        # Mock cleanup to return cmdSource='CALIBRATION_TEST' despite armed=False and autonomyState=DISABLED
+        runner.cleanup = MagicMock(return_value={
+            "armed": False,
+            "autonomyState": "DISABLED",
+            "cmdSource": "CALIBRATION_TEST"
+        })
+
+        suite = runner.execute_suite()
+        self.assertEqual(len(suite.trials), 1)
+        trial = suite.trials[0]
+
+        # Verify safety invariants
+        self.assertFalse(trial.confirmed_final_disarmed_state)
+        self.assertEqual(trial.status, "ABORTED", "Trial must NEVER report SUCCESS when cleanup invariant is violated")
+        self.assertIn("Fail-safe cleanup invariant violated", trial.abort_reason)
+        self.assertIn("CALIBRATION_TEST", trial.abort_reason)
+        self.assertEqual(suite.successful_trials, 0, "Suite must report 0 successful trials")
+        self.assertEqual(suite.aborted_trials, 1, "Suite must report 1 aborted trial")
+
+        # Verify Markdown summary reflects fail-safe error and 0 successes
+        md = ReportGenerator.format_markdown_summary(suite)
+        self.assertIn("0/1 Trials Succeeded", md)
+        self.assertIn("NO (FAIL-SAFE ERROR)", md)
+        self.assertNotIn("1/1 Trials Succeeded", md)
+
+    def test_linear_trial_never_reports_success_when_cmd_source_remains_calibration_test(self):
+        """
+        Regression for linear suite:
+        If linear cleanup leaves cmdSource='CALIBRATION_TEST', trial must be ABORTED, not SUCCESS.
+        """
+        params = LinearParameters(distance=0.20, direction="forward", trials=1, dry_run=True)
+        runner = PhysicalTestRunner(params, prompt_fn=lambda _: "y")
+
+        runner.cleanup = MagicMock(return_value={
+            "armed": False,
+            "autonomyState": "DISABLED",
+            "cmdSource": "CALIBRATION_TEST"
+        })
+
+        suite = runner.execute_suite()
+        self.assertEqual(len(suite.trials), 1)
+        trial = suite.trials[0]
+
+        self.assertFalse(trial.confirmed_final_disarmed_state)
+        self.assertEqual(trial.status, "ABORTED", "Linear trial must NEVER report SUCCESS when cleanup invariant is violated")
+        self.assertIn("Fail-safe cleanup invariant violated", trial.abort_reason)
+        self.assertIn("CALIBRATION_TEST", trial.abort_reason)
+        self.assertEqual(suite.successful_trials, 0)
+        self.assertEqual(suite.aborted_trials, 1)
+
+        md = ReportGenerator.format_markdown_summary(suite)
+        self.assertIn("0/1 Trials Succeeded", md)
+        self.assertIn("NO (FAIL-SAFE ERROR)", md)
+
 
 
 class TestProductionPidDiagnosticFrameRegression(unittest.TestCase):

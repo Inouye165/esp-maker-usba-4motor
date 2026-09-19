@@ -351,6 +351,14 @@ class PhysicalTestRunner:
             for t in suite_report.trials:
                 if not final_disarmed:
                     t.confirmed_final_disarmed_state = False
+                    if t.status in ("SUCCESS", "DRY_RUN_PASSED"):
+                        t.status = "ABORTED"
+                        t.abort_reason = (
+                            f"Suite final safety invariant violated: rover not verified disarmed "
+                            f"(armed={final_cleanup.get('armed')}, autonomyState={final_cleanup.get('autonomyState')}, cmdSource={final_cleanup.get('cmdSource')})"
+                        )
+            suite_report.successful_trials = sum(1 for t in suite_report.trials if t.status in ("SUCCESS", "DRY_RUN_PASSED"))
+            suite_report.aborted_trials = len(suite_report.trials) - suite_report.successful_trials
 
         suite_report.total_cumulative_commanded_deg = round(total_cmd_deg, 4)
         suite_report.total_cumulative_measured_deg = round(total_meas_deg, 4)
@@ -502,7 +510,25 @@ class PhysicalTestRunner:
             print(f"\n[REPORT SAVED] Full JSON telemetry report: {json_path}")
             return suite_report
         finally:
-            self.cleanup()
+            final_cleanup = self.cleanup(verbose=False)
+            if self.ws.connected:
+                self.ws.close()
+            final_disarmed = (
+                final_cleanup.get("armed") is False
+                and final_cleanup.get("autonomyState") == "DISABLED"
+                and final_cleanup.get("cmdSource") in ("NONE", None)
+            )
+            for t in suite_report.trials:
+                if not final_disarmed:
+                    t.confirmed_final_disarmed_state = False
+                    if t.status in ("SUCCESS", "DRY_RUN_PASSED"):
+                        t.status = "ABORTED"
+                        t.abort_reason = (
+                            f"Suite final safety invariant violated: rover not verified disarmed "
+                            f"(armed={final_cleanup.get('armed')}, autonomyState={final_cleanup.get('autonomyState')}, cmdSource={final_cleanup.get('cmdSource')})"
+                        )
+            suite_report.successful_trials = sum(1 for t in suite_report.trials if t.status in ("SUCCESS", "DRY_RUN_PASSED"))
+            suite_report.aborted_trials = len(suite_report.trials) - suite_report.successful_trials
 
     def execute_single_linear_trial(self, trial_idx: int) -> TrialReport:
         """Executes a single forward or reverse linear translation trial."""
@@ -634,7 +660,11 @@ class PhysicalTestRunner:
                     print(f"[FAIL-CLOSED ERROR] {trial_report.abort_reason}")
                     cleanup_st = self.cleanup()
                     trial_report.confirmed_final_zero_command = True
-                    trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
+                    trial_report.confirmed_final_disarmed_state = (
+                        cleanup_st.get("armed") is False
+                        and cleanup_st.get("autonomyState") == "DISABLED"
+                        and cleanup_st.get("cmdSource") in ("NONE", None)
+                    )
                     return trial_report
 
                 extracted_start = extract_encoder_ticks(enc_res)
@@ -644,7 +674,11 @@ class PhysicalTestRunner:
                     print(f"[FAIL-CLOSED ERROR] {trial_report.abort_reason}")
                     cleanup_st = self.cleanup()
                     trial_report.confirmed_final_zero_command = True
-                    trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
+                    trial_report.confirmed_final_disarmed_state = (
+                        cleanup_st.get("armed") is False
+                        and cleanup_st.get("autonomyState") == "DISABLED"
+                        and cleanup_st.get("cmdSource") in ("NONE", None)
+                    )
                     return trial_report
 
                 start_ticks = extracted_start
@@ -655,7 +689,11 @@ class PhysicalTestRunner:
                 trial_report.abort_reason = f"Preflight sensor verification fault: {e}"
                 cleanup_st = self.cleanup()
                 trial_report.confirmed_final_zero_command = True
-                trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False
+                    and cleanup_st.get("autonomyState") == "DISABLED"
+                    and cleanup_st.get("cmdSource") in ("NONE", None)
+                )
                 return trial_report
         else:
             trial_report.start_heading_raw_deg = 0.0
@@ -669,7 +707,11 @@ class PhysicalTestRunner:
                 trial_report.abort_reason = f"Handshake failure: {e}"
                 cleanup_st = self.cleanup()
                 trial_report.confirmed_final_zero_command = True
-                trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False
+                    and cleanup_st.get("autonomyState") == "DISABLED"
+                    and cleanup_st.get("cmdSource") in ("NONE", None)
+                )
                 return trial_report
         else:
             trial_report.autonomy_state_transitions.append(
@@ -685,7 +727,11 @@ class PhysicalTestRunner:
                 trial_report.abort_reason = f"Arming failure: {e}"
                 cleanup_st = self.cleanup()
                 trial_report.confirmed_final_zero_command = True
-                trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False
+                    and cleanup_st.get("autonomyState") == "DISABLED"
+                    and cleanup_st.get("cmdSource") in ("NONE", None)
+                )
                 return trial_report
         else:
             trial_report.autonomy_state_transitions.append(
@@ -700,7 +746,11 @@ class PhysicalTestRunner:
                 trial_report.abort_reason = inv_err
                 cleanup_st = self.cleanup()
                 trial_report.confirmed_final_zero_command = True
-                trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
+                trial_report.confirmed_final_disarmed_state = (
+                    cleanup_st.get("armed") is False
+                    and cleanup_st.get("autonomyState") == "DISABLED"
+                    and cleanup_st.get("cmdSource") in ("NONE", None)
+                )
                 return trial_report
 
         # Step 8: Setup LinearApproachController
@@ -1206,7 +1256,19 @@ class PhysicalTestRunner:
 
             cleanup_st = self.cleanup()
             trial_report.confirmed_final_zero_command = True
-            trial_report.confirmed_final_disarmed_state = cleanup_st.get("armed") is False
+            trial_report.confirmed_final_disarmed_state = (
+                cleanup_st.get("armed") is False
+                and cleanup_st.get("autonomyState") == "DISABLED"
+                and cleanup_st.get("cmdSource") in ("NONE", None)
+            )
+            if not trial_report.confirmed_final_disarmed_state:
+                trial_report.status = "ABORTED"
+                if not trial_report.abort_reason:
+                    trial_report.abort_reason = (
+                        f"Fail-safe cleanup invariant violated: rover not verified disarmed "
+                        f"(armed={cleanup_st.get('armed')}, autonomyState={cleanup_st.get('autonomyState')}, cmdSource={cleanup_st.get('cmdSource')})"
+                    )
+                print(f"[FAIL-SAFE ERROR] {trial_report.abort_reason}")
 
         trial_report.approach_milestones = controller.get_telemetry_summary()
         return trial_report
@@ -2583,7 +2645,16 @@ class PhysicalTestRunner:
         trial_report.breakout_dwell_time_ms_total = total_breakout_dwell_ms
         trial_report.approach_milestones = controller.get_telemetry_summary()
         trial_report.active_pid_packets = active_pid_packets
-        trial_report.status = "DRY_RUN_PASSED" if self.params.dry_run else "SUCCESS"
+
+        if not trial_report.confirmed_final_disarmed_state:
+            trial_report.status = "ABORTED"
+            trial_report.abort_reason = (
+                f"Fail-safe cleanup invariant violated: rover not verified disarmed "
+                f"(armed={cleanup_st.get('armed')}, autonomyState={cleanup_st.get('autonomyState')}, cmdSource={cleanup_st.get('cmdSource')})"
+            )
+            print(f"[FAIL-SAFE ERROR] {trial_report.abort_reason}")
+        else:
+            trial_report.status = "DRY_RUN_PASSED" if self.params.dry_run else "SUCCESS"
 
         print(f"[OK] Step {trial_idx}/{self.params.trials} Completed ({trial_report.status})")
         st_head_str = f"{trial_report.start_heading_raw_deg:+.2f}°" if trial_report.start_heading_raw_deg is not None else "N/A"

@@ -432,12 +432,19 @@ class TestLinearCliAndDryRun(unittest.TestCase):
             "sequence": 1,
             "encoders": {"m1": 5000, "m2": 5000, "m3": 5000, "m4": 5000}
         }
-        mock_cockpit.get_status.return_value = {"armed": True, "mode": 3, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+        stalled_status = {"armed": True, "mode": 3, "autonomyState": "READY_ARMED", "cmdSource": "ROS_AUTONOMY"}
+        def mock_disarm_stalled():
+            stalled_status["armed"] = False
+            stalled_status["autonomyState"] = "DISABLED"
+            stalled_status["cmdSource"] = "NONE"
+            return {"ok": True}
+        mock_cockpit.get_status.side_effect = lambda: dict(stalled_status)
+        mock_cockpit.disarm_drive.side_effect = mock_disarm_stalled
         mock_cockpit.get_autonomy_status.return_value = {"state": "READY_ARMED", "clampedLinear": 0.20}
         mock_cockpit.send_cmd_vel.return_value = {"ok": True}
         mock_cockpit.arm_drive.return_value = {"ok": True}
         mock_cockpit.arm.return_value = {"ok": True}
-        mock_cockpit.disarm.return_value = {"ok": True}
+        mock_cockpit.disarm.side_effect = mock_disarm_stalled
         runner.cockpit = mock_cockpit
 
         t_start = time.time()
@@ -489,17 +496,24 @@ class TestLinearCliAndDryRun(unittest.TestCase):
             "ok": True,
             "config": {"wheelBalancing": False, "dynamicBraking": False}
         }
-        mock_cockpit.get_status.return_value = {
+        rover_status = {
             "armed": True,
             "mode": 3,
             "autonomyState": "READY_ARMED",
             "cmdSource": "ROS_AUTONOMY"
         }
+        def mock_disarm_realistic():
+            rover_status["armed"] = False
+            rover_status["autonomyState"] = "DISABLED"
+            rover_status["cmdSource"] = "NONE"
+            return {"ok": True}
+        mock_cockpit.get_status.side_effect = lambda: dict(rover_status)
+        mock_cockpit.disarm_drive.side_effect = mock_disarm_realistic
         is_motion_active = [False]
 
         mock_cockpit.arm_drive.return_value = {"ok": True}
         mock_cockpit.arm.return_value = {"ok": True}
-        mock_cockpit.disarm.return_value = {"ok": True}
+        mock_cockpit.disarm.side_effect = mock_disarm_realistic
         mock_cockpit.get_imu.return_value = {
             "ok": True,
             "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
