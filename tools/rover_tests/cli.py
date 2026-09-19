@@ -83,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     turn_parser.add_argument("--enable-balancing", action="store_true", help="Enable improved wheel-balancing controls and sync trim")
     turn_parser.add_argument("--enable-braking", "--braking", action="store_true", help="Enable shared low-speed dynamic braking pulse")
     turn_parser.add_argument("--clear-faults", action="store_true", help="Clear latched firmware safety faults if rover is confirmed stationary, zero-commanded, and disarmed (operator-authorized)")
-    turn_parser.add_argument("--stopping-advance-deg", type=float, default=None, help="Adjustable stopping advance angle in degrees (default: 0.5 when braking is enabled, 0.0 otherwise)")
+    turn_parser.add_argument("--stopping-advance-deg", type=float, default=None, help="Adjustable stopping advance angle in degrees (default: 0.7 when braking is enabled, 0.0 otherwise)")
     turn_parser.add_argument("--report-directory", type=str, default="reports", help="Directory where JSON and Markdown test reports are saved (default: reports)")
     turn_parser.add_argument("--host", type=str, default=get_default_host(), help="Rover Raspberry Pi 5 IP or hostname (default: auto-detected)")
     turn_parser.add_argument("--port", type=int, default=3000, help="Cockpit server port (default: 3000)")

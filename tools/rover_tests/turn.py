@@ -47,7 +47,7 @@ class TurnParameters:
             self.trials = self.repetitions
 
         if self.stopping_advance_deg is None:
-            self.stopping_advance_deg = 0.5 if self.enable_braking else 0.0
+            self.stopping_advance_deg = 0.7 if self.enable_braking else 0.0
 
         norm_dir = self.direction.lower()
         if norm_dir not in ("cw", "ccw"):

@@ -3015,7 +3015,7 @@ class TestFirmwareStallWatchdogAndFaultClearRegressions(unittest.TestCase):
         p1 = TurnParameters(degrees=90.0, repetitions=4, enable_braking=True)
         p1.validate()
         self.assertEqual(p1.trials, 4)
-        self.assertEqual(p1.stopping_advance_deg, 0.5)
+        self.assertEqual(p1.stopping_advance_deg, 0.7)
 
         p2 = TurnParameters(degrees=90.0, trials=3)
         p2.validate()

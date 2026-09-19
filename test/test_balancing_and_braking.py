@@ -71,7 +71,7 @@ class TestFeatureSelectionAndBaselinePreservation(unittest.TestCase):
         p.validate()
         self.assertFalse(p.enable_balancing)
         self.assertTrue(p.enable_braking)
-        self.assertEqual(p.stopping_advance_deg, 0.5, "Default stopping advance must be 0.5 when braking is enabled")
+        self.assertEqual(p.stopping_advance_deg, 0.7, "Default stopping advance must be 0.7 when braking is enabled")
 
     def test_custom_stopping_advance_preserved(self):
         p = TurnParameters(degrees=180.0, direction="cw", enable_braking=True, stopping_advance_deg=0.8)
