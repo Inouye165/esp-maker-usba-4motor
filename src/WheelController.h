@@ -98,6 +98,8 @@ public:
     
     int getSpinSyncTrimLeft() const { return lastSpinSyncTrimLeft; }
     int getSpinSyncTrimRight() const { return lastSpinSyncTrimRight; }
+    float getPairErrorLeft() const { return pairErrorLeft; }
+    float getPairErrorRight() const { return pairErrorRight; }
 
     // Coordinated transition of all wheels to STICTION_KINETIC
     void transitionAllToKinetic();
@@ -111,6 +113,10 @@ private:
     uint16_t spinSustainedVelocityCycles;
     int lastSpinSyncTrimLeft;
     int lastSpinSyncTrimRight;
+    float pairErrorLeft;
+    float pairErrorRight;
+    float prevTargetLeft;
+    float prevTargetRight;
 };
 
 #endif // WHEEL_CONTROLLER_H

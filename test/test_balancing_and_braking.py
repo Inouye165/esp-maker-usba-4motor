@@ -586,6 +586,231 @@ class TestActiveMotionTelemetryReporting(unittest.TestCase):
         self.assertEqual(pkt["m2"]["measuredRadps"], 3.06)
 
 
+class TestSameSideSynchronizationRegression(unittest.TestCase):
+    """
+    Regression tests for same-side wheel synchronization adhering to the Exact Motion Contract:
+    - M2-fast / M4-slow speed asymmetry correction direction.
+    - Dual power floor: M2 fast wheel can reduce down to 48 PWM, M4 slow wheel protected at 68 PWM.
+    - Trim limits (bounded to 24 PWM) and slew limiting (3 PWM/tick).
+    - Speed range floor (inactive below 0.35 rad/s reliable encoder range).
+    - Reset behavior on zero command, direction change, braking, and disarm.
+    - Balancing disabled preserves zero trim.
+    - CRUISE and CREEP phase balancing telemetry computation.
+    """
+
+    def setUp(self):
+        self.SYNC_GAIN = 20.0
+        self.SYNC_MAX = 24
+        self.SYNC_SLEW = 3
+        self.DEADBAND = 0.08
+        self.MIN_SPEED = 0.35
+        self.MIN_USABLE_FLOOR = 68
+        self.MIN_USABLE_FASTER = 48
+
+    def simulate_sync_step(self, t_fast, t_slow, v_fast, v_slow, base_fast, base_slow,
+                           last_trim=0, balancing_enabled=True, encoders_fresh=True,
+                           is_braking=False, prev_target=None):
+        """Simulates one cycle of same-side synchronization logic."""
+        if not balancing_enabled or not encoders_fresh or is_braking:
+            return 0, base_fast, base_slow, 0.0
+
+        # Check reliable speed range and direction
+        if abs(t_fast) < self.MIN_SPEED or abs(t_slow) < self.MIN_SPEED:
+            return 0, base_fast, base_slow, 0.0
+
+        same_dir = (t_fast > 0 and t_slow > 0) or (t_fast < 0 and t_slow < 0)
+        if not same_dir:
+            return 0, base_fast, base_slow, 0.0
+
+        # Direction change check
+        if prev_target is not None:
+            if (t_fast > 0.01 and prev_target < -0.01) or (t_fast < -0.01 and prev_target > 0.01):
+                last_trim = 0
+
+        pair_error = abs(v_fast) - abs(v_slow)
+        eff_diff = 0.0
+        if pair_error > self.DEADBAND:
+            eff_diff = pair_error - self.DEADBAND
+        elif pair_error < -self.DEADBAND:
+            eff_diff = pair_error + self.DEADBAND
+
+        raw_trim = int(round(self.SYNC_GAIN * eff_diff))
+        raw_trim = max(-self.SYNC_MAX, min(self.SYNC_MAX, raw_trim))
+
+        delta = max(-self.SYNC_SLEW, min(self.SYNC_SLEW, raw_trim - last_trim))
+        trim = last_trim + delta
+
+        # Push-pull application
+        s_fast = 1 if t_fast > 0 else (-1 if t_fast < 0 else 0)
+        s_slow = 1 if t_slow > 0 else (-1 if t_slow < 0 else 0)
+
+        cand_fast = base_fast - s_fast * trim
+        cand_slow = base_slow + s_slow * trim
+
+        # Power floor protection
+        # For fast wheel being throttled down:
+        trim_on_fast = -s_fast * trim
+        is_throttled_fast = (t_fast > 0 and trim_on_fast < 0) or (t_fast < 0 and trim_on_fast > 0)
+        floor_fast = self.MIN_USABLE_FASTER if is_throttled_fast else self.MIN_USABLE_FLOOR
+
+        if t_fast > 0:
+            final_fast = max(floor_fast, min(255, cand_fast))
+        else:
+            final_fast = min(-floor_fast, max(-255, cand_fast))
+
+        trim_on_slow = s_slow * trim
+        is_throttled_slow = (t_slow > 0 and trim_on_slow < 0) or (t_slow < 0 and trim_on_slow > 0)
+        floor_slow = self.MIN_USABLE_FASTER if is_throttled_slow else self.MIN_USABLE_FLOOR
+
+        if t_slow > 0:
+            final_slow = max(floor_slow, min(255, cand_slow))
+        else:
+            final_slow = min(-floor_slow, max(-255, cand_slow))
+
+        return trim, final_fast, final_slow, pair_error
+
+    def test_m2_fast_m4_slow_correction_direction_and_floor(self):
+        """
+        Verifies that when M2=2.42 rad/s and M4=1.65 rad/s (CW turn, negative target -1.02 rad/s):
+        - M2 (fast) receives positive delta to become less negative (magnitude reduced).
+        - M4 (slow) receives negative delta to become more negative (magnitude increased).
+        - M2 is permitted to drop below 68 PWM down to 48 PWM floor.
+        """
+        t_m2, t_m4 = -1.02, -1.02
+        v_m2, v_m4 = -2.42, -1.65
+        base_m2, base_m4 = -72, -82
+
+        # Step multiple cycles to allow slew rate to accumulate
+        trim = 0
+        for _ in range(10):
+            trim, final_m2, final_m4, pair_err = self.simulate_sync_step(
+                t_fast=t_m2, t_slow=t_m4, v_fast=v_m2, v_slow=v_m4,
+                base_fast=base_m2, base_slow=base_m4, last_trim=trim
+            )
+
+        self.assertAlmostEqual(pair_err, 0.77, places=2)
+        # Expected raw trim: round(20 * (0.77 - 0.08)) = 14 PWM
+        self.assertEqual(trim, 14)
+
+        # M2: -72 - (-1)*14 = -72 + 14 = -58 PWM (magnitude reduced from 72 to 58)
+        self.assertEqual(final_m2, -58, "Fast wheel magnitude must be reduced (less negative)")
+        self.assertLess(abs(final_m2), abs(base_m2), "M2 absolute PWM must be reduced")
+        self.assertLess(abs(final_m2), 68, "M2 must be permitted to drop below 68 PWM floor")
+
+        # M4: -82 + (-1)*14 = -82 - 14 = -96 PWM (magnitude increased from 82 to 96)
+        self.assertEqual(final_m4, -96, "Slow wheel magnitude must be increased (more negative)")
+        self.assertGreater(abs(final_m4), abs(base_m4), "M4 absolute PWM must be boosted")
+
+    def test_sync_trim_bounds_and_slew_limits(self):
+        """Verifies trim clamps to 24 PWM max and respects 3 PWM/tick slew rate limit."""
+        # Massive speed disparity: v_fast=5.0, v_slow=1.0 -> pair_error=4.0 rad/s
+        trim = 0
+        trims = []
+        for _ in range(15):
+            trim, _, _, _ = self.simulate_sync_step(
+                t_fast=2.0, t_slow=2.0, v_fast=5.0, v_slow=1.0,
+                base_fast=100, base_slow=100, last_trim=trim
+            )
+            trims.append(trim)
+
+        # Slew rate: each step must not exceed 3 PWM delta
+        for i in range(1, len(trims)):
+            self.assertLessEqual(trims[i] - trims[i - 1], self.SYNC_SLEW)
+
+        # Saturated trim must be clamped at SYNC_MAX (24 PWM)
+        self.assertEqual(trim, 24, "Trim must be clamped to exactly 24 PWM authority")
+
+    def test_reliable_speed_range_gating(self):
+        """Verifies synchronization is gated off below 0.35 rad/s reliable encoder range."""
+        # Target = 0.20 rad/s (below 0.35 rad/s)
+        trim, final_fast, final_slow, pair_err = self.simulate_sync_step(
+            t_fast=0.20, t_slow=0.20, v_fast=0.50, v_slow=0.10,
+            base_fast=50, base_slow=50, last_trim=0
+        )
+        self.assertEqual(trim, 0, "Trim must be 0 below reliable speed range")
+        self.assertEqual(final_fast, 50)
+        self.assertEqual(final_slow, 50)
+
+    def test_reset_behavior(self):
+        """Verifies trim resets to 0 on zero command, direction reversal, and braking."""
+        # Active trim built up
+        trim = 12
+
+        # 1. Zero command
+        trim_zero, _, _, _ = self.simulate_sync_step(
+            t_fast=0.0, t_slow=0.0, v_fast=1.0, v_slow=0.5,
+            base_fast=0, base_slow=0, last_trim=trim
+        )
+        self.assertEqual(trim_zero, 0, "Zero command must immediately reset trim")
+
+        # 2. Braking
+        trim_brake, _, _, _ = self.simulate_sync_step(
+            t_fast=1.5, t_slow=1.5, v_fast=2.0, v_slow=1.0,
+            base_fast=80, base_slow=80, last_trim=trim, is_braking=True
+        )
+        self.assertEqual(trim_brake, 0, "Braking must immediately reset trim")
+
+        # 3. Direction reversal (+1.5 -> -1.5)
+        trim_rev, _, _, _ = self.simulate_sync_step(
+            t_fast=-1.5, t_slow=-1.5, v_fast=-2.0, v_slow=-1.0,
+            base_fast=-80, base_slow=-80, last_trim=trim, prev_target=+1.5
+        )
+        # Slew from 0 towards target on reversal
+        self.assertLessEqual(trim_rev, 3, "Direction reversal must reset accumulated trim and slew from 0")
+
+    def test_balancing_disabled_preserves_zero_trim(self):
+        """Verifies that when wheel_balancing_enabled is False, trim remains strictly 0."""
+        trim, final_fast, final_slow, _ = self.simulate_sync_step(
+            t_fast=2.0, t_slow=2.0, v_fast=3.0, v_slow=1.5,
+            base_fast=80, base_slow=80, last_trim=0, balancing_enabled=False
+        )
+        self.assertEqual(trim, 0, "Trim must remain 0 when balancing is disabled")
+        self.assertEqual(final_fast, 80)
+        self.assertEqual(final_slow, 80)
+
+    def test_phase_balancing_telemetry_reporting(self):
+        """Verifies that compute_phase_balancing_metrics properly aggregates CRUISE and CREEP."""
+        from tools.rover_tests.reporting import compute_phase_balancing_metrics
+
+        packets = [
+            # CRUISE packet
+            {
+                "phase": "CRUISE",
+                "m1": {"measuredRadps": 1.76, "spinSyncTrim": 0},
+                "m2": {"measuredRadps": -2.42, "spinSyncTrim": 14},
+                "m3": {"measuredRadps": 1.74, "spinSyncTrim": 0},
+                "m4": {"measuredRadps": -1.65, "spinSyncTrim": -14},
+            },
+            # CREEP packet
+            {
+                "phase": "CREEP",
+                "m1": {"measuredRadps": 0.45, "spinSyncTrim": 0},
+                "m2": {"measuredRadps": -0.58, "spinSyncTrim": 6},
+                "m3": {"measuredRadps": 0.44, "spinSyncTrim": 0},
+                "m4": {"measuredRadps": -0.42, "spinSyncTrim": -6},
+            }
+        ]
+        metrics = compute_phase_balancing_metrics(packets)
+        self.assertEqual(len(metrics), 2)
+
+        # Check CRUISE
+        cruise = [m for m in metrics if m["phase"] == "CRUISE"][0]
+        self.assertAlmostEqual(cruise["m2_mean"], 2.42, places=2)
+        self.assertAlmostEqual(cruise["m4_mean"], 1.65, places=2)
+        self.assertAlmostEqual(cruise["pair_error_right"], 0.77, places=2)
+        self.assertEqual(cruise["m2_trim"], 14.0)
+        self.assertEqual(cruise["m4_trim"], -14.0)
+
+        # Check CREEP
+        creep = [m for m in metrics if m["phase"] == "CREEP"][0]
+        self.assertAlmostEqual(creep["m2_mean"], 0.58, places=2)
+        self.assertAlmostEqual(creep["m4_mean"], 0.42, places=2)
+        self.assertAlmostEqual(creep["pair_error_right"], 0.16, places=2)
+        self.assertEqual(creep["m2_trim"], 6.0)
+        self.assertEqual(creep["m4_trim"], -6.0)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

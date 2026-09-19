@@ -67,9 +67,16 @@ const float KI_SPEED = 1.2f;
 const float KD_SPEED = 0.05f;
 const float SPIN_PID_KP = 10.0f; // Pure-spin proportional gain (increased from 6.0 to 10.0 for closed-loop response)
 const float SPIN_PID_KI = 4.0f;  // Pure-spin integral gain (active during pure-spin maneuvers to eliminate steady-state offset)
-const float SPIN_SYNC_TRIM_GAIN = 12.0f; // Push-pull front/rear equalization trim gain
-const int SPIN_SYNC_TRIM_MAX = 18;       // Maximum push-pull sync trim authority (PWM)
-const int MIN_USABLE_SPIN_PWM = 68;      // Empirically safe floor preventing tire-scrub stall during pure spin
+const float SAME_SIDE_SYNC_TRIM_GAIN = 20.0f; // Equalization gain (PWM per rad/s delta)
+const int SAME_SIDE_SYNC_TRIM_MAX = 24;       // Maximum same-side sync trim authority (PWM)
+const int SAME_SIDE_SYNC_SLEW_LIMIT = 3;     // Slew rate limit per 100Hz tick (PWM/tick)
+const float SAME_SIDE_SYNC_DEADBAND = 0.08f;  // Speed error deadband (rad/s)
+const float MIN_RELIABLE_SPEED_RADPS = 0.35f;// Minimum reliable encoder-speed range
+const int MIN_USABLE_SPIN_PWM_FASTER = 48;   // Lower floor allowing fast spinning wheel to be throttled back
+
+const float SPIN_SYNC_TRIM_GAIN = SAME_SIDE_SYNC_TRIM_GAIN; // Backwards-compatible alias
+const int SPIN_SYNC_TRIM_MAX = SAME_SIDE_SYNC_TRIM_MAX;       // Backwards-compatible alias
+const int MIN_USABLE_SPIN_PWM = 68;      // Safe baseline floor preventing tire-scrub stall on loaded wheels
 
 
 // Breakaway and Static Friction Compensation Limits (Feedforward Constants)

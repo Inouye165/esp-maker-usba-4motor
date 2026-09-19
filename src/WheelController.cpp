@@ -315,7 +315,11 @@ WheelController::WheelController()
     : openLoopActive(false)
     , spinSustainedVelocityCycles(0)
     , lastSpinSyncTrimLeft(0)
-    , lastSpinSyncTrimRight(0) {
+    , lastSpinSyncTrimRight(0)
+    , pairErrorLeft(0.0f)
+    , pairErrorRight(0.0f)
+    , prevTargetLeft(0.0f)
+    , prevTargetRight(0.0f) {
     for (int i = 0; i < 4; i++) openLoopPwms[i] = 0;
 }
 
@@ -324,6 +328,10 @@ void WheelController::begin() {
     spinSustainedVelocityCycles = 0;
     lastSpinSyncTrimLeft = 0;
     lastSpinSyncTrimRight = 0;
+    pairErrorLeft = 0.0f;
+    pairErrorRight = 0.0f;
+    prevTargetLeft = 0.0f;
+    prevTargetRight = 0.0f;
     for (int i = 0; i < 4; i++) {
         openLoopPwms[i] = 0;
         controllers[i].begin(i);
@@ -388,82 +396,93 @@ void WheelController::update(const float *measuredVelocities, const int32_t *tic
         basePwms[i] = controllers[i].update(measuredVelocities[i], ticks[i], dt);
     }
 
-    // 2. Spin-Only Direct PWM Synchronization Trim
+    // 2. Shared Production Drivetrain Same-Side Wheel Synchronization Trim
     int finalPwms[4];
     for (int i = 0; i < 4; i++) {
         finalPwms[i] = basePwms[i];
     }
 
-    // Explicit Spin-Only Gating Checks:
-    bool maxTargetBelowThreshold = true;
-    for (int i = 0; i < 4; i++) {
-        if (abs(controllers[i].getTarget()) >= 0.05f) {
-            maxTargetBelowThreshold = false;
-            break;
-        }
-    }
+    bool balancingEligible = WHEEL_BALANCE_ENABLED && encodersFresh && (driver.getActuationState() != DrivetrainActuationState::BRAKE);
 
-    bool signOk = true;
-    if (isSpinManeuver && !isGoingStraight) {
-        float t0 = controllers[0].getTarget();
-        float t1 = controllers[1].getTarget();
-        float t2 = controllers[2].getTarget();
-        float t3 = controllers[3].getTarget();
-
-        if (t0 > 0 && (t1 > 0 || t3 > 0)) signOk = false;
-        if (t0 < 0 && (t1 < 0 || t3 < 0)) signOk = false;
-        if (t2 > 0 && (t1 > 0 || t3 > 0)) signOk = false;
-        if (t2 < 0 && (t1 < 0 || t3 < 0)) signOk = false;
-    }
-
-    bool spinSyncActive = isSpinManeuver && !isGoingStraight && encodersFresh && !maxTargetBelowThreshold && signOk;
-
-    if (!spinSyncActive) {
+    if (!balancingEligible) {
         lastSpinSyncTrimLeft = 0;
         lastSpinSyncTrimRight = 0;
+        pairErrorLeft = 0.0f;
+        pairErrorRight = 0.0f;
+        prevTargetLeft = 0.0f;
+        prevTargetRight = 0.0f;
     } else {
-        float deadband = WHEEL_BALANCE_ENABLED ? 0.08f : 0.15f;
-        int trimMax    = WHEEL_BALANCE_ENABLED ? SPIN_SYNC_TRIM_MAX : 8;
-        int deltaMax   = WHEEL_BALANCE_ENABLED ? 2 : 1;
-        float syncGain = WHEEL_BALANCE_ENABLED ? SPIN_SYNC_TRIM_GAIN : 5.0f;
-
         // --- Left Side Sync Trim (M1 / LF [0] vs M3 / LR [2]) ---
-        float v0 = measuredVelocities[0];
-        float v2 = measuredVelocities[2];
-        float leftDiffMag = abs(v0) - abs(v2);
+        float t0 = controllers[0].getTarget();
+        float t2 = controllers[2].getTarget();
+        bool leftReliable = (abs(t0) >= MIN_RELIABLE_SPEED_RADPS) && (abs(t2) >= MIN_RELIABLE_SPEED_RADPS);
+        bool leftSameDir = (t0 > 0.0f && t2 > 0.0f) || (t0 < 0.0f && t2 < 0.0f);
 
-        float effLeftDiff = 0.0f;
-        if (leftDiffMag > deadband) {
-            effLeftDiff = leftDiffMag - deadband;
-        } else if (leftDiffMag < -deadband) {
-            effLeftDiff = leftDiffMag + deadband;
+        // Reset left trim on direction change or zero command
+        if ((t0 > 0.01f && prevTargetLeft < -0.01f) || (t0 < -0.01f && prevTargetLeft > 0.01f) || (abs(t0) < 0.01f)) {
+            lastSpinSyncTrimLeft = 0;
+            pairErrorLeft = 0.0f;
         }
+        prevTargetLeft = t0;
 
-        int rawLeftTrim = (int)round(syncGain * effLeftDiff);
-        rawLeftTrim = constrain(rawLeftTrim, -trimMax, trimMax);
+        if (leftReliable && leftSameDir) {
+            float v0 = measuredVelocities[0];
+            float v2 = measuredVelocities[2];
+            pairErrorLeft = abs(v0) - abs(v2);
 
-        int leftDelta = rawLeftTrim - lastSpinSyncTrimLeft;
-        leftDelta = constrain(leftDelta, -deltaMax, deltaMax);
-        lastSpinSyncTrimLeft += leftDelta;
+            float effLeftDiff = 0.0f;
+            if (pairErrorLeft > SAME_SIDE_SYNC_DEADBAND) {
+                effLeftDiff = pairErrorLeft - SAME_SIDE_SYNC_DEADBAND;
+            } else if (pairErrorLeft < -SAME_SIDE_SYNC_DEADBAND) {
+                effLeftDiff = pairErrorLeft + SAME_SIDE_SYNC_DEADBAND;
+            }
+
+            int rawLeftTrim = (int)round(SAME_SIDE_SYNC_TRIM_GAIN * effLeftDiff);
+            rawLeftTrim = constrain(rawLeftTrim, -SAME_SIDE_SYNC_TRIM_MAX, SAME_SIDE_SYNC_TRIM_MAX);
+
+            int leftDelta = rawLeftTrim - lastSpinSyncTrimLeft;
+            leftDelta = constrain(leftDelta, -SAME_SIDE_SYNC_SLEW_LIMIT, SAME_SIDE_SYNC_SLEW_LIMIT);
+            lastSpinSyncTrimLeft += leftDelta;
+        } else {
+            lastSpinSyncTrimLeft = 0;
+            pairErrorLeft = 0.0f;
+        }
 
         // --- Right Side Sync Trim (M2 / RF [1] vs M4 / RR [3]) ---
-        float v1 = measuredVelocities[1];
-        float v3 = measuredVelocities[3];
-        float rightDiffMag = abs(v1) - abs(v3);
+        float t1 = controllers[1].getTarget();
+        float t3 = controllers[3].getTarget();
+        bool rightReliable = (abs(t1) >= MIN_RELIABLE_SPEED_RADPS) && (abs(t3) >= MIN_RELIABLE_SPEED_RADPS);
+        bool rightSameDir = (t1 > 0.0f && t3 > 0.0f) || (t1 < 0.0f && t3 < 0.0f);
 
-        float effRightDiff = 0.0f;
-        if (rightDiffMag > deadband) {
-            effRightDiff = rightDiffMag - deadband;
-        } else if (rightDiffMag < -deadband) {
-            effRightDiff = rightDiffMag + deadband;
+        // Reset right trim on direction change or zero command
+        if ((t1 > 0.01f && prevTargetRight < -0.01f) || (t1 < -0.01f && prevTargetRight > 0.01f) || (abs(t1) < 0.01f)) {
+            lastSpinSyncTrimRight = 0;
+            pairErrorRight = 0.0f;
         }
+        prevTargetRight = t1;
 
-        int rawRightTrim = (int)round(syncGain * effRightDiff);
-        rawRightTrim = constrain(rawRightTrim, -trimMax, trimMax);
+        if (rightReliable && rightSameDir) {
+            float v1 = measuredVelocities[1];
+            float v3 = measuredVelocities[3];
+            pairErrorRight = abs(v1) - abs(v3);
 
-        int rightDelta = rawRightTrim - lastSpinSyncTrimRight;
-        rightDelta = constrain(rightDelta, -deltaMax, deltaMax);
-        lastSpinSyncTrimRight += rightDelta;
+            float effRightDiff = 0.0f;
+            if (pairErrorRight > SAME_SIDE_SYNC_DEADBAND) {
+                effRightDiff = pairErrorRight - SAME_SIDE_SYNC_DEADBAND;
+            } else if (pairErrorRight < -SAME_SIDE_SYNC_DEADBAND) {
+                effRightDiff = pairErrorRight + SAME_SIDE_SYNC_DEADBAND;
+            }
+
+            int rawRightTrim = (int)round(SAME_SIDE_SYNC_TRIM_GAIN * effRightDiff);
+            rawRightTrim = constrain(rawRightTrim, -SAME_SIDE_SYNC_TRIM_MAX, SAME_SIDE_SYNC_TRIM_MAX);
+
+            int rightDelta = rawRightTrim - lastSpinSyncTrimRight;
+            rightDelta = constrain(rightDelta, -SAME_SIDE_SYNC_SLEW_LIMIT, SAME_SIDE_SYNC_SLEW_LIMIT);
+            lastSpinSyncTrimRight += rightDelta;
+        } else {
+            lastSpinSyncTrimRight = 0;
+            pairErrorRight = 0.0f;
+        }
     }
 
     // Apply push-pull trim to base PWMs and perform final ±255 clamp
@@ -490,10 +509,20 @@ void WheelController::update(const float *measuredVelocities, const int32_t *tic
         for (int i = 0; i < 4; i++) {
             float t = controllers[i].getTarget();
             if (abs(t) >= 0.05f && controllers[i].getStictionState() == STICTION_KINETIC) {
-                if (t > 0.0f && finalPwms[i] < MIN_USABLE_SPIN_PWM) {
-                    finalPwms[i] = MIN_USABLE_SPIN_PWM;
-                } else if (t < 0.0f && finalPwms[i] > -MIN_USABLE_SPIN_PWM) {
-                    finalPwms[i] = -MIN_USABLE_SPIN_PWM;
+                int s_wh = (t > 0.0f) ? 1 : ((t < 0.0f) ? -1 : 0);
+                int trim_val = 0;
+                if (i == 0) trim_val = -s_wh * lastSpinSyncTrimLeft;
+                else if (i == 2) trim_val = +s_wh * lastSpinSyncTrimLeft;
+                else if (i == 1) trim_val = -s_wh * lastSpinSyncTrimRight;
+                else if (i == 3) trim_val = +s_wh * lastSpinSyncTrimRight;
+
+                bool isThrottled = (t > 0.0f && trim_val < 0) || (t < 0.0f && trim_val > 0);
+                int floorPwm = isThrottled ? MIN_USABLE_SPIN_PWM_FASTER : MIN_USABLE_SPIN_PWM;
+
+                if (t > 0.0f && finalPwms[i] < floorPwm) {
+                    finalPwms[i] = floorPwm;
+                } else if (t < 0.0f && finalPwms[i] > -floorPwm) {
+                    finalPwms[i] = -floorPwm;
                 }
             }
         }
@@ -570,6 +599,10 @@ void WheelController::reset() {
     spinSustainedVelocityCycles = 0;
     lastSpinSyncTrimLeft = 0;
     lastSpinSyncTrimRight = 0;
+    pairErrorLeft = 0.0f;
+    pairErrorRight = 0.0f;
+    prevTargetLeft = 0.0f;
+    prevTargetRight = 0.0f;
     for (int i = 0; i < 4; i++) {
         openLoopPwms[i] = 0;
         controllers[i].reset();

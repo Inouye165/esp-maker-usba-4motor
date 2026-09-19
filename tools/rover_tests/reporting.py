@@ -192,6 +192,63 @@ class MultiTrialSuiteReport:
             self.repetitions = self.total_trials
 
 
+def compute_phase_balancing_metrics(active_pid_packets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Computes same-side pair error and actual correction applied separated into CRUISE and CREEP phases.
+    """
+    phase_buckets: Dict[str, List[Dict[str, Any]]] = {"CRUISE": [], "CREEP": []}
+    for p in active_pid_packets:
+        ph = p.get("phase")
+        if ph in phase_buckets:
+            phase_buckets[ph].append(p)
+
+    results = []
+    for ph_name in ["CRUISE", "CREEP"]:
+        pkts = phase_buckets[ph_name]
+        if not pkts:
+            continue
+
+        # Left pair: M1 (LF) & M3 (LR)
+        v1_list = [abs(p["m1"]["measuredRadps"]) for p in pkts if p.get("m1", {}).get("measuredRadps") is not None]
+        v3_list = [abs(p["m3"]["measuredRadps"]) for p in pkts if p.get("m3", {}).get("measuredRadps") is not None]
+        t1_list = [p["m1"].get("spinSyncTrim", 0) for p in pkts if "m1" in p and "spinSyncTrim" in p["m1"]]
+        t3_list = [p["m3"].get("spinSyncTrim", 0) for p in pkts if "m3" in p and "spinSyncTrim" in p["m3"]]
+
+        # Right pair: M2 (RF) & M4 (RR)
+        v2_list = [abs(p["m2"]["measuredRadps"]) for p in pkts if p.get("m2", {}).get("measuredRadps") is not None]
+        v4_list = [abs(p["m4"]["measuredRadps"]) for p in pkts if p.get("m4", {}).get("measuredRadps") is not None]
+        t2_list = [p["m2"].get("spinSyncTrim", 0) for p in pkts if "m2" in p and "spinSyncTrim" in p["m2"]]
+        t4_list = [p["m4"].get("spinSyncTrim", 0) for p in pkts if "m4" in p and "spinSyncTrim" in p["m4"]]
+
+        m1_mean = sum(v1_list) / len(v1_list) if v1_list else 0.0
+        m3_mean = sum(v3_list) / len(v3_list) if v3_list else 0.0
+        err_l = m1_mean - m3_mean
+        t1_mean = sum(t1_list) / len(t1_list) if t1_list else 0.0
+        t3_mean = sum(t3_list) / len(t3_list) if t3_list else 0.0
+
+        m2_mean = sum(v2_list) / len(v2_list) if v2_list else 0.0
+        m4_mean = sum(v4_list) / len(v4_list) if v4_list else 0.0
+        err_r = m2_mean - m4_mean
+        t2_mean = sum(t2_list) / len(t2_list) if t2_list else 0.0
+        t4_mean = sum(t4_list) / len(t4_list) if t4_list else 0.0
+
+        results.append({
+            "phase": ph_name,
+            "samples": len(pkts),
+            "m1_mean": m1_mean,
+            "m3_mean": m3_mean,
+            "pair_error_left": err_l,
+            "m1_trim": t1_mean,
+            "m3_trim": t3_mean,
+            "m2_mean": m2_mean,
+            "m4_mean": m4_mean,
+            "pair_error_right": err_r,
+            "m2_trim": t2_mean,
+            "m4_trim": t4_mean,
+        })
+    return results
+
+
 class ReportGenerator:
     """Serializes reports to JSON and formats readable Markdown summaries."""
 
@@ -329,6 +386,25 @@ class ReportGenerator:
                     dur = f"{ph.get('duration_s', 0.0):.2f}s"
                     md.append(f"| **{ph_name}** | {s_abs} | {e_abs} | {s_rel} | {e_rel} | {d_rot} | {dur} |")
                 md.append("")
+
+            # Same-Side Synchronization & Pair Balancing Breakdown (CRUISE & CREEP)
+            if t.active_pid_packets:
+                bal_metrics = compute_phase_balancing_metrics(t.active_pid_packets)
+                if bal_metrics:
+                    md.append("#### Same-Side Wheel Synchronization & Pair Balancing (CRUISE & CREEP)")
+                    md.append("| Motion Phase | Left Pair (M1/M3) Speeds | Left Pair Error | Left Trims (M1/M3) | Right Pair (M2/M4) Speeds | Right Pair Error | Right Trims (M2/M4) | Telemetry Samples |")
+                    md.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+                    for bm in bal_metrics:
+                        ph = bm["phase"]
+                        l_spd = f"`{bm['m1_mean']:.2f} / {bm['m3_mean']:.2f} rad/s`"
+                        l_err = f"`{bm['pair_error_left']:+.2f} rad/s`"
+                        l_trm = f"`{bm['m1_trim']:+.1f} / {bm['m3_trim']:+.1f} PWM`"
+                        r_spd = f"`{bm['m2_mean']:.2f} / {bm['m4_mean']:.2f} rad/s`"
+                        r_err = f"`{bm['pair_error_right']:+.2f} rad/s`"
+                        r_trm = f"`{bm['m2_trim']:+.1f} / {bm['m4_trim']:+.1f} PWM`"
+                        smpls = f"`{bm['samples']}`"
+                        md.append(f"| **{ph}** | {l_spd} | {l_err} | {l_trm} | {r_spd} | {r_err} | {r_trm} | {smpls} |")
+                    md.append("")
 
             # Wheel Details
             md.append("#### Wheel Actuation & Encoder Performance")

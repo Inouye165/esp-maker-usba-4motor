@@ -987,16 +987,34 @@ class PhysicalTestRunner:
                                 act_st = f.get("actuationState")
                                 if act_st and act_st not in trial_report.actuation_states_observed:
                                     trial_report.actuation_states_observed.append(act_st)
+
+                                current_phase = controller.phase.name if hasattr(controller, "phase") else "ACTIVE"
+                                m1_f = f.get("m1", {})
+                                m2_f = f.get("m2", {})
+                                m3_f = f.get("m3", {})
+                                m4_f = f.get("m4", {})
+
+                                v1_val = m1_f.get("measuredRadps")
+                                v2_val = m2_f.get("measuredRadps")
+                                v3_val = m3_f.get("measuredRadps")
+                                v4_val = m4_f.get("measuredRadps")
+
+                                p_err_l = (abs(float(v1_val)) - abs(float(v3_val))) if (v1_val is not None and v3_val is not None) else None
+                                p_err_r = (abs(float(v2_val)) - abs(float(v4_val))) if (v2_val is not None and v4_val is not None) else None
+
                                 active_pid_packets.append({
                                     "host_receipt_time_monotonic": round(time.monotonic(), 6),
                                     "t_rel_s": round(now - t_motion_start, 4),
                                     "source_timestamp_ms": f.get("timestamp"),
                                     "source_sequence": f.get("sequence"),
+                                    "phase": current_phase,
                                     "actuationState": act_st,
-                                    "m1": f.get("m1", {}),
-                                    "m2": f.get("m2", {}),
-                                    "m3": f.get("m3", {}),
-                                    "m4": f.get("m4", {}),
+                                    "pair_error_left_radps": round(p_err_l, 3) if p_err_l is not None else None,
+                                    "pair_error_right_radps": round(p_err_r, 3) if p_err_r is not None else None,
+                                    "m1": m1_f,
+                                    "m2": m2_f,
+                                    "m3": m3_f,
+                                    "m4": m4_f,
                                     "outerYaw": f.get("outerYaw")
                                 })
                                 for w_id in ["m1", "m2", "m3", "m4"]:
