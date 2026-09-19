@@ -284,6 +284,26 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
             break;
         }
 
+        case 0x2E: { // CMD_SET_DRIVE_CONFIG
+            // payloadBuf[1]: flags (bit 0 = WHEEL_BALANCE_ENABLED, bit 1 = DYNAMIC_BRAKE_ENABLED)
+            // payloadBuf[2]: brakeDurationMs (uint8_t)
+            // payloadBuf[3]: brakeMaxTriggerSpeed (uint8_t, in 0.01 rad/s units)
+            if (extLen >= 2) {
+                uint8_t flags = payloadBuf[1];
+                WHEEL_BALANCE_ENABLED = (flags & 0x01) != 0;
+                DYNAMIC_BRAKE_ENABLED = (flags & 0x02) != 0;
+                if (extLen >= 3 && payloadBuf[2] >= 20) {
+                    DYNAMIC_BRAKE_DURATION_MS = (uint16_t)payloadBuf[2];
+                }
+                if (extLen >= 4 && payloadBuf[3] > 0) {
+                    DYNAMIC_BRAKE_MAX_TRIGGER_RADPS = (float)payloadBuf[3] / 100.0f;
+                }
+                LOG_SERIAL_PRINTF("[DriveConfig] Updated: balance=%d, brake=%d, duration=%d ms, max_trig=%.2f rad/s\n",
+                    WHEEL_BALANCE_ENABLED ? 1 : 0, DYNAMIC_BRAKE_ENABLED ? 1 : 0, DYNAMIC_BRAKE_DURATION_MS, DYNAMIC_BRAKE_MAX_TRIGGER_RADPS);
+            }
+            break;
+        }
+
         case 0x37: { // CMD_ROVER_PARAMS (Set or Query)
             if (extLen >= 9) {
                 float newDiameter = 0.0f;
@@ -679,7 +699,7 @@ void SerialProtocol::sendTelemetry(
 #endif
 }
 
-void SerialProtocol::sendPidTelemetry(const WheelController &wheelController, const YawOuterLoopDiag &outerDiag) {
+void SerialProtocol::sendPidTelemetry(const WheelController &wheelController, const YawOuterLoopDiag &outerDiag, uint8_t actuationState, uint8_t configFlags) {
     uint8_t pidData[96];
     memset(pidData, 0, sizeof(pidData));
     for (int i = 0; i < 4; i++) {
@@ -719,7 +739,6 @@ void SerialProtocol::sendPidTelemetry(const WheelController &wheelController, co
     uint8_t activeVal= outerDiag.yawOuterActive ? 1 : 0;
     uint8_t validVal = outerDiag.imuGyroValid ? 1 : 0;
     uint16_t ageVal  = outerDiag.imuGyroAgeMs;
-    uint16_t rsvdVal = 0;
 
     memcpy(&pidData[64], &wzReqVal, 2);
     memcpy(&pidData[66], &wzActVal, 2);
@@ -729,7 +748,8 @@ void SerialProtocol::sendPidTelemetry(const WheelController &wheelController, co
     pidData[74] = activeVal;
     pidData[75] = validVal;
     memcpy(&pidData[76], &ageVal, 2);
-    memcpy(&pidData[78], &rsvdVal, 2);
+    pidData[78] = actuationState; // 0=DRIVE, 1=BRAKE, 2=COAST
+    pidData[79] = configFlags;    // bit 0=balance, bit 1=brake
 
     writePacket(0x3B, pidData, 96);
 }

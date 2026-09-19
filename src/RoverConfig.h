@@ -98,6 +98,12 @@ const float SPIN_MANEUVER_EPSILON = 0.005f;        // Linear velocity threshold 
 const uint32_t WATCHDOG_TIMEOUT_MS = 300; // Controlled deceleration trigger
 const uint32_t FAULT_TIMEOUT_MS = 1000;    // Fully disable motor output trigger
 
+// Runtime Feature Toggles (Independently Selectable)
+extern bool WHEEL_BALANCE_ENABLED;
+extern bool DYNAMIC_BRAKE_ENABLED;
+extern uint16_t DYNAMIC_BRAKE_DURATION_MS;
+extern float DYNAMIC_BRAKE_MAX_TRIGGER_RADPS;
+
 // Load/Save calibration settings to NVS
 void initConfigStorage();
 void loadCalibrations();

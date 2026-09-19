@@ -123,6 +123,13 @@ class TrialReport:
     settle_imu_samples: List[Dict[str, Any]] = field(default_factory=list)
     settle_pid_packets: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Balancing & Dynamic Braking Instrumentation
+    wheel_balancing_enabled: bool = False
+    dynamic_braking_enabled: bool = False
+    stopping_advance_deg: float = 0.0
+    actuation_states_observed: List[str] = field(default_factory=list)
+    brake_active_duration_ms: Optional[float] = None
+
     # Raw telemetry frames (optional / truncated in summary)
     approach_milestones: Dict[str, Any] = field(default_factory=dict)
 
@@ -139,6 +146,9 @@ class MultiTrialSuiteReport:
     successful_trials: int = 0
     aborted_trials: int = 0
     is_dry_run: bool = False
+    wheel_balancing_enabled: bool = False
+    dynamic_braking_enabled: bool = False
+    stopping_advance_deg: float = 0.0
     trials: List[TrialReport] = field(default_factory=list)
     mean_settled_error_deg: Optional[float] = None
     std_dev_settled_error_deg: Optional[float] = None
@@ -224,6 +234,14 @@ class ReportGenerator:
                     f"| Settle Telemetry Achieved | `IMU: {t.settle_imu_valid_advancing_count}/{t.settle_imu_poll_count} valid ({t.settle_imu_valid_advancing_rate_hz:.1f} Hz, poll {t.settle_imu_poll_rate_hz:.1f} Hz), "
                     f"PID: {t.settle_pid_post_zero_packets_count} post-zero ({t.settle_pid_post_zero_packet_rate_hz:.1f} Hz, {t.settle_pid_backlog_packets_count} backlog, {t.settle_pid_unknown_packets_count} unk)` | Duration: {t.settle_duration_s:.2f}s |"
                 )
+            md.append(f"| Wheel Balancing Active | `{'ENABLED' if t.wheel_balancing_enabled else 'DISABLED'}` | Low-speed synchronization trim |")
+            md.append(f"| Dynamic Braking Active | `{'ENABLED' if t.dynamic_braking_enabled else 'DISABLED'}` | Shared low-speed brake pulse |")
+            if t.stopping_advance_deg > 0.0:
+                md.append(f"| Stopping Advance | `{t.stopping_advance_deg:.2f}°` | Pre-target stop trigger angle |")
+            if t.actuation_states_observed:
+                md.append(f"| Actuation States | `{' -> '.join(t.actuation_states_observed)}` | Firmware drivetrain states |")
+            if t.brake_active_duration_ms is not None:
+                md.append(f"| Brake Pulse Duration | `{t.brake_active_duration_ms:.1f} ms` | Active dynamic brake period |")
             md.append(f"| Final Zero & Disarmed Confirmed | `{'YES' if (t.confirmed_final_zero_command and t.confirmed_final_disarmed_state) else 'NO (FAIL-SAFE ERROR)'}` | Drivetrain locked & safe |")
             md.append("")
 

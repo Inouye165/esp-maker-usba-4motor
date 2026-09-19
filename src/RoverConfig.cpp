@@ -16,6 +16,12 @@ float LEFT_TRIM_REV = 1.00f;
 float RIGHT_TRIM_REV = 1.00f;
 bool USE_UNIFORM_BREAKAWAY = true;
 
+// Runtime feature toggles (safe defaults: false to preserve baseline)
+bool WHEEL_BALANCE_ENABLED = false;
+bool DYNAMIC_BRAKE_ENABLED = false;
+uint16_t DYNAMIC_BRAKE_DURATION_MS = 100; // 100 ms bounded brake pulse
+float DYNAMIC_BRAKE_MAX_TRIGGER_RADPS = 0.35f; // Triggers only in low-speed / creep stopping window
+
 // Default calibrations:
 // SS6625E motor driver board on the Maker Pro generally starts rotating wheels around 40-60 PWM
 MotorCalibration motorCalibrations[4] = {

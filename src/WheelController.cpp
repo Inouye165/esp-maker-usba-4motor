@@ -212,20 +212,29 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
     // Breakaway friction and velocity feedforward magnitude
     float breakaway;
     if (isSpinManeuver) {
-        breakaway = SPIN_KINETIC_KS_PWM; // Dedicated pure-spin kinetic feedforward base (75.0 PWM)
+        // Dedicated pure-spin kinetic feedforward base (75.0 PWM)
+        if (WHEEL_BALANCE_ENABLED && abs(targetVel) < 1.5f) {
+            float speedFactor = constrain(abs(targetVel) / 1.5f, 0.45f, 1.0f);
+            breakaway = SPIN_KINETIC_KS_PWM * speedFactor;
+        } else {
+            breakaway = SPIN_KINETIC_KS_PWM;
+        }
     } else {
         breakaway = (targetVel > 0.0f) ? (float)motorCalibrations[index].forwardBreakawayPwm
                                        : (float)motorCalibrations[index].reverseBreakawayPwm;
     }
     float ffMagnitude = breakaway + (motorCalibrations[index].kV * abs(targetVel));
 
-    
     // In KINETIC state with non-zero target, apply minimum feedforward floor
     if (stictionState == STICTION_KINETIC && abs(targetVel) >= 0.01f) {
         float minFfFloor;
         if (isSpinManeuver) {
             // Forward-driving rear wheel receives 94 PWM floor; others receive 80 PWM floor
             minFfFloor = isForwardRearWheel ? SPIN_FORWARD_REAR_KINETIC_FLOOR : MIN_SPIN_KINETIC_FF_FLOOR;
+            if (WHEEL_BALANCE_ENABLED && abs(targetVel) < 1.5f) {
+                float speedFactor = constrain(abs(targetVel) / 1.5f, 0.50f, 1.0f);
+                minFfFloor = minFfFloor * speedFactor;
+            }
         } else {
             minFfFloor = 45.0f;
         }
@@ -416,23 +425,27 @@ void WheelController::update(const float *measuredVelocities, const int32_t *tic
         lastSpinSyncTrimLeft = 0;
         lastSpinSyncTrimRight = 0;
     } else {
+        float deadband = WHEEL_BALANCE_ENABLED ? 0.08f : 0.15f;
+        int trimMax    = WHEEL_BALANCE_ENABLED ? 18 : 8;
+        int deltaMax   = WHEEL_BALANCE_ENABLED ? 2 : 1;
+
         // --- Left Side Sync Trim (M1 / LF [0] vs M3 / LR [2]) ---
         float v0 = measuredVelocities[0];
         float v2 = measuredVelocities[2];
         float leftDiffMag = abs(v0) - abs(v2);
 
         float effLeftDiff = 0.0f;
-        if (leftDiffMag > 0.15f) {
-            effLeftDiff = leftDiffMag - 0.15f;
-        } else if (leftDiffMag < -0.15f) {
-            effLeftDiff = leftDiffMag + 0.15f;
+        if (leftDiffMag > deadband) {
+            effLeftDiff = leftDiffMag - deadband;
+        } else if (leftDiffMag < -deadband) {
+            effLeftDiff = leftDiffMag + deadband;
         }
 
         int rawLeftTrim = (int)round(5.0f * effLeftDiff);
-        rawLeftTrim = constrain(rawLeftTrim, -8, 8);
+        rawLeftTrim = constrain(rawLeftTrim, -trimMax, trimMax);
 
         int leftDelta = rawLeftTrim - lastSpinSyncTrimLeft;
-        leftDelta = constrain(leftDelta, -1, 1);
+        leftDelta = constrain(leftDelta, -deltaMax, deltaMax);
         lastSpinSyncTrimLeft += leftDelta;
 
         // --- Right Side Sync Trim (M2 / RF [1] vs M4 / RR [3]) ---
@@ -441,17 +454,17 @@ void WheelController::update(const float *measuredVelocities, const int32_t *tic
         float rightDiffMag = abs(v1) - abs(v3);
 
         float effRightDiff = 0.0f;
-        if (rightDiffMag > 0.15f) {
-            effRightDiff = rightDiffMag - 0.15f;
-        } else if (rightDiffMag < -0.15f) {
-            effRightDiff = rightDiffMag + 0.15f;
+        if (rightDiffMag > deadband) {
+            effRightDiff = rightDiffMag - deadband;
+        } else if (rightDiffMag < -deadband) {
+            effRightDiff = rightDiffMag + deadband;
         }
 
         int rawRightTrim = (int)round(5.0f * effRightDiff);
-        rawRightTrim = constrain(rawRightTrim, -8, 8);
+        rawRightTrim = constrain(rawRightTrim, -trimMax, trimMax);
 
         int rightDelta = rawRightTrim - lastSpinSyncTrimRight;
-        rightDelta = constrain(rightDelta, -1, 1);
+        rightDelta = constrain(rightDelta, -deltaMax, deltaMax);
         lastSpinSyncTrimRight += rightDelta;
     }
 
@@ -476,7 +489,9 @@ void WheelController::update(const float *measuredVelocities, const int32_t *tic
 
     // Write final PWM outputs to driver and set diagnostic telemetry
     for (int i = 0; i < 4; i++) {
-        driver.setPWM(i, finalPwms[i]);
+        if (driver.getActuationState() != DrivetrainActuationState::BRAKE) {
+            driver.setPWM(i, finalPwms[i]);
+        }
 
         int trimForWheel = 0;
         float t_wh = controllers[i].getTarget();

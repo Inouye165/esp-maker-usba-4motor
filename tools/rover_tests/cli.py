@@ -43,6 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
     turn_parser.add_argument("--angle-tolerance-deg", type=float, default=2.0, help="Pass/fail angular error tolerance threshold in degrees (default: 2.0)")
     turn_parser.add_argument("--inter-trial-approval", action="store_true", help="Prompt operator for approval before every trial and ask for Ron's physical angle estimate after settling")
     turn_parser.add_argument("--dry-run", action="store_true", help="Simulate execution without sending motor power or arming (safe stationary verification)")
+    turn_parser.add_argument("--enable-balancing", action="store_true", help="Enable improved wheel-balancing controls and sync trim")
+    turn_parser.add_argument("--enable-braking", action="store_true", help="Enable shared low-speed dynamic braking pulse")
+    turn_parser.add_argument("--stopping-advance-deg", type=float, default=None, help="Adjustable stopping advance angle in degrees (default: 0.5 when braking is enabled, 0.0 otherwise)")
     turn_parser.add_argument("--report-directory", type=str, default="reports", help="Directory where JSON and Markdown test reports are saved (default: reports)")
     turn_parser.add_argument("--host", type=str, default=get_default_host(), help="Rover Raspberry Pi 5 IP or hostname (default: auto-detected)")
     turn_parser.add_argument("--port", type=int, default=3000, help="Cockpit server port (default: 3000)")
@@ -66,6 +69,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             angle_tolerance_deg=args.angle_tolerance_deg,
             inter_trial_approval=args.inter_trial_approval,
             dry_run=args.dry_run,
+            enable_balancing=args.enable_balancing,
+            enable_braking=args.enable_braking,
+            stopping_advance_deg=args.stopping_advance_deg,
             report_directory=args.report_directory,
             host=args.host,
             port=args.port

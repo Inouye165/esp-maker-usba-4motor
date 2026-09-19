@@ -14,6 +14,12 @@ enum class MotorOutputMode {
     FAULTED
 };
 
+enum class DrivetrainActuationState : uint8_t {
+    DRIVE = 0,
+    BRAKE = 1,
+    COAST = 2
+};
+
 class MotorDriver {
 public:
     MotorDriver();
@@ -23,7 +29,16 @@ public:
     // index: 0=M1 (LF), 1=M2 (RF), 2=M3 (LR), 3=M4 (RR)
     void setPWM(int index, int pwm);
     
-    // Hard stop all motors immediately
+    // Dynamic braking: grounds both sides of H-bridge (IN1=HIGH, IN2=HIGH)
+    void brakeAll();
+
+    // High-impedance unpowered coasting (IN1=LOW, IN2=LOW)
+    void coastAll();
+
+    // Current actuation state (DRIVE, BRAKE, COAST)
+    DrivetrainActuationState getActuationState() const { return actuationState; }
+    
+    // Hard stop all motors immediately (forces COAST)
     void emergencyStop();
 
     // Mode and authorization settings
@@ -44,6 +59,7 @@ private:
     MotorPinMap motors[4];
     MotorOutputMode currentMode;
     int authorizedMotorIndex;
+    DrivetrainActuationState actuationState;
 };
 
 #endif // MOTOR_DRIVER_H

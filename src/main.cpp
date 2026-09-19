@@ -591,11 +591,71 @@ void runMotionControlLoop() {
   uint32_t nowMs = millis();
   bool encodersFresh = encoderManager.isEncoderDataFresh(nowMs, 200);
   wheelController.update(measuredVels, rawTicks, dt, motorDriver, isSpinManeuver, isGoingStraight, encodersFresh);
-  
-  for (int i = 0; i < 4; i++) {
-    pwmOutputs[i] = wheelController.getController(i).getPwmOutput();
+
+  // Dynamic Brake Pulse & Actuation State Machine
+  enum class BrakePulseState {
+    DRIVING = 0,
+    BRAKING = 1,
+    COASTING = 2
+  };
+  static BrakePulseState brakePulseState = BrakePulseState::COASTING;
+  static uint32_t brakePulseStartMs = 0;
+  static float lastActiveAngSpeed = 0.0f;
+  static float lastActiveLinSpeed = 0.0f;
+
+  bool isTargetZero = (abs(targetLinear) < 0.005f) && (abs(targetAngular) < 0.005f);
+  bool isCommandZero = (abs(activeCmd.linearVelocity) < 0.005f) && (abs(activeCmd.angularVelocity) < 0.005f);
+
+  if (!isTargetZero && !isCommandZero) {
+    // Active motion: release brake pulse if one was active, record speeds, and set driving state
+    if (brakePulseState == BrakePulseState::BRAKING) {
+      motorDriver.coastAll();
+    }
+    brakePulseState = BrakePulseState::DRIVING;
+    lastActiveAngSpeed = abs(targetAngular);
+    lastActiveLinSpeed = abs(targetLinear);
+  } else {
+    // Target is zero (stopping or settled)
+    if (DYNAMIC_BRAKE_ENABLED && commandManager.isNormalDriveArmed() && motorDriver.getMode() == MotorOutputMode::NORMAL_DRIVE) {
+      if (brakePulseState == BrakePulseState::DRIVING) {
+        // Transition to stop: verify low-speed creep eligibility to preserve high-speed rundown
+        bool eligibleForBrake = (lastActiveAngSpeed <= DYNAMIC_BRAKE_MAX_TRIGGER_RADPS) && (lastActiveLinSpeed <= 0.15f);
+        if (eligibleForBrake) {
+          brakePulseState = BrakePulseState::BRAKING;
+          brakePulseStartMs = nowMs;
+          motorDriver.brakeAll();
+          wheelController.reset();
+        } else {
+          brakePulseState = BrakePulseState::COASTING;
+          motorDriver.coastAll();
+          wheelController.reset();
+        }
+      } else if (brakePulseState == BrakePulseState::BRAKING) {
+        // Bounded non-blocking duration check
+        if (nowMs - brakePulseStartMs >= DYNAMIC_BRAKE_DURATION_MS) {
+          brakePulseState = BrakePulseState::COASTING;
+          motorDriver.coastAll();
+          wheelController.reset();
+        } else {
+          motorDriver.brakeAll();
+        }
+      } else {
+        // Settled coast: lock in coast, repeated zeros do NOT restart pulse
+        motorDriver.coastAll();
+      }
+    } else {
+      brakePulseState = BrakePulseState::COASTING;
+      if (isTargetZero) {
+        motorDriver.coastAll();
+      }
+    }
   }
-  
+
+  for (int i = 0; i < 4; i++) {
+    pwmOutputs[i] = (motorDriver.getActuationState() == DrivetrainActuationState::BRAKE)
+                    ? 0 : wheelController.getController(i).getPwmOutput();
+  }
+
   // 9. Evaluate safety checks (stall / encoder faults)
   uint32_t faults = safetyManager.update(targetVels, measuredVels, pwmOutputs, dt, motorDriver);
   if (faults != FAULT_NONE) {
@@ -754,7 +814,8 @@ void loop() {
     
     // Broadcast bulk telemetry to Serial Port
     serialProtocol.sendTelemetry(ticks, 0.0f, angularVel, calManager, maintenanceManager, loopStats, safetyManager.getFaults());
-    serialProtocol.sendPidTelemetry(wheelController);
+    uint8_t cfgFlags = (WHEEL_BALANCE_ENABLED ? 0x01 : 0x00) | (DYNAMIC_BRAKE_ENABLED ? 0x02 : 0x00);
+    serialProtocol.sendPidTelemetry(wheelController, YawOuterLoopDiag(), (uint8_t)motorDriver.getActuationState(), cfgFlags);
   }
   uint64_t t5 = esp_timer_get_time();
   g_loopProf.sendBulkTx.record((uint32_t)(t5 - t4));

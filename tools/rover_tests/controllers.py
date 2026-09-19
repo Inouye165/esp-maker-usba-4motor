@@ -48,11 +48,13 @@ class AngularApproachController(BaseApproachController):
         self,
         cruise_wz_radps: float = 0.80,
         creep_wz_radps: float = 0.20,
-        approach_zone_deg: float = 30.0
+        approach_zone_deg: float = 30.0,
+        stopping_advance_deg: float = 0.0
     ):
         self.cruise_wz_radps = abs(cruise_wz_radps)
         self.creep_wz_radps = abs(creep_wz_radps)
         self.approach_zone_deg = abs(approach_zone_deg)
+        self.stopping_advance_deg = max(0.0, float(stopping_advance_deg))
 
         self.target_angle_deg = 0.0
         self.direction_sign = 1.0
@@ -106,8 +108,8 @@ class AngularApproachController(BaseApproachController):
         signed_progress = current_progress * self.direction_sign
         remaining_deg = target_mag - signed_progress
 
-        # 1. Target Reached or Exceeded -> ZERO phase
-        if remaining_deg <= 1e-4:
+        # 1. Target Reached or Exceeded (with direction-aware stopping advance) -> ZERO phase
+        if remaining_deg <= (self.stopping_advance_deg + 1e-4):
             if self.phase not in (ApproachPhase.ZERO, ApproachPhase.SETTLED):
                 self._set_phase(ApproachPhase.ZERO, current_time, current_progress)
                 rel_t = current_time - self.start_time if self.start_time is not None else 0.0
@@ -144,6 +146,7 @@ class AngularApproachController(BaseApproachController):
     def get_telemetry_summary(self) -> Dict[str, Any]:
         return {
             "target_angle_deg": self.target_angle_deg,
+            "stopping_advance_deg": self.stopping_advance_deg,
             "current_phase": str(self.phase),
             "creep_entry_time_s": self.creep_entry_time,
             "creep_entry_yaw_deg": self.creep_entry_yaw_deg,

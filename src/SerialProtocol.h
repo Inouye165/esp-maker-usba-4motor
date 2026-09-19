@@ -119,7 +119,7 @@ public:
     );
 
     // Stream PID & Feedforward per-wheel diagnostic telemetry packet (TYPE_PID_DIAGNOSTIC = 0x3B)
-    void sendPidTelemetry(const class WheelController &wheelController, const YawOuterLoopDiag &outerDiag = YawOuterLoopDiag());
+    void sendPidTelemetry(const class WheelController &wheelController, const YawOuterLoopDiag &outerDiag = YawOuterLoopDiag(), uint8_t actuationState = 2, uint8_t configFlags = 0);
 
     // Send firmware information packet
     void sendFirmwareInfo();

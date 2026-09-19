@@ -8,7 +8,7 @@ Authoritative turn kinematics and polarity enforcement per docs/EXACT_MOTION_CON
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 
 
 class TurnConfigurationException(Exception):
@@ -28,11 +28,17 @@ class TurnParameters:
     angle_tolerance_deg: float = 2.0     # deg
     inter_trial_approval: bool = False
     dry_run: bool = False
+    enable_balancing: bool = False
+    enable_braking: bool = False
+    stopping_advance_deg: Optional[float] = None
     report_directory: str = "reports"
     host: str = "127.0.0.1"
     port: int = 3000
 
     def validate(self):
+        if self.stopping_advance_deg is None:
+            self.stopping_advance_deg = 0.5 if self.enable_braking else 0.0
+
         if self.degrees <= 0.0:
             raise TurnConfigurationException(f"Turn degrees must be positive, got {self.degrees}")
         norm_dir = self.direction.strip().lower()
@@ -54,6 +60,10 @@ class TurnParameters:
             raise TurnConfigurationException(f"settle_seconds must be >= 0.5, got {self.settle_seconds}")
         if self.angle_tolerance_deg <= 0.0:
             raise TurnConfigurationException(f"angle_tolerance_deg must be positive, got {self.angle_tolerance_deg}")
+        if self.stopping_advance_deg < 0.0 or self.stopping_advance_deg >= self.degrees:
+            raise TurnConfigurationException(
+                f"stopping_advance_deg ({self.stopping_advance_deg}) must be >= 0.0 and < target degrees ({self.degrees})"
+            )
 
     @property
     def signed_target_deg(self) -> float:

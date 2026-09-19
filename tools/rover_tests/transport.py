@@ -327,6 +327,25 @@ class CockpitClient:
     def set_command_source(self, source: str = "NONE") -> Dict[str, Any]:
         return self._request("/api/command-source", method="POST", data={"source": source})
 
+    def configure_drive(
+        self,
+        wheel_balancing: bool = False,
+        dynamic_braking: bool = False,
+        brake_duration_ms: int = 100,
+        max_trigger_speed: float = 0.35,
+        timeout: float = 2.0
+    ) -> Dict[str, Any]:
+        """Configure runtime wheel balancing and dynamic braking modes."""
+        return self._request("/api/drive/config", method="POST", data={
+            "wheelBalancing": bool(wheel_balancing),
+            "dynamicBraking": bool(dynamic_braking),
+            "brakeDurationMs": int(brake_duration_ms),
+            "maxTriggerSpeed": float(max_trigger_speed)
+        }, timeout=timeout)
+
+    def get_drive_config(self, timeout: float = 2.0) -> Dict[str, Any]:
+        return self._request("/api/drive/config", method="GET", timeout=timeout)
+
     def get_encoders(self, timeout: float = 2.0) -> Dict[str, Any]:
         return self._request("/api/encoders", timeout=timeout)
 

@@ -115,6 +115,13 @@ class PhysicalTestRunner:
         cleanup_st = disarm_and_stop(self.cockpit, self.ws, verbose=verbose)
         self._last_cleanup_state = cleanup_st
 
+        # Always restore drive configuration to baseline (false/false) on disarm/cleanup
+        if not self.params.dry_run:
+            try:
+                self.cockpit.configure_drive(wheel_balancing=False, dynamic_braking=False)
+            except Exception:
+                pass
+
         confirmed = (
             cleanup_st.get("armed") is False
             and cleanup_st.get("autonomyState") == "DISABLED"
@@ -126,20 +133,35 @@ class PhysicalTestRunner:
     def execute_suite(self) -> MultiTrialSuiteReport:
         """Executes the full suite of trials."""
         suite_id = str(int(time.time()))
+        cmd_parts = [
+            f"rover-test turn --degrees {self.params.degrees} --direction {self.params.direction} --trials {self.params.trials}"
+        ]
+        if self.params.enable_balancing:
+            cmd_parts.append("--enable-balancing")
+        if self.params.enable_braking:
+            cmd_parts.append("--enable-braking")
+        if self.params.stopping_advance_deg is not None:
+            cmd_parts.append(f"--stopping-advance-deg {self.params.stopping_advance_deg}")
+        cmd_str = " ".join(cmd_parts)
+
         suite_report = MultiTrialSuiteReport(
             suite_id=suite_id,
             test_type="turn",
-            command_line=f"rover-test turn --degrees {self.params.degrees} --direction {self.params.direction} --trials {self.params.trials}",
+            command_line=cmd_str,
             timestamp_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             target_degrees=self.params.degrees,
             direction=self.params.direction,
             total_trials=self.params.trials,
-            is_dry_run=self.params.dry_run
+            is_dry_run=self.params.dry_run,
+            wheel_balancing_enabled=self.params.enable_balancing,
+            dynamic_braking_enabled=self.params.enable_braking,
+            stopping_advance_deg=self.params.stopping_advance_deg or 0.0
         )
 
         print("=" * 80)
         print(f"ROVER ONE REUSABLE PHYSICAL TEST FRAMEWORK: TURN {self.params.degrees:.1f}° {self.params.direction.upper()}")
         print(f"Trials: {self.params.trials} | Max Speed: {self.params.max_angular_speed:.2f} rad/s | Creep: {self.params.creep_angular_speed:.2f} rad/s")
+        print(f"Balancing: {'ENABLED' if self.params.enable_balancing else 'DISABLED'} | Braking: {'ENABLED' if self.params.enable_braking else 'DISABLED'} | Stopping Advance: {self.params.stopping_advance_deg or 0.0:.2f}°")
         print(f"Mode: {'DRY RUN (STATIONARY - NO MOTOR POWER)' if self.params.dry_run else 'PHYSICAL MOTION EXECUTION'}")
         print("=" * 80)
 
@@ -301,10 +323,23 @@ class PhysicalTestRunner:
             requested_turn_deg=self.params.degrees,
             direction=self.params.direction,
             target_signed_yaw_deg=self.params.signed_target_deg,
-            status="INITIALIZING"
+            status="INITIALIZING",
+            wheel_balancing_enabled=self.params.enable_balancing,
+            dynamic_braking_enabled=self.params.enable_braking,
+            stopping_advance_deg=self.params.stopping_advance_deg or 0.0
         )
 
         t_trial_start = time.time()
+
+        # Step 2b: Configure drive parameters (wheel balancing & dynamic braking) via Cockpit
+        if not self.params.dry_run:
+            try:
+                self.cockpit.configure_drive(
+                    wheel_balancing=self.params.enable_balancing,
+                    dynamic_braking=self.params.enable_braking
+                )
+            except Exception as e:
+                print(f"[WARN] Failed to configure drive options via Cockpit: {e}")
 
         # Step 3: Ensure stationary IMU/gyro calibration and settling while DISARMED
         if not self.params.dry_run:
@@ -547,10 +582,12 @@ class PhysicalTestRunner:
             print("[OK] Pre-motion invariants verified: armed=True, autonomyState=READY_ARMED, valid cmdSource, fresh IMU & encoders.")
 
         # Step 9: Immediately send first command (no dwell/sleep while armed)
+        stopping_advance = self.params.stopping_advance_deg if self.params.enable_braking else 0.0
         controller = AngularApproachController(
             cruise_wz_radps=self.params.max_angular_speed,
             creep_wz_radps=self.params.creep_angular_speed,
-            approach_zone_deg=self.params.creep_threshold_deg
+            approach_zone_deg=self.params.creep_threshold_deg,
+            stopping_advance_deg=stopping_advance
         )
         controller.reset(target=self.params.signed_target_deg, start_time=time.time())
 
@@ -667,11 +704,13 @@ class PhysicalTestRunner:
         try:
             if self.params.dry_run:
                 # In dry-run mode, simulate steps through approach controller without moving motors
+                advance = self.params.stopping_advance_deg if self.params.enable_braking else 0.0
+                sim_target_stop = self.params.signed_target_deg - math.copysign(advance, self.params.signed_target_deg)
                 sim_angles = [
                     0.0,
                     self.params.signed_target_deg * 0.5,
                     self.params.signed_target_deg * 0.85,
-                    self.params.signed_target_deg
+                    sim_target_stop
                 ]
                 for sim_yaw in sim_angles:
                     cmd_wz = controller.update(current_progress=sim_yaw, current_time=time.time())
@@ -686,12 +725,18 @@ class PhysicalTestRunner:
                             wheel_samples[w_id]["measured"].append(cmd_val)
                         total_telemetry_samples += 1
                     time.sleep(0.05)
-                angle_at_zero_cmd = self.params.signed_target_deg
+                angle_at_zero_cmd = sim_target_stop
                 t_dry_mono = time.monotonic()
                 trial_report.zero_command_send_time_monotonic = t_dry_mono
                 trial_report.zero_command_response_time_monotonic = t_dry_mono
                 trial_report.zero_command_latency_ms = 0.0
                 trial_report.zero_command_response = {"ok": True, "dry_run": True}
+                if self.params.enable_braking:
+                    trial_report.actuation_states_observed = ["DRIVE", "BRAKE", "COAST"]
+                    trial_report.brake_active_duration_ms = 100.0
+                else:
+                    trial_report.actuation_states_observed = ["DRIVE", "COAST"]
+                    trial_report.brake_active_duration_ms = 0.0
             else:
                 # Physical motion loop
                 while True:
@@ -763,6 +808,9 @@ class PhysicalTestRunner:
                         for f in frames:
                             if f.get("type") == "pid_diagnostic":
                                 total_telemetry_samples += 1
+                                act_st = f.get("actuationState")
+                                if act_st and act_st not in trial_report.actuation_states_observed:
+                                    trial_report.actuation_states_observed.append(act_st)
                                 for w_id in ["m1", "m2", "m3", "m4"]:
                                     w_data = f.get(w_id, {})
                                     tgt = w_data.get("targetRadps")
@@ -905,8 +953,8 @@ class PhysicalTestRunner:
             # Restore full requested dry-run settling duration
             time.sleep(self.params.settle_seconds)
             actual_settle_duration_s = max(0.001, time.monotonic() - t_settle_start_mono)
-            final_settled_yaw = angle_at_zero_cmd
-            post_zero_coast = 0.0
+            final_settled_yaw = angle_at_zero_cmd + (math.copysign(self.params.stopping_advance_deg or 0.0, self.params.signed_target_deg) if self.params.enable_braking else 0.0)
+            post_zero_coast = final_settled_yaw - angle_at_zero_cmd
             settled_heading_error = final_settled_yaw - self.params.signed_target_deg
             final_measurement_valid = True
             controller.mark_settled(final_settled_yaw)
@@ -938,6 +986,9 @@ class PhysicalTestRunner:
                         if f.get("type") == "pid_diagnostic":
                             t_recv_mono = time.monotonic()
                             src_ts = f.get("timestamp")
+                            act_st = f.get("actuationState")
+                            if act_st and act_st not in trial_report.actuation_states_observed:
+                                trial_report.actuation_states_observed.append(act_st)
                             if src_ts is None:
                                 is_backlog = None
                                 backlog_status = "UNKNOWN"
@@ -956,6 +1007,7 @@ class PhysicalTestRunner:
                                 "source_timestamp_unit": "ms" if src_ts is not None else None,
                                 "source_clock_domain": "bridge_timestamp_ms" if src_ts is not None else None,
                                 "source_sequence": f.get("sequence"),
+                                "actuationState": act_st,
                                 "is_pre_zero_backlog": is_backlog,
                                 "backlog_status": backlog_status,
                                 "m1": f.get("m1", {}),
@@ -1093,6 +1145,17 @@ class PhysicalTestRunner:
             trial_report.settle_achieved_pid_rate_hz = trial_report.settle_pid_post_zero_packet_rate_hz
             trial_report.settle_imu_samples = settle_imu_samples
             trial_report.settle_pid_packets = settle_pid_packets
+
+            # Calculate brake pulse duration if observed
+            brake_packets = [p for p in settle_pid_packets if p.get("actuationState") == "BRAKE"]
+            if brake_packets:
+                first_ts = brake_packets[0].get("source_timestamp_ms")
+                last_ts = brake_packets[-1].get("source_timestamp_ms")
+                if first_ts is not None and last_ts is not None and last_ts >= first_ts:
+                    trial_report.brake_active_duration_ms = round(float(last_ts - first_ts + 20.0), 1)
+                else:
+                    dt = (brake_packets[-1]["host_receipt_time_monotonic"] - brake_packets[0]["host_receipt_time_monotonic"]) * 1000.0
+                    trial_report.brake_active_duration_ms = round(dt + 20.0, 1)
 
             # Determine last settle sample identifiers
             last_settle_seq = None

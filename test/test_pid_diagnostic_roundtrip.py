@@ -56,7 +56,8 @@ def serialize_pid_diagnostic_packet(wheels_diag, outer_diag) -> bytes:
     active_val = 1 if outer_diag["yawOuterActive"] else 0
     valid_val = 1 if outer_diag["imuGyroValid"] else 0
     age_val = int(outer_diag["imuGyroAgeMs"])
-    rsvd_val = 0
+    act_val = int(outer_diag.get("actuationState", 2))  # 0=DRIVE, 1=BRAKE, 2=COAST
+    cfg_val = int(outer_diag.get("configFlags", 0))     # bit 0=balance, bit 1=brake
 
     struct.pack_into("<h", pid_data, 64, wz_req_val)
     struct.pack_into("<h", pid_data, 66, wz_act_val)
@@ -66,7 +67,8 @@ def serialize_pid_diagnostic_packet(wheels_diag, outer_diag) -> bytes:
     struct.pack_into("<B", pid_data, 74, active_val)
     struct.pack_into("<B", pid_data, 75, valid_val)
     struct.pack_into("<H", pid_data, 76, age_val)
-    struct.pack_into("<H", pid_data, 78, rsvd_val)
+    struct.pack_into("<B", pid_data, 78, act_val)
+    struct.pack_into("<B", pid_data, 79, cfg_val)
 
     return bytes(pid_data)
 
@@ -132,7 +134,13 @@ def decode_server_js_0x3b(payload: bytes):
         wheels.append(wheel_dict)
 
     outer_yaw = None
+    actuation_state = "COAST"
+    config_flags = 0
     if len(data) >= 80:
+        actuation_map = ['DRIVE', 'BRAKE', 'COAST']
+        act_byte = data[78]
+        actuation_state = actuation_map[act_byte] if act_byte < len(actuation_map) else 'COAST'
+        config_flags = data[79]
         outer_yaw = {
             "wzRequested": struct.unpack_from("<h", data, 64)[0] / 100.0,
             "wzActual": struct.unpack_from("<h", data, 66)[0] / 100.0,
@@ -141,10 +149,14 @@ def decode_server_js_0x3b(payload: bytes):
             "wzCorrected": struct.unpack_from("<h", data, 72)[0] / 100.0,
             "yawOuterActive": bool(data[74]),
             "imuGyroValid": bool(data[75]),
-            "imuGyroAgeMs": struct.unpack_from("<H", data, 76)[0]
+            "imuGyroAgeMs": struct.unpack_from("<H", data, 76)[0],
+            "actuationState": actuation_state,
+            "configFlags": config_flags
         }
 
     return {
+        "actuationState": actuation_state,
+        "configFlags": config_flags,
         "m1": wheels[0],
         "m2": wheels[1],
         "m3": wheels[2],
@@ -328,6 +340,49 @@ class TestPidDiagnosticSerialization(unittest.TestCase):
         for i in range(4):
             wheel_record = payload[i*16 : (i+1)*16]
             self.assertNotEqual(wheel_record, bytes(16), f"Wheel {i} record must not be all zeroes")
+
+    def test_bytes_78_79_actuation_state_and_config_flags_roundtrip(self):
+        """Verifies exact serialization and decoding of bytes 78 (actuationState) and 79 (configFlags)."""
+        test_cases = [
+            (0, 0x00, "DRIVE", False, False),
+            (1, 0x02, "BRAKE", False, True),
+            (2, 0x01, "COAST", True, False),
+            (1, 0x03, "BRAKE", True, True),
+        ]
+        for act_code, cfg_flags, expected_act_str, exp_bal, exp_brk in test_cases:
+            outer = dict(self.outer_yaw_input)
+            outer["actuationState"] = act_code
+            outer["configFlags"] = cfg_flags
+            payload = serialize_pid_diagnostic_packet(self.wheels_input, outer)
+
+            # Byte assertions
+            self.assertEqual(len(payload), 96, "0x3B payload must remain exactly 96 bytes")
+            self.assertEqual(payload[78], act_code, f"Byte 78 must contain actuation code {act_code}")
+            self.assertEqual(payload[79], cfg_flags, f"Byte 79 must contain config flags 0x{cfg_flags:02X}")
+
+            decoded = decode_server_js_0x3b(payload)
+            self.assertEqual(decoded["actuationState"], expected_act_str)
+            self.assertEqual(decoded["configFlags"], cfg_flags)
+            self.assertEqual(decoded["outerYaw"]["actuationState"], expected_act_str)
+            self.assertEqual(decoded["outerYaw"]["configFlags"], cfg_flags)
+
+    def test_binary_compatibility_preserves_all_prior_offsets(self):
+        """Confirms that adding bytes 78-79 does not alter offsets 0..77 or 80..95."""
+        outer = dict(self.outer_yaw_input)
+        outer["actuationState"] = 1  # BRAKE
+        outer["configFlags"] = 0x03  # both enabled
+        payload = serialize_pid_diagnostic_packet(self.wheels_input, outer)
+
+        self.assertEqual(len(payload), 96)
+        # Verify wheel 0 offset 0..15
+        self.assertEqual(struct.unpack_from("<h", payload, 0)[0] / 100.0, self.wheels_input[0]["targetVel"])
+        # Verify wheel 3 offset 48..63
+        self.assertEqual(struct.unpack_from("<h", payload, 48)[0] / 100.0, self.wheels_input[3]["targetVel"])
+        # Verify outer yaw offset 64..77
+        self.assertAlmostEqual(struct.unpack_from("<h", payload, 64)[0] / 100.0, 0.80, places=2)
+        # Verify spin sync trim offset 80..95
+        self.assertEqual(struct.unpack_from("<h", payload, 80)[0], self.wheels_input[0]["basePwm"])
+        self.assertEqual(struct.unpack_from("<h", payload, 82)[0], self.wheels_input[0]["spinSyncTrim"])
 
 
 if __name__ == "__main__":

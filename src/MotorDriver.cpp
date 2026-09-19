@@ -12,7 +12,8 @@
 
 MotorDriver::MotorDriver() 
     : currentMode(MotorOutputMode::LOCKED)
-    , authorizedMotorIndex(-1) {
+    , authorizedMotorIndex(-1)
+    , actuationState(DrivetrainActuationState::COAST) {
     // M1: Left Front
     motors[0] = {M1_IN1, M1_IN2, 0, 1, false};
     // M2: Right Front
@@ -39,17 +40,14 @@ void MotorDriver::begin() {
     }
     currentMode = MotorOutputMode::LOCKED;
     authorizedMotorIndex = -1;
+    actuationState = DrivetrainActuationState::COAST;
 }
 
 void MotorDriver::setMode(MotorOutputMode mode, int authorizedMotor) {
     currentMode = mode;
     authorizedMotorIndex = authorizedMotor;
     if (mode == MotorOutputMode::LOCKED || mode == MotorOutputMode::EMERGENCY_STOP || mode == MotorOutputMode::FAULTED) {
-        // Immediately zero all outputs
-        for (int i = 0; i < 4; i++) {
-            writeLEDC(motors[i].in1, motors[i].chan1, 0);
-            writeLEDC(motors[i].in2, motors[i].chan2, 0);
-        }
+        coastAll();
     }
     Serial.printf("[MotorDriver] Mode changed to %d (Authorized: %d)\n", (int)mode, authorizedMotor);
 }
@@ -77,6 +75,11 @@ bool MotorDriver::allows(int motorIndex, int pwm) const {
 void MotorDriver::setPWM(int index, int pwm) {
     if (index < 0 || index >= 4) return;
     
+    // Guard: Normal PWM writes must NEVER overwrite active dynamic braking pulse
+    if (actuationState == DrivetrainActuationState::BRAKE) {
+        return;
+    }
+    
     // Safe output mode authorization guard
     if (!allows(index, pwm)) {
         writeLEDC(motors[index].in1, motors[index].chan1, 0);
@@ -96,20 +99,41 @@ void MotorDriver::setPWM(int index, int pwm) {
     if (outputPwm > 0) {
         writeLEDC(motors[index].in1, motors[index].chan1, outputPwm);
         writeLEDC(motors[index].in2, motors[index].chan2, 0);
+        actuationState = DrivetrainActuationState::DRIVE;
     } else if (outputPwm < 0) {
         writeLEDC(motors[index].in1, motors[index].chan1, 0);
         writeLEDC(motors[index].in2, motors[index].chan2, -outputPwm);
+        actuationState = DrivetrainActuationState::DRIVE;
     } else {
         writeLEDC(motors[index].in1, motors[index].chan1, 0);
         writeLEDC(motors[index].in2, motors[index].chan2, 0);
     }
 }
 
-void MotorDriver::emergencyStop() {
-    currentMode = MotorOutputMode::EMERGENCY_STOP;
-    authorizedMotorIndex = -1;
+void MotorDriver::brakeAll() {
+    if (currentMode != MotorOutputMode::NORMAL_DRIVE) {
+        coastAll();
+        return;
+    }
+    // RZ7889 / SS6625E Truth Table: FI=1, BI=1 -> FO=0, BO=0 (Dynamic Brake to GND)
+    // Applying 255 duty to both LEDC channels holds IN1 and IN2 HIGH (100% duty)
+    for (int i = 0; i < 4; i++) {
+        writeLEDC(motors[i].in1, motors[i].chan1, 255);
+        writeLEDC(motors[i].in2, motors[i].chan2, 255);
+    }
+    actuationState = DrivetrainActuationState::BRAKE;
+}
+
+void MotorDriver::coastAll() {
     for (int i = 0; i < 4; i++) {
         writeLEDC(motors[i].in1, motors[i].chan1, 0);
         writeLEDC(motors[i].in2, motors[i].chan2, 0);
     }
+    actuationState = DrivetrainActuationState::COAST;
+}
+
+void MotorDriver::emergencyStop() {
+    currentMode = MotorOutputMode::EMERGENCY_STOP;
+    authorizedMotorIndex = -1;
+    coastAll();
 }
