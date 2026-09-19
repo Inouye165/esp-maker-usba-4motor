@@ -224,6 +224,25 @@ class PhysicalTestRunner:
             cmd_parts.append(f"--stopping-advance-deg {self.params.stopping_advance_deg}")
         cmd_str = " ".join(cmd_parts)
 
+        # Query live config so unspecified parameters inherit production settings
+        current_cfg = {}
+        if not self.params.dry_run:
+            try:
+                cfg_resp = self.cockpit.get_drive_config()
+                if cfg_resp.get("ok"):
+                    current_cfg = cfg_resp.get("config", {})
+            except Exception:
+                pass
+        else:
+            current_cfg = {"wheelBalancing": False, "dynamicBraking": True, "brakeDurationMs": 100, "maxTriggerSpeed": 0.35, "maxTriggerSpeedMps": 0.35}
+
+        effective_bal = bool(self.params.enable_balancing) if self.params.enable_balancing is not None else bool(current_cfg.get("wheelBalancing", False))
+        effective_brk = bool(self.params.enable_braking) if self.params.enable_braking is not None else bool(current_cfg.get("dynamicBraking", True))
+        effective_advance = self.params.stopping_advance_deg if self.params.stopping_advance_deg is not None else (0.7 if effective_brk else 0.0)
+        brake_dur = int(current_cfg.get("brakeDurationMs", 100))
+        brake_max_spd = float(current_cfg.get("maxTriggerSpeed", 0.35))
+        brake_max_spd_mps = float(current_cfg.get("maxTriggerSpeedMps", brake_max_spd))
+
         suite_report = MultiTrialSuiteReport(
             suite_id=suite_id,
             test_type="turn",
@@ -234,15 +253,18 @@ class PhysicalTestRunner:
             total_trials=self.params.trials,
             repetitions=self.params.trials,
             is_dry_run=self.params.dry_run,
-            wheel_balancing_enabled=self.params.enable_balancing,
-            dynamic_braking_enabled=self.params.enable_braking,
-            stopping_advance_deg=self.params.stopping_advance_deg or 0.0
+            wheel_balancing_enabled=effective_bal,
+            dynamic_braking_enabled=effective_brk,
+            dynamic_brake_duration_ms=brake_dur,
+            dynamic_brake_max_speed=brake_max_spd,
+            dynamic_brake_max_speed_mps=brake_max_spd_mps,
+            stopping_advance_deg=effective_advance
         )
 
         print("=" * 80)
         print(f"ROVER ONE REUSABLE PHYSICAL TEST FRAMEWORK: TURN {self.params.degrees:.1f}° {self.params.direction.upper()}")
         print(f"Repetitions: {self.params.trials} | Max Speed: {self.params.max_angular_speed:.2f} rad/s | Creep: {self.params.creep_angular_speed:.2f} rad/s")
-        print(f"Balancing: {'ENABLED' if self.params.enable_balancing else 'DISABLED'} | Braking: {'ENABLED' if self.params.enable_braking else 'DISABLED'} | Stopping Advance: {self.params.stopping_advance_deg or 0.0:.2f}°")
+        print(f"Balancing: {'ENABLED' if effective_bal else 'DISABLED'} | Braking: {'ENABLED' if effective_brk else 'DISABLED'} | Stopping Advance: {effective_advance:.2f}°")
         print(f"Mode: {'DRY RUN (STATIONARY - NO MOTOR POWER)' if self.params.dry_run else 'PHYSICAL MOTION EXECUTION'}")
         print("=" * 80)
 
@@ -1290,22 +1312,76 @@ class PhysicalTestRunner:
             direction=self.params.direction,
             target_signed_yaw_deg=self.params.signed_target_deg,
             status="INITIALIZING",
-            wheel_balancing_enabled=self.params.enable_balancing,
-            dynamic_braking_enabled=self.params.enable_braking,
             stopping_advance_deg=self.params.stopping_advance_deg or 0.0
         )
 
         t_trial_start = time.time()
 
         # Step 2b: Configure drive parameters (wheel balancing & dynamic braking) via Cockpit
+        anti_stall_confirmed = False
         if not self.params.dry_run:
+            # If user explicitly requested drive parameter overrides via CLI flags, apply them
+            if self.params.enable_balancing is not None or self.params.enable_braking is not None:
+                current_cfg = {}
+                try:
+                    cfg_pre = self.cockpit.get_drive_config()
+                    if cfg_pre.get("ok"):
+                        current_cfg = cfg_pre.get("config", {})
+                except Exception:
+                    pass
+
+                target_bal = bool(self.params.enable_balancing) if self.params.enable_balancing is not None else current_cfg.get("wheelBalancing", False)
+                target_brk = bool(self.params.enable_braking) if self.params.enable_braking is not None else current_cfg.get("dynamicBraking", True)
+                try:
+                    self.cockpit.configure_drive(
+                        wheel_balancing=target_bal,
+                        dynamic_braking=target_brk
+                    )
+                    time.sleep(0.05)
+                except Exception as e:
+                    print(f"[WARN] Failed to configure drive parameters: {e}")
+
+            # Read back actual live drive config from cockpit server & ESP32
+            live_cfg = {}
             try:
-                self.cockpit.configure_drive(
-                    wheel_balancing=self.params.enable_balancing,
-                    dynamic_braking=self.params.enable_braking
-                )
+                cfg_resp = self.cockpit.get_drive_config()
+                if cfg_resp.get("ok"):
+                    live_cfg = cfg_resp.get("config", {})
             except Exception as e:
-                print(f"[WARN] Failed to configure drive options via Cockpit: {e}")
+                print(f"[WARN] Failed to read live drive configuration: {e}")
+
+            # Query live PID telemetry to confirm anti-stall / stiction state machine
+            try:
+                pid_resp = self.cockpit.get_pid_telemetry()
+                if pid_resp.get("ok") and pid_resp.get("telemetry"):
+                    telem = pid_resp.get("telemetry", {})
+                    if "m1" in telem and "stictionState" in telem["m1"]:
+                        anti_stall_confirmed = True
+            except Exception as e:
+                print(f"[WARN] Failed to read live anti-stall telemetry: {e}")
+        else:
+            live_cfg = {
+                "wheelBalancing": bool(self.params.enable_balancing) if self.params.enable_balancing is not None else False,
+                "dynamicBraking": bool(self.params.enable_braking) if self.params.enable_braking is not None else True,
+                "brakeDurationMs": 100,
+                "maxTriggerSpeedMps": 0.35,
+                "maxTriggerSpeed": 0.35,
+            }
+            anti_stall_confirmed = True
+
+        confirmed_bal = bool(live_cfg.get("wheelBalancing", False))
+        confirmed_brk = bool(live_cfg.get("dynamicBraking", True))
+        confirmed_dur = int(live_cfg.get("brakeDurationMs", 100))
+        confirmed_max_spd = float(live_cfg.get("maxTriggerSpeed", 0.35))
+        confirmed_max_spd_mps = float(live_cfg.get("maxTriggerSpeedMps", confirmed_max_spd))
+
+        trial_report.wheel_balancing_enabled = confirmed_bal
+        trial_report.dynamic_braking_enabled = confirmed_brk
+        trial_report.dynamic_brake_duration_ms = confirmed_dur
+        trial_report.dynamic_brake_max_speed = confirmed_max_spd
+        trial_report.dynamic_brake_max_speed_mps = confirmed_max_spd_mps
+        trial_report.anti_stall_confirmed = anti_stall_confirmed
+        trial_report.stopping_advance_deg = self.params.stopping_advance_deg if self.params.stopping_advance_deg is not None else (0.7 if confirmed_brk else 0.0)
 
         # Step 3: Ensure stationary IMU/gyro calibration and settling while DISARMED
         if not self.params.dry_run:
@@ -1733,6 +1809,8 @@ class PhysicalTestRunner:
                 last_motion_esp_ts: Optional[int] = None
                 last_motion_reset_count: Optional[int] = None
                 last_motion_imu_advance_time: float = t_motion_start
+                latest_imu: Optional[Dict[str, Any]] = None
+                wheel_cmds: Dict[str, float] = {w: 0.0 for w in ["m1", "m2", "m3", "m4"]}
 
                 while True:
                     now = time.time()
@@ -1744,8 +1822,24 @@ class PhysicalTestRunner:
                         trial_report.watchdog_trips.append("MAX_DURATION_EXCEEDED")
                         break
 
-                    # Ingest latest IMU data
-                    latest_imu = self.cockpit.get_imu()
+                    # Ingest WebSocket frames (IMU and PID diagnostics)
+                    ws_frames = []
+                    latest_ws_imu = None
+                    if self.ws and self.ws.connected:
+                        ws_frames = self.ws.recv_frames()
+                        for f in ws_frames:
+                            if f.get("type") == "bno08x_imu":
+                                latest_ws_imu = f
+
+                    if latest_ws_imu is not None:
+                        latest_imu = latest_ws_imu
+                        # Frame freshly delivered via low-latency WebSocket push
+                        if "dataAgeMs" not in latest_imu or latest_imu["dataAgeMs"] is None:
+                            latest_imu["dataAgeMs"] = 0.0
+                    else:
+                        # Fallback to HTTP endpoint if no WebSocket IMU frame was received
+                        latest_imu = self.cockpit.get_imu()
+
                     cur_seq = latest_imu.get("sequence") if latest_imu else None
                     cur_esp_ts = latest_imu.get("espTimestampUs") if latest_imu else None
                     cur_reset_cnt = latest_imu.get("resetCount") if latest_imu else None
@@ -1875,104 +1969,102 @@ class PhysicalTestRunner:
                         trial_report.communication_faults.append("CMD_VEL_SEND_FAILED")
                         break
 
-                    # Ingest PID diagnostics and monitor wheel stalls / breakouts
+                    # Ingest PID diagnostics from received WebSocket frames and monitor wheel stalls / breakouts
                     # ONLY collected while controller is in active motion (CRUISE or CREEP)
-                    if self.ws and self.ws.connected:
-                        frames = self.ws.recv_frames()
-                        for f in frames:
-                            if f.get("type") == "pid_diagnostic":
-                                total_telemetry_samples += 1
-                                act_st = f.get("actuationState")
-                                if act_st and act_st not in trial_report.actuation_states_observed:
-                                    trial_report.actuation_states_observed.append(act_st)
+                    for f in ws_frames:
+                        if f.get("type") == "pid_diagnostic":
+                            total_telemetry_samples += 1
+                            act_st = f.get("actuationState")
+                            if act_st and act_st not in trial_report.actuation_states_observed:
+                                trial_report.actuation_states_observed.append(act_st)
 
-                                current_phase = controller.phase.name if hasattr(controller, "phase") else "ACTIVE"
-                                m1_f = f.get("m1", {})
-                                m2_f = f.get("m2", {})
-                                m3_f = f.get("m3", {})
-                                m4_f = f.get("m4", {})
+                            current_phase = controller.phase.name if hasattr(controller, "phase") else "ACTIVE"
+                            m1_f = f.get("m1", {})
+                            m2_f = f.get("m2", {})
+                            m3_f = f.get("m3", {})
+                            m4_f = f.get("m4", {})
 
-                                v1_val = m1_f.get("measuredRadps")
-                                v2_val = m2_f.get("measuredRadps")
-                                v3_val = m3_f.get("measuredRadps")
-                                v4_val = m4_f.get("measuredRadps")
+                            v1_val = m1_f.get("measuredRadps")
+                            v2_val = m2_f.get("measuredRadps")
+                            v3_val = m3_f.get("measuredRadps")
+                            v4_val = m4_f.get("measuredRadps")
 
-                                p_err_l = (abs(float(v1_val)) - abs(float(v3_val))) if (v1_val is not None and v3_val is not None) else None
-                                p_err_r = (abs(float(v2_val)) - abs(float(v4_val))) if (v2_val is not None and v4_val is not None) else None
+                            p_err_l = (abs(float(v1_val)) - abs(float(v3_val))) if (v1_val is not None and v3_val is not None) else None
+                            p_err_r = (abs(float(v2_val)) - abs(float(v4_val))) if (v2_val is not None and v4_val is not None) else None
 
-                                active_pid_packets.append({
-                                    "host_receipt_time_monotonic": round(time.monotonic(), 6),
-                                    "t_rel_s": round(now - t_motion_start, 4),
-                                    "source_timestamp_ms": f.get("timestamp"),
-                                    "source_sequence": f.get("sequence"),
-                                    "phase": current_phase,
-                                    "actuationState": act_st,
-                                    "pair_error_left_radps": round(p_err_l, 3) if p_err_l is not None else None,
-                                    "pair_error_right_radps": round(p_err_r, 3) if p_err_r is not None else None,
-                                    "m1": m1_f,
-                                    "m2": m2_f,
-                                    "m3": m3_f,
-                                    "m4": m4_f,
-                                    "outerYaw": f.get("outerYaw")
-                                })
-                                for w_id in ["m1", "m2", "m3", "m4"]:
-                                    w_data = f.get(w_id, {})
-                                    tgt = w_data.get("targetRadps")
-                                    meas = w_data.get("measuredRadps")
-                                    stiction_state = w_data.get("stictionState", "IDLE")
+                            active_pid_packets.append({
+                                "host_receipt_time_monotonic": round(time.monotonic(), 6),
+                                "t_rel_s": round(now - t_motion_start, 4),
+                                "source_timestamp_ms": f.get("timestamp"),
+                                "source_sequence": f.get("sequence"),
+                                "phase": current_phase,
+                                "actuationState": act_st,
+                                "pair_error_left_radps": round(p_err_l, 3) if p_err_l is not None else None,
+                                "pair_error_right_radps": round(p_err_r, 3) if p_err_r is not None else None,
+                                "m1": m1_f,
+                                "m2": m2_f,
+                                "m3": m3_f,
+                                "m4": m4_f,
+                                "outerYaw": f.get("outerYaw")
+                            })
+                            for w_id in ["m1", "m2", "m3", "m4"]:
+                                w_data = f.get(w_id, {})
+                                tgt = w_data.get("targetRadps")
+                                meas = w_data.get("measuredRadps")
+                                stiction_state = w_data.get("stictionState", "IDLE")
 
-                                    if tgt is not None and isinstance(tgt, (int, float)):
-                                        wheel_samples[w_id]["targets"].append(float(tgt))
-                                    if meas is not None and isinstance(meas, (int, float)):
-                                        wheel_samples[w_id]["measured"].append(float(meas))
+                                if tgt is not None and isinstance(tgt, (int, float)):
+                                    wheel_samples[w_id]["targets"].append(float(tgt))
+                                if meas is not None and isinstance(meas, (int, float)):
+                                    wheel_samples[w_id]["measured"].append(float(meas))
 
-                                    if stiction_state == "STICTION_BOOST":
-                                        wheel_metrics[w_id].stiction_boost_events += 1
-                                        if breakout_start_time is None:
-                                            breakout_start_time = now
-                                            breakout_count += 1
-                                    elif stiction_state == "BLOCKED":
-                                        wheel_metrics[w_id].blocked_state_events += 1
-                                        stalls_detected[w_id] = True
+                                if stiction_state == "STICTION_BOOST":
+                                    wheel_metrics[w_id].stiction_boost_events += 1
+                                    if breakout_start_time is None:
+                                        breakout_start_time = now
+                                        breakout_count += 1
+                                elif stiction_state == "BLOCKED":
+                                    wheel_metrics[w_id].blocked_state_events += 1
+                                    stalls_detected[w_id] = True
 
-                                    # Stopped-while-commanded monitoring:
-                                    tgt_val = float(tgt) if (tgt is not None and isinstance(tgt, (int, float))) else abs(wheel_cmds.get(w_id, 0.0))
-                                    meas_val = float(meas) if (meas is not None and isinstance(meas, (int, float))) else 0.0
-                                    is_stopped = (abs(tgt_val) > 0.10) and (abs(meas_val) < 0.05 or stiction_state == "BLOCKED")
+                                # Stopped-while-commanded monitoring:
+                                tgt_val = float(tgt) if (tgt is not None and isinstance(tgt, (int, float))) else abs(wheel_cmds.get(w_id, 0.0))
+                                meas_val = float(meas) if (meas is not None and isinstance(meas, (int, float))) else 0.0
+                                is_stopped = (abs(tgt_val) > 0.10) and (abs(meas_val) < 0.05 or stiction_state == "BLOCKED")
 
-                                    ws_buf = wheel_samples[w_id]
-                                    if is_stopped:
-                                        stalls_detected[w_id] = True
-                                        if not ws_buf["is_currently_stopped"]:
-                                            ws_buf["is_currently_stopped"] = True
-                                            ws_buf["stopped_entry_time"] = now
-                                            ws_buf["stopped_events"] += 1
-                                        else:
-                                            # Continuous stopped-while-commanded dwell check (fail-fast safeguard)
-                                            stopped_dwell = now - (ws_buf["stopped_entry_time"] or now)
-                                            if stopped_dwell >= 1.5:  # Reacts in 1.5s, well before 8 seconds
-                                                abort_reason = (
-                                                    f"Fail-fast safeguard triggered: wheel {w_id} stopped while commanded "
-                                                    f"for {stopped_dwell:.2f}s (target={tgt_val:.2f} rad/s, meas={meas_val:.2f} rad/s)"
-                                                )
-                                                trial_report.watchdog_trips.append("WHEEL_STALL_FAILSAFE")
-                                                break
+                                ws_buf = wheel_samples[w_id]
+                                if is_stopped:
+                                    stalls_detected[w_id] = True
+                                    if not ws_buf["is_currently_stopped"]:
+                                        ws_buf["is_currently_stopped"] = True
+                                        ws_buf["stopped_entry_time"] = now
+                                        ws_buf["stopped_events"] += 1
                                     else:
-                                        if ws_buf["is_currently_stopped"]:
-                                            dwell = max(0.02, now - (ws_buf["stopped_entry_time"] or now))
-                                            ws_buf["stopped_duration_s"] += dwell
-                                            ws_buf["is_currently_stopped"] = False
-                                            ws_buf["stopped_entry_time"] = None
+                                        # Continuous stopped-while-commanded dwell check (fail-fast safeguard)
+                                        stopped_dwell = now - (ws_buf["stopped_entry_time"] or now)
+                                        if stopped_dwell >= 1.5:  # Reacts in 1.5s, well before 8 seconds
+                                            abort_reason = (
+                                                f"Fail-fast safeguard triggered: wheel {w_id} stopped while commanded "
+                                                f"for {stopped_dwell:.2f}s (target={tgt_val:.2f} rad/s, meas={meas_val:.2f} rad/s)"
+                                            )
+                                            trial_report.watchdog_trips.append("WHEEL_STALL_FAILSAFE")
+                                            break
+                                else:
+                                    if ws_buf["is_currently_stopped"]:
+                                        dwell = max(0.02, now - (ws_buf["stopped_entry_time"] or now))
+                                        ws_buf["stopped_duration_s"] += dwell
+                                        ws_buf["is_currently_stopped"] = False
+                                        ws_buf["stopped_entry_time"] = None
 
-                                if abort_reason:
-                                    break
+                            if abort_reason:
+                                break
 
-                        if abort_reason:
-                            break
+                    if abort_reason:
+                        break
 
-                        if breakout_start_time and any(f.get(w, {}).get("stictionState") != "STICTION_BOOST" for w in ["m1", "m2", "m3", "m4"] for f in frames if f.get("type") == "pid_diagnostic"):
-                            total_breakout_dwell_ms += (now - breakout_start_time) * 1000.0
-                            breakout_start_time = None
+                    if breakout_start_time and any(f.get(w, {}).get("stictionState") != "STICTION_BOOST" for w in ["m1", "m2", "m3", "m4"] for f in ws_frames if f.get("type") == "pid_diagnostic"):
+                        total_breakout_dwell_ms += (now - breakout_start_time) * 1000.0
+                        breakout_start_time = None
 
                     time.sleep(0.02)  # 50Hz control loop
 

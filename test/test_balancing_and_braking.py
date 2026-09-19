@@ -55,19 +55,24 @@ class TestFeatureSelectionAndBaselinePreservation(unittest.TestCase):
     def test_baseline_defaults_when_flags_omitted(self):
         p = TurnParameters(degrees=180.0, direction="cw")
         p.validate()
-        self.assertFalse(p.enable_balancing, "Balancing must default to False")
-        self.assertFalse(p.enable_braking, "Braking must default to False")
-        self.assertEqual(p.stopping_advance_deg, 0.0, "Stopping advance must default to 0.0 when braking is disabled")
+        self.assertIsNone(p.enable_balancing, "Balancing must default to None (inherit production)")
+        self.assertIsNone(p.enable_braking, "Braking must default to None (inherit production)")
+        self.assertEqual(p.stopping_advance_deg, 0.7, "Stopping advance must default to 0.7 when braking inherits production default")
+
+        p_disabled = TurnParameters(degrees=180.0, direction="cw", enable_braking=False)
+        p_disabled.validate()
+        self.assertFalse(p_disabled.enable_braking)
+        self.assertEqual(p_disabled.stopping_advance_deg, 0.0, "Stopping advance must be 0.0 when braking is explicitly disabled")
 
     def test_independent_selection_balancing_only(self):
-        p = TurnParameters(degrees=180.0, direction="cw", enable_balancing=True)
+        p = TurnParameters(degrees=180.0, direction="cw", enable_balancing=True, enable_braking=False)
         p.validate()
         self.assertTrue(p.enable_balancing)
         self.assertFalse(p.enable_braking)
         self.assertEqual(p.stopping_advance_deg, 0.0)
 
     def test_independent_selection_braking_only(self):
-        p = TurnParameters(degrees=180.0, direction="cw", enable_braking=True)
+        p = TurnParameters(degrees=180.0, direction="cw", enable_balancing=False, enable_braking=True)
         p.validate()
         self.assertFalse(p.enable_balancing)
         self.assertTrue(p.enable_braking)
@@ -81,19 +86,24 @@ class TestFeatureSelectionAndBaselinePreservation(unittest.TestCase):
     def test_cli_parser_feature_flags(self):
         parser = build_parser()
 
-        # Baseline CLI
+        # Baseline CLI: flags omitted -> None (inherit live production configuration)
         args = parser.parse_args(["turn", "--degrees", "180", "--direction", "cw"])
-        self.assertFalse(args.enable_balancing)
-        self.assertFalse(args.enable_braking)
+        self.assertIsNone(args.enable_balancing)
+        self.assertIsNone(args.enable_braking)
         self.assertIsNone(args.stopping_advance_deg)
 
+        # Explicitly disabled flags
+        args_dis = parser.parse_args(["turn", "--degrees", "180", "--no-enable-balancing", "--no-enable-braking"])
+        self.assertFalse(args_dis.enable_balancing)
+        self.assertFalse(args_dis.enable_braking)
+
         # Balancing enabled
-        args_bal = parser.parse_args(["turn", "--degrees", "180", "--enable-balancing"])
+        args_bal = parser.parse_args(["turn", "--degrees", "180", "--enable-balancing", "--no-enable-braking"])
         self.assertTrue(args_bal.enable_balancing)
         self.assertFalse(args_bal.enable_braking)
 
         # Braking enabled
-        args_brk = parser.parse_args(["turn", "--degrees", "180", "--enable-braking"])
+        args_brk = parser.parse_args(["turn", "--degrees", "180", "--no-enable-balancing", "--enable-braking"])
         self.assertFalse(args_brk.enable_balancing)
         self.assertTrue(args_brk.enable_braking)
 

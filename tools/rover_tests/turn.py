@@ -29,8 +29,8 @@ class TurnParameters:
     angle_tolerance_deg: float = 2.0     # deg
     inter_trial_approval: bool = False
     dry_run: bool = False
-    enable_balancing: bool = False
-    enable_braking: bool = False
+    enable_balancing: Optional[bool] = None
+    enable_braking: Optional[bool] = None
     clear_faults: bool = False
     stopping_advance_deg: Optional[float] = None
     report_directory: str = "reports"
@@ -47,7 +47,9 @@ class TurnParameters:
             self.trials = self.repetitions
 
         if self.stopping_advance_deg is None:
-            self.stopping_advance_deg = 0.7 if self.enable_braking else 0.0
+            # Production default enables dynamic braking; default advance is 0.7° when enabled or unspecified
+            braking_active = True if self.enable_braking is None else bool(self.enable_braking)
+            self.stopping_advance_deg = 0.7 if braking_active else 0.0
 
         norm_dir = self.direction.lower()
         if norm_dir not in ("cw", "ccw"):

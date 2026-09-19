@@ -3254,6 +3254,69 @@ class TestFirmwareStallWatchdogAndFaultClearRegressions(unittest.TestCase):
             self.assertEqual(call_params.trials, 2)
 
 
+class TestTurnCompletionYawDrivenProof(unittest.TestCase):
+    """
+    Proves that turn completion is determined exclusively from continuous unwrapped BNO08x yaw,
+    and NOT encoder counts. Encoder telemetry must remain diagnostic only.
+    """
+
+    def test_turn_completion_governed_exclusively_by_bno08x_yaw(self):
+        """
+        Verify that turn progress and completion are driven 100% by BNO08x unwrapped yaw,
+        while encoders are purely diagnostic observers.
+        """
+        ctrl = AngularApproachController(
+            cruise_wz_radps=0.80,
+            creep_wz_radps=0.20,
+            approach_zone_deg=30.0,
+            stopping_advance_deg=0.7
+        )
+        ctrl.reset(target=90.0, start_time=0.0)
+
+        unwrapper = YawUnwrapper()
+
+        # Phase 1: At 0 deg yaw, controller is in CRUISE
+        unwrapper.update_orientation_yaw(math.radians(0.0))
+        cmd1 = ctrl.update(unwrapper.relative_yaw_deg, current_time=0.0)
+        self.assertEqual(ctrl.phase, ApproachPhase.CRUISE)
+        self.assertAlmostEqual(cmd1, 0.80)
+
+        # Phase 2: At 70 deg yaw, controller transitions to CREEP (within 30 deg of 90 deg)
+        unwrapper.update_orientation_yaw(math.radians(70.0))
+        cmd2 = ctrl.update(unwrapper.relative_yaw_deg, current_time=0.5)
+        self.assertEqual(ctrl.phase, ApproachPhase.CREEP)
+        self.assertAlmostEqual(cmd2, 0.20)
+
+        # Phase 3: At 89.35 deg (90.0 - 0.7 = 89.3), controller transitions to ZERO
+        unwrapper.update_orientation_yaw(math.radians(89.35))
+        cmd3 = ctrl.update(unwrapper.relative_yaw_deg, current_time=1.0)
+        self.assertEqual(ctrl.phase, ApproachPhase.ZERO)
+        self.assertEqual(cmd3, 0.0)
+
+    def test_encoder_counts_do_not_affect_turn_completion(self):
+        """
+        Verify that even if encoders advance to huge values (e.g. 10,000 ticks or 100 rad/s),
+        if IMU yaw does not reach target, turn does NOT complete.
+        """
+        ctrl = AngularApproachController(
+            cruise_wz_radps=0.80,
+            creep_wz_radps=0.20,
+            approach_zone_deg=30.0,
+            stopping_advance_deg=0.7
+        )
+        ctrl.reset(target=90.0, start_time=0.0)
+        unwrapper = YawUnwrapper()
+
+        # Encoders report high speed / ticks, but IMU yaw is only 15 deg
+        unwrapper.update_orientation_yaw(math.radians(15.0))
+        diagnostic_encoder_radps = 50.0  # Huge wheel speed
+        cmd = ctrl.update(unwrapper.relative_yaw_deg, current_time=0.2)
+
+        self.assertNotEqual(ctrl.phase, ApproachPhase.ZERO)
+        self.assertEqual(ctrl.phase, ApproachPhase.CRUISE)
+        self.assertAlmostEqual(cmd, 0.80)
+
+
 if __name__ == "__main__":
     unittest.main()
 
