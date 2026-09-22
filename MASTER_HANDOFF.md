@@ -118,7 +118,56 @@
 
 ---
 
-## 7. Current System State
-- **Hardware State**: DISARMED (`armed: false`), Mode 0 (Locked), `autonomyState: "DISABLED"`, `cmdSource: "NONE"`.
-- **System Health**: All nodes active, localization tracked, zero motion.
-- **Commissioning Status**: Both Fixed-Obstacle Gate and Dynamic-Obstacle Nav2 Gate are fully verified and **PASSED**.
+## 8. Authoritative Permanent HOME Pose Definition
+- **Physical Settling & Verification**: Rover settled at rest on the floor. 100-sample mean AMCL tracking recorded and validated:
+  - **Coordinates**: $x = 1.193853\text{ m},\; y = -0.045221\text{ m},\; \theta = -5.047^\circ$ ($-0.088087\text{ rad}$).
+  - **Orientation Quaternions**: $q_z = -0.044029,\; q_w = 0.999030$.
+  - **Configuration Sync**: Updated in `/home/ron/yahboom-encoder/ros2/volumes/maps/home_pose_slam_2026-08-23_final.json`, synced inside container at `/ros2_ws/home_pose_slam.json`, and served live via Cockpit `/api/navigation/home`.
+  - **Cockpit UI**: Preset button and legend updated to **`🏠 Saved HOME (1.19, -0.05)`**.
+  - **Tolerance Reconciliation**: Corrected previous $-8.34^\circ$ heading target discrepancy; setting target to $-5.05^\circ$ ensures Nav2's $5.0^\circ$ yaw tolerance (`general_goal_checker.yaw_goal_tolerance = 0.087 rad`) settles directly on the rover's physical floor alignment.
+
+---
+
+## 9. Commissioning Gates Passed & Authoritative Baseline
+The following gates are verified and recorded as **PASSED** (avoid repeating):
+1. **Cold-Start Service Recovery**: Verified clean container initialization, service daemon bringup, and sensor discovery.
+2. **Foxglove Bridge & Sensor Streaming**: Verified `/scan` ($10\text{ Hz}$), `/odom` ($20\text{ Hz}$), `/imu/data` ($100\text{ Hz}$), `/tf` dynamic transforms.
+3. **AMCL Localization at Physical HOME**: Reseeded and converged via 10 no-motion updates ($1.5\text{ cm}$ radial error, $0.32^\circ$ heading deviation, 80.1% scan alignment within $10\text{ cm}$).
+4. **Saved HOME Route Preview**: Smac2D A* trajectory generation verified feasible and obstacle-free.
+5. **Corrected Dynamic Relative-Goal Navigation**: Relative presets (`+0.50m`, `+0.60m`, `+0.70m`) dynamically compute ahead along live approach heading.
+6. **Fixed and Dynamic Obstacle Response**: Verified `PolygonSlow` ($50\%$ speed attenuation) and `PolygonStop` / DWB local planner obstacle stopping with contact-free safety margins.
+
+---
+
+## 10. Nav2 Plan Preview Telemetry & Latency Optimization
+- **Six-Stage Latency Instrumentation**:
+  1. Browser click to HTTP request: $\approx 1.0\text{ ms}$
+  2. Backend validation & localization check: $< 0.5\text{ ms}$
+  3. Waiting for Nav2 planner action server: $0.1\text{ ms}$ (pre-warmed client, non-blocking `server_is_ready()` check)
+  4. `ComputePathToPose` Smac2D planning: $1.5\text{--}3.0\text{ ms}$
+  5. Backend response network transmission: $11\text{--}12\text{ ms}$
+  6. Browser JSON parsing & 2D canvas rendering: $1.5\text{--}2.0\text{ ms}$
+  - **Total End-to-End Click-to-Render**: **`17 – 18 ms`** (down from $500\text{+ ms}$).
+- **Root Cause Fixes**:
+  - Eliminated unprimed `rclpy` `ActionClient.wait_for_server()` 500 ms blocking delay by adding background client pre-warming and non-blocking `server_is_ready()` checks.
+  - Reduced polling quantization in `rover_nav_bridge.py` from 20 ms to 1 ms (`time.sleep(0.001)`).
+  - Streamlined UI click handlers in `app.js` to eliminate redundant sequential `/api/localization/status` calls.
+  - Enforced immediate visual feedback (`⏳ Planning...`) and disabled button state to prevent duplicate concurrent planner requests.
+
+---
+
+## 11. Autonomy Dispatch & Controller Startup Stabilization
+- **Root Cause of Dispatch Stall**: 
+  - Nav2 global path calculation and DWB trajectory initialization require $5.5\text{--}7.0\text{ s}$ before emitting the first `/cmd_vel` packet.
+  - Cockpit's watchdog had a premature $5.0\text{ s}$ timeout (`Awaiting initial Nav2 cmd_vel timed out (5000ms)`), switching autonomy to `DISABLED` and rejecting incoming velocity commands with HTTP 403 (`lastRejectionReason: "Autonomy is disabled"`).
+  - In addition, setting `autonomyState.state = 'READY_ARMED'` was conditioned on the rover not being previously armed, causing already-armed dispatches to skip arming the autonomy intake.
+- **Fixes Applied & Deployed**:
+  - Unconditionally set `autonomyState.state = 'READY_ARMED'` and `autonomyState.enabled = true` on every successful dispatch.
+  - Expanded the initial command timeout window from $5,000\text{ ms}$ to $20,000\text{ ms}$ ($20\text{ s}$) to provide ample headroom for Nav2 to initialize before velocity streaming begins.
+
+---
+
+## 12. Current System State
+- **Hardware State**: DISARMED (`armed: false`), Mode 0 (Locked), `cmdSource: "NONE"`.
+- **Navigation State**: `LOCALIZED` at HOME ($x = 1.194, y = -0.045, \theta = -5.05^\circ$), all 4 Nav2 nodes `active` (`controller_server`, `planner_server`, `bt_navigator`, `collision_monitor`).
+- **Safety**: Safe, stationary, and ready for operator point-and-click or mission sequence dispatch.
