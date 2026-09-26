@@ -167,7 +167,42 @@ The following gates are verified and recorded as **PASSED** (avoid repeating):
 
 ---
 
-## 12. Current System State
+---
+
+## 12. Authoritative Map Persistence & Stationary Cold-Start Verification (2026-09-26)
+- **Active Production Map Promoted**: **`house_slam_2026-09-23_candidate_hallway.yaml`**
+  - **Resolution & Size**: $340 \times 132$ grid cells ($17.0\text{ m} \times 6.6\text{ m}$) @ $0.050\text{ m/px}$.
+  - **Map Origin**: `[-4.202, -5.100, 0.0]`.
+  - **Coordinate Alignment**: Fixed `map` frame identical to original SLAM origin; shared across Cockpit, Foxglove Studio, Nav2, and saved HOME.
+- **Backup of Prior Production Map Preserved**:
+  - Preserved in durable directory: `/home/ron/yahboom-encoder/ros2/volumes/maps/backup_production_20260923_house_slam_2026-08-23_final/` and local archive `ros2/maps/backups/production_20260923/`.
+  - Automated deployment backups created in `/home/ron/yahboom_backups/deploy_backup_*`.
+- **Repository Changes Committed & Deployed**:
+  - **Repository**: `Inouye165/rover-rpi5-encoder` (`yahboom-encoder`).
+  - **Commit / PR**: PR #16 merged as commit **`0776206118190f4c5143425207c24f990b7c6850`** on `origin/main`.
+  - **Components Updated**:
+    1. `ros2/ros2_ws/src/rover_bringup/launch/navigation.launch.py`: dynamically resolves `/ros2_ws/maps/active_map_path.txt` or defaults to candidate hallway map.
+    2. `ros2/ros2_ws/src/rover_bringup/launch/bringup.launch.py`: dynamically resolves `/ros2_ws/maps/active_map_path.txt` or defaults to candidate hallway map.
+    3. `ros2/ros2_ws/src/rover_bringup/rover_bringup/rover_nav_bridge.py`: dynamic active map resolution, YAML metadata parsing (`resolution`, `origin`, `image`), PGM loading, and dynamic HOME pose loading.
+    4. `public/app.js`: dynamic canvas scaling calculation for wide hallway map aspect ratio, `?refresh=1` cache bypass, and window resize listeners.
+    5. `server.js`: `/api/navigation/map` 2s TTL cache with `refresh=1` query bypass.
+    6. `ros2/scripts/initialize_at_home.py`: tracked script with candidate hallway map support and permanent verified HOME coordinates.
+    7. `deploy_yahboom.py`: backed up `ros2/volumes/maps` in addition to `ros2/maps`.
+    8. `test/test_dispatch_localization_refresh.py`: updated Check 2 to accept candidate hallway geometry.
+- **Stationary Cold-Start Verification Results**:
+  - Drivetrain Safety: **DISARMED** (`armed: false`), Mode 0, `cmdSource: "NONE"`, velocities zeroed.
+  - Sensors & Streams: `/scan` (10 Hz, laser_frame), `/odom` (20 Hz, odom->base_link), `/imu/data` (100 Hz, imu_link), `/map` (340x132, map).
+  - Nav2 Lifecycle: All 7 nodes in state `active [3]` (`map_server`, `amcl`, `planner_server`, `controller_server`, `collision_monitor`, `velocity_smoother`, `bt_navigator`).
+  - AMCL Localization: Initialized at HOME, 10 no-motion iterations converged; scan-to-wall overlap **93.6%** (limit $\ge 70\%$), position error $2.2\text{ cm}$ (limit $\le 10\text{ cm}$), heading error $0.72^\circ$ (limit $\le 5^\circ$).
+  - Cockpit Map: `/api/navigation/map?refresh=1` serves `house_slam_2026-09-23_candidate_hallway.yaml` ($340\times 132$, origin `[-4.202, -5.1, 0]`).
+  - Saved HOME Pose: `/api/navigation/home` serves $x = 1.193853\text{ m}, y = -0.045221\text{ m}, \theta = -5.047^\circ$.
+  - Foxglove Agreement: Foxglove bridge (port 8765) streams active map and laser scan in identical `map` frame.
+  - Automated Regression Suite: `test_dispatch_localization_refresh.py` **7/7 CHECKS PASSED**.
+
+---
+
+## 13. Current System State
 - **Hardware State**: DISARMED (`armed: false`), Mode 0 (Locked), `cmdSource: "NONE"`.
-- **Navigation State**: `LOCALIZED` at HOME ($x = 1.194, y = -0.045, \theta = -5.05^\circ$), all 4 Nav2 nodes `active` (`controller_server`, `planner_server`, `bt_navigator`, `collision_monitor`).
+- **Navigation State**: `LOCALIZED` at HOME ($x \approx 1.218, y \approx -0.051, \theta \approx -5.90^\circ$), all Nav2 nodes `active` against `house_slam_2026-09-23_candidate_hallway.yaml`.
 - **Safety**: Safe, stationary, and ready for operator point-and-click or mission sequence dispatch.
+
