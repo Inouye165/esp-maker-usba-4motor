@@ -169,7 +169,7 @@ The following gates are verified and recorded as **PASSED** (avoid repeating):
 
 ---
 
-## 12. Authoritative Map Persistence & True Cold-Start Gate (2026-09-26)
+## 12. Authoritative Map Persistence & Guarded Cold-Start Localization Policy (2026-09-26)
 - **Active Production Map Promoted**: **`house_slam_2026-09-23_candidate_hallway.yaml`**
   - **Resolution & Size**: $340 \times 132$ grid cells ($17.0\text{ m} \times 6.6\text{ m}$) @ $0.050\text{ m/px}$.
   - **Map Origin**: `[-4.202, -5.100, 0.0]`.
@@ -183,31 +183,43 @@ The following gates are verified and recorded as **PASSED** (avoid repeating):
     5. `active_map_path.txt` (points to `/ros2_ws/maps/house_slam_2026-09-23_candidate_hallway.yaml`)
     6. `home_pose_slam_2026-09-23_candidate_hallway.json`
     7. `home_pose_slam.json`
-- **Automated Deployment & Safe Volume Installation**:
-  - `deploy_yahboom.py` Stage 3b safely copies `ros2/maps/production/*` into `ros2/volumes/maps/` during every deploy, guaranteeing clean cold clones auto-populate volumes without manual file transfers.
-  - Automated tests in `test/test_production_map_assets.py` (11 passed) verify all canonical assets, checksums, PGM headers, YAML resolution/origin, and HOME consistency.
-- **Autonomous Production Startup (Zero-Intervention Boot)**:
-  - `ros2/compose.yaml` executes `bringup.launch.py` (foundation + navigation).
-  - Nav2 lifecycle nodes autostart on boot with `autostart: true`.
-  - `rover_nav_bridge.py` background daemon thread `_auto_init_worker` autonomously waits for AMCL, latches the verified HOME pose via `/initialpose` and `/set_initial_pose`, converges particles with 5 no-motion updates, clears costmaps, and transitions Nav2 to `ACTIVE`.
-- **Genuine Raspberry Pi Cold-Start Reboot Gate**: **PASSED (ZERO MANUAL INTERVENTION)**
-  - Executed physical `sudo reboot` on Raspberry Pi 5.
-  - Reconnected after reboot with strictly zero manual startup intervention (no `ros2 launch`, no lifecycle scripts, no `docker exec`).
-  - **Verification Results**:
-    1. **Systemd Services**: `rover-server`, `rover-lidar`, `rover-health`, `docker` all **`active`**.
-    2. **Docker Container**: `rover-ros2` **`running`** via Compose `restart: unless-stopped`.
-    3. **Nav2 Lifecycle Nodes**: All nodes autonomously transitioned to **`active`** (`controller_server`, `planner_server`, `bt_navigator`, `collision_monitor`, `waypoint_follower`).
-    4. **Active Hallway Map**: Cockpit `/api/navigation/map?refresh=1` and Nav2 `map_server` serving `house_slam_2026-09-23_candidate_hallway.yaml` ($340 \times 132$, origin `[-4.202, -5.1, 0.0]`).
-    5. **Localization at HOME**: AMCL autonomously converged at HOME: $x = 1.225\text{ m}, y = -0.050\text{ m}, \theta = -5.05^\circ$ ($\Delta\text{pos} \le 3.1\text{ cm}$, $\Delta\text{heading} \le 0.01^\circ$), `state: "LOCALIZED"`, `freshValidationOk: true`.
-    6. **Foxglove Agreement**: Port 8765 open and broadcasting `/map` and `/tf` in identical `map` coordinate frame.
-    7. **Drivetrain Safety**: Strictly **DISARMED** (`armed: false`), Mode 0 (Locked), zero commanded velocities, `cmdSource: "NONE"`.
-    8. **Automated Regression Suite**: `test/test_dispatch_localization_refresh.py` **7/7 CHECKS PASSED**.
+- **Guarded Cold-Start Localization Policy (No Unconditional Injection)**:
+  - **Unconditional injection removed**: Rover NEVER injects `/initialpose` blindly on startup.
+  - **Independent Scan-to-Map Validation**: At boot, `rover_nav_bridge.py` independently transforms live LiDAR scan beams into map coordinates using the saved HOME hypothesis $(1.194, -0.045, -5.05^\circ)$ and static sensor offset $(0.03175, 0.0, 0.0)$ before touching `/initialpose`.
+  - **Strict Acceptance Gate**:
+    1. **Scan Freshness**: $\text{age} \le 0.75\text{ s}$ (rejects `STALE_SCAN`).
+    2. **Beam Sufficiency**: $\ge 100$ valid range returns (rejects `INSUFFICIENT_BEAMS`).
+    3. **Scan-to-Map Overlap**: $\ge 75.0\%$ of scan beams must fall within $\pm 5\text{ cm}$ ($\pm 1$ grid cell) of known occupied map walls (rejects `SCAN_MISMATCH`).
+  - **Fail-Safe Behavior**: If validation does not strongly confirm HOME, the rover remains `NOT_LOCALIZED`, `/initialpose` is never sent, Nav2 goal dispatch remains strictly blocked (HTTP 409), and initialization requires explicit Cockpit "Initialize at HOME" action or Foxglove operator pose.
+- **Automated Regression Suites**:
+  - `test/test_production_map_assets.py`: **11/11 PASSED** (manifest checksums, asset existence, PGM/YAML consistency).
+  - `test/test_cold_start_localization_policy.py`: **7/7 PASSED**:
+    - `test_verified_home_case`: Confirms `VERIFIED_HOME` and overlap $\ge 75\%$ ($81.6\%$ measured).
+    - `test_scan_mismatch_displaced_y`: Confirms rejection on $+25\text{ cm}$ lateral displacement ($44.5\%$ overlap).
+    - `test_scan_mismatch_rotated_yaw`: Confirms rejection on $+25^\circ$ heading displacement ($46.9\%$ overlap).
+    - `test_scan_mismatch_different_room`: Confirms rejection in wrong room coordinates ($30.8\%$ overlap).
+    - `test_missing_scan_case`: Confirms `MISSING_SCAN` rejection when scan is None or empty.
+    - `test_stale_scan_case`: Confirms `STALE_SCAN` rejection when scan age exceeds $0.75\text{ s}$.
+    - `test_insufficient_beams_case`: Confirms `INSUFFICIENT_BEAMS` rejection when returns $< 100$.
+- **Genuine Stationary Reboot Verification (Rover Physically at HOME)**: **PASSED**
+  - Performed physical `sudo reboot` on Raspberry Pi 5 with rover resting at HOME tape mark.
+  - Zero manual startup intervention:
+    1. Systemd services (`rover-server`, `rover-lidar`, `rover-health`, `docker`): all **`active`**.
+    2. Docker container `rover-ros2`: **`running`**.
+    3. Boot Scan Validation: **`PASSED: VERIFIED_HOME (overlap = 85.7%, hits = 263/307)`**.
+    4. Nav2 Lifecycle: Autonomously initialized HOME, 5 no-motion updates converged, all nodes transitioned to **`active`**.
+    5. Localization State: **`LOCALIZED`**, `freshValidationOk: true`, $x = 1.209\text{ m}, y = -0.053\text{ m}, \theta = -4.86^\circ$.
+    6. Drivetrain Hardware Safety: Strictly **DISARMED** (`armed: false`), Mode 0 (Locked), zero velocities, `cmdSource: "NONE"`.
+    7. Stationary Regression Suite: `test/test_dispatch_localization_refresh.py` **7/7 CHECKS PASSED**.
+- **Cockpit Operator Controls**:
+  - Added `📍 Initialize at HOME` button in Cockpit UI (`public/index.html`, `public/app.js`).
+  - Added `/api/navigation/init_home` and `/api/navigation/validate_home` endpoints (`server.js`, `rover_nav_bridge.py`).
 
 ---
 
 ## 13. Current System State & Next Physical Gate
 - **Hardware State**: DISARMED (`armed: false`), Mode 0 (Locked), `cmdSource: "NONE"`.
-- **Navigation State**: `LOCALIZED` at HOME ($x \approx 1.225, y \approx -0.050, \theta \approx -5.05^\circ$), all Nav2 nodes `active` against `house_slam_2026-09-23_candidate_hallway.yaml`.
-- **Safety**: Safe, stationary, locked, and ready for operator point-and-click or mission sequence dispatch.
+- **Navigation State**: `LOCALIZED` at HOME ($x \approx 1.209, y \approx -0.053, \theta \approx -4.86^\circ$), all Nav2 nodes `active` against `house_slam_2026-09-23_candidate_hallway.yaml`.
+- **Safety Policy**: Cold-start localization is guarded by independent scan-to-map validation. Drivetrain remains disarmed and navigation blocked if rover is not verified at HOME.
 - **Next Physical Gate**: Out-and-back autonomous hallway waypoint navigation under exact motion contract with operator approval.
 
