@@ -12,6 +12,7 @@
 #include "MotionLimiter.h"
 #include "ImuManager.h"
 #include "WheelController.h"
+#include "ChassisSupervisor.h"
 
 extern MotorDriver motorDriver;
 extern WheelController wheelController;
@@ -123,10 +124,18 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
                 int16_t p4 = (int16_t)(payloadBuf[7] | (payloadBuf[8] << 8));
                 
                 extern WheelController wheelController;
+                extern MotionLimiter motionLimiter;
                 if (p1 == 0 && p2 == 0 && p3 == 0 && p4 == 0) {
-                    wheelController.clearOpenLoop();
+                    if (wheelController.isOpenLoop()) {
+                        wheelController.clearOpenLoop();
+                        wheelController.reset();
+                        motionLimiter.reset(0.0f, 0.0f);
+                        cmdManager.requestSourceChange(SOURCE_NONE, 0.0f, 0.0f);
+                    }
                 } else if (cmdManager.isNormalDriveArmed()) {
-                    wheelController.setOpenLoopPwm(p1, p2, p3, p4);
+                    cmdManager.requestSourceChange(SOURCE_NONE, 0.0f, 0.0f);
+                    motionLimiter.reset(0.0f, 0.0f);
+                    wheelController.setOpenLoopPwm(p1, p2, p3, p4, millis());
                 }
             }
             break;
@@ -288,6 +297,14 @@ void SerialProtocol::processPacket(CommandManager &cmdManager, CalibrationManage
         }
 
         case 0x2D: { // CMD_DISARM_NORMAL_DRIVE
+            extern WheelController wheelController;
+            if (wheelController.isOpenLoop()) {
+                extern MotionLimiter motionLimiter;
+                wheelController.clearOpenLoop();
+                wheelController.reset();
+                motionLimiter.reset(0.0f, 0.0f);
+                cmdManager.requestSourceChange(SOURCE_NONE, 0.0f, 0.0f);
+            }
             cmdManager.disarmNormalDrive();
             LOG_SERIAL_PRINTLN("[Command] NORMAL_DRIVE DISARMED. Initiating controlled stop.");
             break;
@@ -572,40 +589,46 @@ void SerialProtocol::sendTelemetry(
     uint64_t t3 = esp_timer_get_time();
     g_txProf.p0x35_maint.record((uint32_t)(t3 - t2));
 
-    // 4. Calibration telemetry packet (TYPE_CALIBRATION_STATUS = 0x30)
-    uint8_t calData[55];
-    memset(calData, 0, sizeof(calData));
-    calData[0] = 1; // Major protocol version
-    calData[1] = 1; // Minor protocol version
-    
-    uint32_t sessId = calManager.getSessionId();
-    memcpy(&calData[2], &sessId, 4);
-    
-    calData[6] = calManager.getIsSimulation() ? 1 : 0;
-    calData[7] = (uint8_t)calManager.getState();
-    
-    int activeM = calManager.getActiveMotor();
-    calData[8] = (uint8_t)activeM;
-    calData[9] = (uint8_t)(activeM + 1);
-    calData[10] = (calManager.getState() == CAL_MEASURING_REV) ? 1 : 0;
-    calData[11] = (uint8_t)calManager.getCurrentPwm();
-    
-    int delta = calManager.getSimulatedDelta();
-    calData[12] = (uint8_t)delta;
-    calData[13] = (delta >= 8) ? 1 : 0; // Movement detected
-    
-    calData[14] = (motorDriver.getMode() == MotorOutputMode::LOCKED || motorDriver.getMode() == MotorOutputMode::EMERGENCY_STOP || motorDriver.getMode() == MotorOutputMode::FAULTED) ? 1 : 0;
-    
-    for (int i = 0; i < 4; i++) {
-        calData[15 + i] = (uint8_t)calManager.getForwardBreakaway(i);
-        calData[19 + i] = (uint8_t)calManager.getReverseBreakaway(i);
+    // 4. Calibration telemetry packet (TYPE_CALIBRATION_STATUS = 0x30) - Throttled to 1 Hz when inactive
+    uint64_t t4 = t3;
+    static unsigned long lastCalTxMs = 0;
+    bool calActive = (calManager.getState() != CAL_IDLE && calManager.getState() != CAL_DONE);
+    if (calActive || (nowMs - lastCalTxMs >= 1000)) {
+        lastCalTxMs = nowMs;
+        uint8_t calData[55];
+        memset(calData, 0, sizeof(calData));
+        calData[0] = 1; // Major protocol version
+        calData[1] = 1; // Minor protocol version
+        
+        uint32_t sessId = calManager.getSessionId();
+        memcpy(&calData[2], &sessId, 4);
+        
+        calData[6] = calManager.getIsSimulation() ? 1 : 0;
+        calData[7] = (uint8_t)calManager.getState();
+        
+        int activeM = calManager.getActiveMotor();
+        calData[8] = (uint8_t)activeM;
+        calData[9] = (uint8_t)(activeM + 1);
+        calData[10] = (calManager.getState() == CAL_MEASURING_REV) ? 1 : 0;
+        calData[11] = (uint8_t)calManager.getCurrentPwm();
+        
+        int delta = calManager.getSimulatedDelta();
+        calData[12] = (uint8_t)delta;
+        calData[13] = (delta >= 8) ? 1 : 0; // Movement detected
+        
+        calData[14] = (motorDriver.getMode() == MotorOutputMode::LOCKED || motorDriver.getMode() == MotorOutputMode::EMERGENCY_STOP || motorDriver.getMode() == MotorOutputMode::FAULTED) ? 1 : 0;
+        
+        for (int i = 0; i < 4; i++) {
+            calData[15 + i] = (uint8_t)calManager.getForwardBreakaway(i);
+            calData[19 + i] = (uint8_t)calManager.getReverseBreakaway(i);
+        }
+        
+        strncpy((char*)&calData[23], calManager.getFailureReason(), 32);
+        
+        writePacket(0x30, calData, 55);
+        t4 = esp_timer_get_time();
+        g_txProf.p0x30_cal.record((uint32_t)(t4 - t3));
     }
-    
-    strncpy((char*)&calData[23], calManager.getFailureReason(), 32);
-    
-    writePacket(0x30, calData, 55);
-    uint64_t t4 = esp_timer_get_time();
-    g_txProf.p0x30_cal.record((uint32_t)(t4 - t3));
 
     // 5. Control loop timing telemetry packet (TYPE_LOOP_TIMING = 0x33) - 40 bytes (versioned & backward compatible)
     uint8_t timingData[40];
@@ -638,12 +661,13 @@ void SerialProtocol::sendTelemetry(
     uint64_t t6 = esp_timer_get_time();
     g_txProf.p0x34_fault.record((uint32_t)(t6 - t5));
 
-    // 7. Normal drive telemetry packet (TYPE_NORMAL_DRIVE_STATUS = 0x36)
+    // 7. Normal drive telemetry packet (TYPE_NORMAL_DRIVE_STATUS = 0x36) - 40 bytes
     extern CommandManager commandManager;
     extern MotionLimiter motionLimiter;
     extern MotorDriver motorDriver;
+    extern ChassisSupervisorState g_chassisSupervisorState;
     
-    uint8_t normalData[32];
+    uint8_t normalData[40];
     memset(normalData, 0, sizeof(normalData));
     normalData[0] = commandManager.isNormalDriveArmed() ? 1 : 0;
     normalData[1] = (uint8_t)motorDriver.getMode();
@@ -675,7 +699,21 @@ void SerialProtocol::sendTelemetry(
     normalData[30] = (uint8_t)getEspResetReason();
     normalData[31] = (uint8_t)getEspRtc0ResetReason();
     
-    writePacket(0x36, normalData, 32);
+    // Extended Diagnostic Telemetry: Uptime, Chassis Recovery & Power-on Indicator
+    uint32_t uptimeMs = millis();
+    memcpy(&normalData[32], &uptimeMs, 4);
+    normalData[36] = (uint8_t)g_chassisSupervisorState.spinRecoveryState;
+    uint16_t noMotionBudgetMs = (uint16_t)min(65535UL, (unsigned long)g_chassisSupervisorState.cumulativeNoMotionMs);
+    memcpy(&normalData[37], &noMotionBudgetMs, 2);
+    
+    uint8_t recoveryFlags = 0;
+    if (g_chassisSupervisorState.spinFailedExhausted) recoveryFlags |= 0x01;
+    if (g_chassisSupervisorState.chassisRebreakoutConsumedForEpisode) recoveryFlags |= 0x02;
+    // Cold power-on indicator based strictly on hardware reset reason, not bootCount==1
+    if (getEspResetReason() == 1 || getEspRtc0ResetReason() == 1) recoveryFlags |= 0x04;
+    normalData[39] = recoveryFlags;
+    
+    writePacket(0x36, normalData, 40);
 
 #if !PRODUCTION_BINARY_ONLY_SERIAL
     // 10-Second Rate-Limited Packet TX Summary Diagnostic Output (non-blocking, capacity checked)
@@ -716,7 +754,7 @@ void SerialProtocol::sendTelemetry(
 }
 
 void SerialProtocol::sendPidTelemetry(const WheelController &wheelController, const YawOuterLoopDiag &outerDiag, uint8_t actuationState, uint8_t configFlags) {
-    uint8_t pidData[96];
+    uint8_t pidData[108];
     memset(pidData, 0, sizeof(pidData));
     for (int i = 0; i < 4; i++) {
         const WheelPidDiag &d = wheelController.getController(i).getDiag();
@@ -744,6 +782,13 @@ void SerialProtocol::sendPidTelemetry(const WheelController &wheelController, co
         int16_t syncTrimVal = d.spinSyncTrim;
         memcpy(&pidData[80 + i * 4 + 0], &basePwmVal, 2);
         memcpy(&pidData[80 + i * 4 + 2], &syncTrimVal, 2);
+
+        // Separate Recovery Assist Telemetry (Offset 96..103)
+        int16_t recAssistVal = (int16_t)(d.recoveryAssist * 10.0f);
+        memcpy(&pidData[96 + i * 2], &recAssistVal, 2);
+
+        // Candidate Enabled Status (Offset 104..107)
+        pidData[104 + i] = wheelController.getController(i).isCandidateRecoveryAssist() ? 1 : 0;
     }
 
     // Outer Yaw-Rate Loop Telemetry (16 bytes, offset 64..79)
@@ -767,7 +812,7 @@ void SerialProtocol::sendPidTelemetry(const WheelController &wheelController, co
     pidData[78] = actuationState; // 0=DRIVE, 1=BRAKE, 2=COAST
     pidData[79] = configFlags;    // bit 0=balance, bit 1=brake
 
-    writePacket(0x3B, pidData, 96);
+    writePacket(0x3B, pidData, 108);
 }
 
 void SerialProtocol::sendFirmwareInfo() {
@@ -775,9 +820,9 @@ void SerialProtocol::sendFirmwareInfo() {
     memset(data, 0, sizeof(data));
     
     strncpy((char*)&data[0],  "Maker-ESP32-Unified-Rover", 32);
-    strncpy((char*)&data[32], "1.3.0-phase4", 16);
+    strncpy((char*)&data[32], "1.3.3-cand-r41c", 16);
     strncpy((char*)&data[48], "v1.1", 8);
-    strncpy((char*)&data[56], "phase4-floor-backtrack", 16);
+    strncpy((char*)&data[56], "rev41-floor-c", 16);
     strncpy((char*)&data[72], __DATE__ " " __TIME__, 24);
     strncpy((char*)&data[96], "Maker-ESP32-Pro", 16);
     

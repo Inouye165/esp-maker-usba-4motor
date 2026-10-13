@@ -94,7 +94,19 @@ extern MotorCalibration motorCalibrations[4];
 extern bool USE_UNIFORM_BREAKAWAY;
 
 // Dynamic Stiction Breakout Parameters
-const int STICTION_BOOST_PWM = 48;                 // Standard straight/coordinated breakout
+const int STICTION_BOOST_PWM = 48;                 // Baseline coordinated breakout / low-speed turning-arc boost (48 PWM)
+const int STRAIGHT_STICTION_BOOST_PWM = 64;        // Isolated straight forward/reverse startup breakout boost (64 PWM)
+const float STRAIGHT_KINETIC_FF_FLOOR = 56.0f;     // Isolated straight forward/reverse kinetic feedforward floor (56 PWM)
+const float STRAIGHT_CRAWL_KI = 9.0f;              // Dedicated straight low-speed kinetic integral gain for closed-loop crawl convergence
+const float RECOVERY_ASSIST_RAMP_RATE_PWPS = 40.0f;  // Rate of recovery torque ramp during straight kinetic stall (40 PWM/s)
+const float RECOVERY_ASSIST_DECAY_RATE_PWPS = 30.0f; // Rate of recovery torque decay post-breakout (30 PWM/s)
+const float RECOVERY_ASSIST_MAX_PWM = 14.0f;         // Maximum recovery assist authority cap (14 PWM)
+const float ULTRA_LOW_SPEED_SCOPE_RADPS = 0.80f;     // Speed threshold below which ultra-low speed straight crawl adjustments apply
+const float ULTRA_LOW_SPEED_MIN_FF_FLOOR_FWD = 37.0f;// Forward crawl zero-speed intercept (delivers 48.0 PWM at Case 2 +0.461538 rad/s)
+const float ULTRA_LOW_SPEED_REVERSE_CRAWL_FLOOR_PWM = 41.0f; // Piecewise flat reverse feedforward floor for |target| in [0.01, 0.461538] rad/s
+const float ULTRA_LOW_SPEED_REVERSE_ANCHOR_RADPS = 0.461538f; // Reverse Case 13 setpoint boundary (v_x = -0.015 m/s, r = 0.0325 m)
+// Backward compatibility alias for legacy test runners referencing the previous single forward floor:
+const float ULTRA_LOW_SPEED_MIN_FF_FLOOR = ULTRA_LOW_SPEED_MIN_FF_FLOOR_FWD;
 const int SPIN_STICTION_BOOST_PWM = 102;           // Empirically validated pure-spin startup breakout PWM (102 PWM)
 const uint16_t SPIN_BREAKOUT_MIN_CYCLES = 10;      // Minimum breakout dwell duration: 100 ms @ 100 Hz (10 control cycles)
 const uint16_t SPIN_BREAKOUT_MAX_CYCLES = 20;      // Hard max breakout boost duration: 200 ms @ 100 Hz (20 control cycles)
@@ -110,6 +122,7 @@ const float SPIN_MANEUVER_EPSILON = 0.005f;        // Linear velocity threshold 
 
 // Watchdog communication timeout
 const uint32_t WATCHDOG_TIMEOUT_MS = 300; // Controlled deceleration trigger
+const uint32_t OPEN_LOOP_PWM_TIMEOUT_MS = 300; // Watchdog timeout for direct open-loop PWM commands
 const uint32_t FAULT_TIMEOUT_MS = 1000;    // Fully disable motor output trigger
 
 // Runtime Feature Toggles (Independently Selectable)

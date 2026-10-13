@@ -123,9 +123,20 @@ class MissionGrader:
                 resets_detected += 1
                 break
 
+        # Check for drivetrain recovery exhaustion across all telemetry samples.
+        # Count recovery exhaustion once as a drivetrain fault / safety intervention.
+        # Do not count its resulting ABORT stage again or classify every cancellation/timeout as a drivetrain fault.
+        recovery_exhausted = any(
+            s.get("drive", {}).get("spinFailedExhausted") is True or
+            s.get("drive", {}).get("spinRecoveryState") == "FAILED_LATCHED" or
+            (bool(s.get("pid")) and s.get("pid", {}).get("spin_failed_exhausted") is True)
+            for s in samples
+        )
+        drivetrain_faults = 1 if recovery_exhausted else 0
+
         watchdog_trips = metadata.get("watchdog_trips", 0)
         rejections = metadata.get("rejections", 0)
-        safety_interventions = resets_detected + watchdog_trips + rejections
+        safety_interventions = resets_detected + watchdog_trips + rejections + drivetrain_faults
 
         # 6. Evaluate Acceptance Criteria
         crit_final_pos = final_pos_err_m <= PASS_FINAL_POS_ERR_M

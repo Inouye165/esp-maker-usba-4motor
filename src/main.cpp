@@ -31,6 +31,7 @@ uint32_t getEspRtc0ResetReason() { return s_rtcRtc0Reason; }
 #include "CalibrationManager.h"
 #include "MaintenanceManager.h"
 #include "ImuManager.h"
+#include "ChassisSupervisor.h"
 
 // Onboard RGB LEDs Configuration
 #define RGB_PIN 16
@@ -88,313 +89,11 @@ void setAllLEDs(uint8_t r, uint8_t g, uint8_t b) {
   strip.show();
 }
 
-// ── Coordinated Chassis Stalled-KINETIC Recovery Supervisor ──
-static bool s_rebreakoutConsumedForEpisode = false;
-static uint32_t s_zeroDebounceTicks = 0;
-static uint32_t s_stalledKineticTicks = 0;
-static int32_t s_stallWindowStartTicks[4] = {0, 0, 0, 0};
-static bool s_stallWindowInitialized = false;
 
-enum ChassisManeuverType {
-    MANEUVER_IDLE = 0,
-    MANEUVER_TRANSLATION_OR_ARC = 1,
-    MANEUVER_PURE_SPIN = 2
-};
-static ChassisManeuverType s_prevManeuverType = MANEUVER_IDLE;
 
-// ── Candidate A Opposite-Yaw Twitch Characterization Harness ──
-enum SpinRecoveryState {
-    SPIN_RECOVERY_IDLE = 0,
-    SPIN_RECOVERY_MONITORING_INITIAL,
-    SPIN_RECOVERY_SETTLE_1,
-    SPIN_RECOVERY_TWITCH_PULSE,
-    SPIN_RECOVERY_SETTLE_2,
-    SPIN_RECOVERY_RETRY
-};
 
-static SpinRecoveryState s_spinRecoveryState = SPIN_RECOVERY_IDLE;
-static uint32_t s_spinStartTimeMs = 0;
-static uint32_t s_spinStateEnteredMs = 0;
-static int32_t s_spinStartTicks[4] = {0, 0, 0, 0};
-static int32_t s_twitchStartTicks[4] = {0, 0, 0, 0};
-static float s_requestedAngular = 0.0f;
-static bool s_candidateAConsumedForEpisode = false;
-static bool s_chassisRebreakoutConsumedForEpisode = false;
-static uint8_t s_spinBreakoutSustainedTicks = 0;
 
-static void updateSpinRecoveryHarness(const ChassisCommand &activeCmd, float &targetLinear, float &targetAngular, uint32_t nowMs, float dt) {
-    const float ZERO_EPSILON = 0.005f;
-    bool isOperatorPureSpin = (fabs(activeCmd.linearVelocity) <= ZERO_EPSILON) && (fabs(activeCmd.angularVelocity) >= ZERO_EPSILON);
 
-    if (!isOperatorPureSpin) {
-        // Non-spin command resets pure-spin state machine
-        s_spinRecoveryState = SPIN_RECOVERY_IDLE;
-        s_spinBreakoutSustainedTicks = 0;
-        return;
-    }
-
-    // Coordinated Pure-Spin Breakout Qualification:
-    // Requires BOTH:
-    // 1. Sustained IMU yaw rate in the commanded direction (|gz| >= 0.08 rad/s matching cmd sign)
-    // 2. Sustained wheel movement from at least 3 of 4 wheels in the commanded direction (|vel| >= 0.10 rad/s)
-    // 3. Persisting for at least 3 consecutive control cycles (30 ms @ 100 Hz)
-    float cmdSign = (activeCmd.angularVelocity >= 0.0f) ? 1.0f : -1.0f;
-    float gz = imuManager.getData().gz;
-    bool imuRotating = (gz * cmdSign >= 0.08f);
-
-    int movingWheels = 0;
-    for (int i = 0; i < 4; i++) {
-        float v = encoderManager.getVelocity(i);
-        // Left wheels (0, 2) rotate reverse for CCW (+wz), Right wheels (1, 3) rotate forward for CCW (+wz)
-        float expectedSign = (i == 0 || i == 2) ? -cmdSign : cmdSign;
-        if (v * expectedSign >= 0.10f) {
-            movingWheels++;
-        }
-    }
-
-    bool genuineChassisBreakout = (movingWheels >= 3) && imuRotating;
-
-    if (genuineChassisBreakout) {
-        s_spinBreakoutSustainedTicks++;
-        if (s_spinBreakoutSustainedTicks >= 3) { // 30 ms sustained
-            // Coordinated transition of all 4 wheels to STICTION_KINETIC
-            wheelController.transitionAllToKinetic();
-            s_spinRecoveryState = SPIN_RECOVERY_IDLE;
-        }
-    } else {
-        s_spinBreakoutSustainedTicks = 0;
-    }
-
-    switch (s_spinRecoveryState) {
-        case SPIN_RECOVERY_IDLE:
-            if (!s_candidateAConsumedForEpisode) {
-                // Check if all wheels are in STICTION_BOOST
-                bool anyBoost = false;
-                for (int i = 0; i < 4; i++) {
-                    if (wheelController.getController(i).getStictionState() == STICTION_BOOST) {
-                        anyBoost = true;
-                        break;
-                    }
-                }
-                if (anyBoost) {
-                    s_spinRecoveryState = SPIN_RECOVERY_MONITORING_INITIAL;
-                    s_spinStartTimeMs = nowMs;
-                    s_requestedAngular = activeCmd.angularVelocity;
-                    for (int i = 0; i < 4; i++) {
-                        s_spinStartTicks[i] = encoderManager.getTicks(i);
-                    }
-                }
-            }
-            break;
-
-        case SPIN_RECOVERY_MONITORING_INITIAL: {
-            if (genuineChassisBreakout) {
-                s_spinRecoveryState = SPIN_RECOVERY_IDLE;
-                break;
-            }
-
-            // Check for initial pure-spin stall at 350 ms
-            if (nowMs - s_spinStartTimeMs >= 350) {
-                s_spinRecoveryState = SPIN_RECOVERY_SETTLE_1;
-                s_spinStateEnteredMs = nowMs;
-                s_candidateAConsumedForEpisode = true; // Independent latch: does NOT consume chassis rebreakout!
-                wheelController.reset();
-                targetLinear = 0.0f;
-                targetAngular = 0.0f;
-            }
-            break;
-        }
-
-        case SPIN_RECOVERY_SETTLE_1: {
-            targetLinear = 0.0f;
-            targetAngular = 0.0f;
-            if (nowMs - s_spinStateEnteredMs >= 30) {
-                s_spinRecoveryState = SPIN_RECOVERY_TWITCH_PULSE;
-                s_spinStateEnteredMs = nowMs;
-                for (int i = 0; i < 4; i++) {
-                    s_twitchStartTicks[i] = encoderManager.getTicks(i);
-                }
-                wheelController.reset();
-            }
-            break;
-        }
-
-        case SPIN_RECOVERY_TWITCH_PULSE: {
-            float sign_w = (s_requestedAngular >= 0.0f) ? 1.0f : -1.0f;
-            float twitchAngular = -sign_w * MAX_ANGULAR_VELOCITY_RADPS;
-            targetLinear = 0.0f;
-            targetAngular = twitchAngular;
-
-            // Directional wheel travel in opposite-yaw sense
-            int32_t deltaTicks[4];
-            deltaTicks[0] = (int32_t)(-sign_w * (encoderManager.getTicks(0) - s_twitchStartTicks[0]));
-            deltaTicks[1] = (int32_t)( sign_w * (encoderManager.getTicks(1) - s_twitchStartTicks[1]));
-            deltaTicks[2] = (int32_t)(-sign_w * (encoderManager.getTicks(2) - s_twitchStartTicks[2]));
-            deltaTicks[3] = (int32_t)( sign_w * (encoderManager.getTicks(3) - s_twitchStartTicks[3]));
-
-            int validCount = 0;
-            for (int i = 0; i < 4; i++) {
-                if (deltaTicks[i] >= 4) validCount++;
-            }
-
-            int32_t sorted[4] = {deltaTicks[0], deltaTicks[1], deltaTicks[2], deltaTicks[3]};
-            std::sort(sorted, sorted + 4);
-            float medianTicks = (sorted[1] + sorted[2]) / 2.0f;
-
-            bool dispTargetReached = (medianTicks >= 8.0f) && (validCount >= 3);
-            bool gyroTriggered     = (fabs(imuManager.getData().gz) >= 0.08f);
-            bool hardTimeout       = (nowMs - s_spinStateEnteredMs >= 50);
-
-            if (dispTargetReached || gyroTriggered || hardTimeout) {
-                s_spinRecoveryState = SPIN_RECOVERY_SETTLE_2;
-                s_spinStateEnteredMs = nowMs;
-                wheelController.reset();
-                targetLinear = 0.0f;
-                targetAngular = 0.0f;
-            }
-            break;
-        }
-
-        case SPIN_RECOVERY_SETTLE_2: {
-            targetLinear = 0.0f;
-            targetAngular = 0.0f;
-            if (nowMs - s_spinStateEnteredMs >= 30) {
-                s_spinRecoveryState = SPIN_RECOVERY_RETRY;
-                wheelController.reset(); // Fresh coordinated spin boost in original direction!
-            }
-            break;
-        }
-
-        case SPIN_RECOVERY_RETRY: {
-            targetLinear = 0.0f;
-            targetAngular = s_requestedAngular;
-            break;
-        }
-    }
-}
-
-static void updateChassisStallSupervisor(const ChassisCommand &activeCmd, bool isArmed, uint32_t nowMs) {
-    const float CMD_LINEAR_EPSILON = 0.005f;
-    const float CMD_ANGULAR_EPSILON = 0.005f;
-
-    bool isCmdZero = (fabs(activeCmd.linearVelocity) < CMD_LINEAR_EPSILON) && 
-                     (fabs(activeCmd.angularVelocity) < CMD_ANGULAR_EPSILON);
-
-    // 1. Episode tracking & debounce
-    if (!isArmed) {
-        // Disarm resets both episode latches immediately (0 ms)
-        s_candidateAConsumedForEpisode = false;
-        s_chassisRebreakoutConsumedForEpisode = false;
-        s_zeroDebounceTicks = 0;
-        s_stalledKineticTicks = 0;
-        s_stallWindowInitialized = false;
-        s_prevManeuverType = MANEUVER_IDLE;
-    } else if (isCmdZero) {
-        s_zeroDebounceTicks++;
-        if (s_zeroDebounceTicks >= 5) { // 50 ms @ 100 Hz
-            s_candidateAConsumedForEpisode = false;
-            s_chassisRebreakoutConsumedForEpisode = false;
-            s_stalledKineticTicks = 0;
-            s_stallWindowInitialized = false;
-            s_prevManeuverType = MANEUVER_IDLE;
-        }
-    } else {
-        s_zeroDebounceTicks = 0;
-    }
-
-    // 2. Maneuver classification
-    ChassisManeuverType currentManeuver = MANEUVER_IDLE;
-    if (isArmed && !isCmdZero) {
-        if (fabs(activeCmd.linearVelocity) <= CMD_LINEAR_EPSILON && fabs(activeCmd.angularVelocity) >= CMD_ANGULAR_EPSILON) {
-            currentManeuver = MANEUVER_PURE_SPIN;
-        } else {
-            currentManeuver = MANEUVER_TRANSLATION_OR_ARC;
-        }
-    }
-
-    // 3. Stalled Arc -> Pure Spin Transition
-    if (isArmed && currentManeuver == MANEUVER_PURE_SPIN && s_prevManeuverType == MANEUVER_TRANSLATION_OR_ARC) {
-        int stationaryWheels = 0;
-        for (int i = 0; i < 4; i++) {
-            if (fabs(encoderManager.getVelocity(i)) < 0.05f) {
-                stationaryWheels++;
-            }
-        }
-        float gz = imuManager.getData().gz;
-        bool isChassisStationary = (stationaryWheels >= 3) && (fabs(gz) < 0.04f);
-
-        if (isChassisStationary && !s_chassisRebreakoutConsumedForEpisode) {
-            wheelController.reset();
-            s_chassisRebreakoutConsumedForEpisode = true;
-            s_stalledKineticTicks = 0;
-            s_stallWindowInitialized = false;
-
-            // Reset Candidate-A harness to monitor fresh pure spin
-            s_spinRecoveryState = SPIN_RECOVERY_IDLE;
-            s_candidateAConsumedForEpisode = false;
-            LOG_SERIAL_PRINTLN("[ChassisSupervisor] Stalled Arc -> Pure Spin: Synchronous 58-PWM reset & re-arm.");
-        }
-    }
-    s_prevManeuverType = currentManeuver;
-
-    // 4. Coordinated Stalled-KINETIC Gate
-    if (isArmed && !isCmdZero && !s_chassisRebreakoutConsumedForEpisode) {
-        bool allKinetic = true;
-        for (int i = 0; i < 4; i++) {
-            if (wheelController.getController(i).getStictionState() != STICTION_KINETIC) {
-                allKinetic = false;
-                break;
-            }
-        }
-
-        int zeroVelCount = 0;
-        for (int i = 0; i < 4; i++) {
-            if (fabs(encoderManager.getVelocity(i)) < 0.05f) {
-                zeroVelCount++;
-            }
-        }
-
-        if (!s_stallWindowInitialized) {
-            for (int i = 0; i < 4; i++) {
-                s_stallWindowStartTicks[i] = encoderManager.getTicks(i);
-            }
-            s_stallWindowInitialized = true;
-        }
-
-        int staticDispCount = 0;
-        for (int i = 0; i < 4; i++) {
-            if (abs(encoderManager.getTicks(i) - s_stallWindowStartTicks[i]) < 3) {
-                staticDispCount++;
-            }
-        }
-
-        float gz = imuManager.getData().gz;
-        bool imuStationary = (fabs(gz) < 0.04f);
-        bool chassisStalled = allKinetic && (zeroVelCount >= 3) && (staticDispCount >= 3) && imuStationary;
-
-        if (chassisStalled) {
-            s_stalledKineticTicks++;
-            if (s_stalledKineticTicks >= 20) { // 200 ms @ 100 Hz
-                wheelController.reset();
-                s_chassisRebreakoutConsumedForEpisode = true;
-                s_stalledKineticTicks = 0;
-                s_stallWindowInitialized = false;
-
-                if (currentManeuver == MANEUVER_PURE_SPIN) {
-                    s_spinRecoveryState = SPIN_RECOVERY_IDLE;
-                    s_candidateAConsumedForEpisode = false;
-                }
-                LOG_SERIAL_PRINTLN("[ChassisSupervisor] Stalled-KINETIC gate tripped (200ms): Synchronous re-breakout armed.");
-            }
-        } else {
-            s_stalledKineticTicks = 0;
-            s_stallWindowInitialized = false;
-        }
-    } else {
-        s_stalledKineticTicks = 0;
-        s_stallWindowInitialized = false;
-    }
-}
 
 void setup() {
   // Capture ESP32 hardware reset reason and increment persistent RTC boot count
@@ -442,6 +141,12 @@ void setup() {
   commandManager.begin();
   motionLimiter.begin();
   wheelController.begin();
+  wheelController.setTimeoutDisarmHook([]() {
+    commandManager.disarmNormalDrive();
+    commandManager.requestSourceChange(SOURCE_NONE, 0.0f, 0.0f);
+    motionLimiter.reset(0.0f, 0.0f);
+    Serial.println("[Safety] Open-loop PWM command expired (>300ms). Disarmed and locked.");
+  });
   safetyManager.begin();
   calManager.begin();
   imuManager.begin(21, 22, 0x4B);
@@ -535,7 +240,7 @@ void runMotionControlLoop() {
   }
 
   // 4b. Run Coordinated Chassis Stalled-KINETIC Recovery Supervisor
-  updateChassisStallSupervisor(activeCmd, commandManager.isNormalDriveArmed(), now);
+  updateChassisStallSupervisor(activeCmd, commandManager.isNormalDriveArmed(), now, wheelController, encoderManager, imuManager);
 
   // 5. Update Motion Limiter (S-curve acceleration profile)
   motionLimiter.update(activeCmd.linearVelocity, activeCmd.angularVelocity, dt);
@@ -544,7 +249,7 @@ void runMotionControlLoop() {
   float targetAngular = motionLimiter.getAngularVelocity();
   
   // Apply Candidate A Characterization Test Harness overrides
-  updateSpinRecoveryHarness(activeCmd, targetLinear, targetAngular, now, dt);
+  updateSpinRecoveryHarness(activeCmd, targetLinear, targetAngular, now, dt, wheelController, encoderManager, imuManager);
   
   // 6. Kinematic Translation: target (v, w) to individual left/right targets (rad/s)
   float leftTargetRadps = 0.0f;
@@ -565,6 +270,11 @@ void runMotionControlLoop() {
   // Pure in-place spin detection: zero linear velocity with active angular velocity
   const float ZERO_VELOCITY_EPSILON = 0.005f;
   bool isSpinManeuver = (abs(targetLinear) <= ZERO_VELOCITY_EPSILON) && (abs(targetAngular) > ZERO_VELOCITY_EPSILON);
+  
+  // Opposing-wheel tight arc detection: wheels commanded in opposite directions (counter-rotating scrub)
+  bool isOpposingManeuver = (leftTargetRadps * rightTargetRadps < -0.001f);
+  // Commanded turning arc: differential speed between tracks creating lateral tire scrub
+  bool isTurningManeuver = !isSpinManeuver && (abs(leftTargetRadps - rightTargetRadps) > 0.01f);
   
   // 7. Route target wheel speeds to controllers with active straight-line synchronization
   static int32_t syncStartTicks[4] = {0, 0, 0, 0};
@@ -595,13 +305,13 @@ void runMotionControlLoop() {
           float target1 = rightTargetRadps - (relTicks[1] - avgTicks) * K_SYNC;
           float target3 = rightTargetRadps - (relTicks[3] - avgTicks) * K_SYNC;
           
-          wheelController.setWheelTarget(0, target0, isSpinManeuver);
-          wheelController.setWheelTarget(1, target1, isSpinManeuver);
-          wheelController.setWheelTarget(2, target2, isSpinManeuver);
-          wheelController.setWheelTarget(3, target3, isSpinManeuver);
+          wheelController.setWheelTarget(0, target0, isSpinManeuver, false, false);
+          wheelController.setWheelTarget(1, target1, isSpinManeuver, false, false);
+          wheelController.setWheelTarget(2, target2, isSpinManeuver, false, false);
+          wheelController.setWheelTarget(3, target3, isSpinManeuver, false, false);
       } else {
           wasGoingStraight = false;
-          wheelController.setTargets(leftTargetRadps, rightTargetRadps, isSpinManeuver);
+          wheelController.setTargets(leftTargetRadps, rightTargetRadps, isSpinManeuver, isOpposingManeuver, isTurningManeuver);
       }
   }
   
@@ -620,7 +330,7 @@ void runMotionControlLoop() {
   // Run closed-loop PID, dynamic stiction state machine, and driver output update
   uint32_t nowMs = millis();
   bool encodersFresh = encoderManager.isEncoderDataFresh(nowMs, 200);
-  wheelController.update(measuredVels, rawTicks, dt, motorDriver, isSpinManeuver, isGoingStraight, encodersFresh);
+  wheelController.update(measuredVels, rawTicks, dt, motorDriver, isSpinManeuver, isGoingStraight, encodersFresh, nowMs);
 
   // Dynamic Brake Pulse & Actuation State Machine
   enum class BrakePulseState {
@@ -633,50 +343,57 @@ void runMotionControlLoop() {
   static float lastActiveAngSpeed = 0.0f;
   static float lastActiveLinSpeed = 0.0f;
 
-  bool isTargetZero = (abs(targetLinear) < 0.005f) && (abs(targetAngular) < 0.005f);
-  bool isCommandZero = (abs(activeCmd.linearVelocity) < 0.005f) && (abs(activeCmd.angularVelocity) < 0.005f);
-
-  if (!isTargetZero && !isCommandZero) {
-    // Active motion: release brake pulse if one was active, record speeds, and set driving state
-    if (brakePulseState == BrakePulseState::BRAKING) {
-      motorDriver.coastAll();
-    }
+  if (wheelController.isOpenLoop()) {
+    // Open-loop PWM session active: arbitrate away from dynamic braking and preserve motor PWMs
     brakePulseState = BrakePulseState::DRIVING;
-    lastActiveAngSpeed = abs(targetAngular);
-    lastActiveLinSpeed = abs(targetLinear);
+    lastActiveAngSpeed = 0.0f;
+    lastActiveLinSpeed = 0.0f;
   } else {
-    // Target is zero (stopping or settled)
-    if (DYNAMIC_BRAKE_ENABLED && commandManager.isNormalDriveArmed() && motorDriver.getMode() == MotorOutputMode::NORMAL_DRIVE) {
-      if (brakePulseState == BrakePulseState::DRIVING) {
-        // Transition to stop: verify eligibility based on configured max trigger speeds (rad/s and m/s)
-        bool eligibleForBrake = (lastActiveAngSpeed <= DYNAMIC_BRAKE_MAX_TRIGGER_RADPS) && (lastActiveLinSpeed <= DYNAMIC_BRAKE_MAX_TRIGGER_MPS);
-        if (eligibleForBrake) {
-          brakePulseState = BrakePulseState::BRAKING;
-          brakePulseStartMs = nowMs;
-          motorDriver.brakeAll();
-          wheelController.reset();
-        } else {
-          brakePulseState = BrakePulseState::COASTING;
-          motorDriver.coastAll();
-          wheelController.reset();
-        }
-      } else if (brakePulseState == BrakePulseState::BRAKING) {
-        // Bounded non-blocking duration check
-        if (nowMs - brakePulseStartMs >= DYNAMIC_BRAKE_DURATION_MS) {
-          brakePulseState = BrakePulseState::COASTING;
-          motorDriver.coastAll();
-          wheelController.reset();
-        } else {
-          motorDriver.brakeAll();
-        }
-      } else {
-        // Settled coast: lock in coast, repeated zeros do NOT restart pulse
+    bool isTargetZero = (abs(targetLinear) < 0.005f) && (abs(targetAngular) < 0.005f);
+    bool isCommandZero = (abs(activeCmd.linearVelocity) < 0.005f) && (abs(activeCmd.angularVelocity) < 0.005f);
+
+    if (!isTargetZero && !isCommandZero) {
+      // Active motion: release brake pulse if one was active, record speeds, and set driving state
+      if (brakePulseState == BrakePulseState::BRAKING) {
         motorDriver.coastAll();
       }
+      brakePulseState = BrakePulseState::DRIVING;
+      lastActiveAngSpeed = abs(targetAngular);
+      lastActiveLinSpeed = abs(targetLinear);
     } else {
-      brakePulseState = BrakePulseState::COASTING;
-      if (isTargetZero) {
-        motorDriver.coastAll();
+      // Target is zero (stopping or settled)
+      if (DYNAMIC_BRAKE_ENABLED && commandManager.isNormalDriveArmed() && motorDriver.getMode() == MotorOutputMode::NORMAL_DRIVE) {
+        if (brakePulseState == BrakePulseState::DRIVING) {
+          // Transition to stop: verify eligibility based on configured max trigger speeds (rad/s and m/s)
+          bool eligibleForBrake = (lastActiveAngSpeed <= DYNAMIC_BRAKE_MAX_TRIGGER_RADPS) && (lastActiveLinSpeed <= DYNAMIC_BRAKE_MAX_TRIGGER_MPS);
+          if (eligibleForBrake) {
+            brakePulseState = BrakePulseState::BRAKING;
+            brakePulseStartMs = nowMs;
+            motorDriver.brakeAll();
+            wheelController.reset();
+          } else {
+            brakePulseState = BrakePulseState::COASTING;
+            motorDriver.coastAll();
+            wheelController.reset();
+          }
+        } else if (brakePulseState == BrakePulseState::BRAKING) {
+          // Bounded non-blocking duration check
+          if (nowMs - brakePulseStartMs >= DYNAMIC_BRAKE_DURATION_MS) {
+            brakePulseState = BrakePulseState::COASTING;
+            motorDriver.coastAll();
+            wheelController.reset();
+          } else {
+            motorDriver.brakeAll();
+          }
+        } else {
+          // Settled coast: lock in coast, repeated zeros do NOT restart pulse
+          motorDriver.coastAll();
+        }
+      } else {
+        brakePulseState = BrakePulseState::COASTING;
+        if (isTargetZero) {
+          motorDriver.coastAll();
+        }
       }
     }
   }
@@ -844,6 +561,12 @@ void loop() {
     
     // Broadcast bulk telemetry to Serial Port
     serialProtocol.sendTelemetry(ticks, 0.0f, angularVel, calManager, maintenanceManager, loopStats, safetyManager.getFaults());
+  }
+
+  // Section 5b: Interleaved 10 Hz PID & Wheel Telemetry (offset by >=20ms to prevent UART TX buffer congestion)
+  static unsigned long lastPidTelemetryTime = 0;
+  if (now - lastPidTelemetryTime >= 100 && (now - lastTelemetryTime >= 20)) {
+    lastPidTelemetryTime = now;
     uint8_t cfgFlags = (WHEEL_BALANCE_ENABLED ? 0x01 : 0x00) | (DYNAMIC_BRAKE_ENABLED ? 0x02 : 0x00);
     serialProtocol.sendPidTelemetry(wheelController, YawOuterLoopDiag(), (uint8_t)motorDriver.getActuationState(), cfgFlags);
   }

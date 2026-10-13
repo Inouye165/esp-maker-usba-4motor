@@ -52,15 +52,18 @@ float SCurveLimiter::update(float targetVel, float dt) {
     currentAcc = constrain(currentAcc, -accLimit, accLimit);
     
     // 7. Integrate acceleration to get velocity
+    float prevVel = currentVel;
     currentVel += currentAcc * dt;
     
-    // 8. Prevent overshoot and handle zero-clamping
-    if (target >= 0.0f) {
+    // 8. Prevent overshoot and handle zero-clamping symmetrically
+    if (target >= prevVel) {
+        // Accelerating or moving upwards towards target: overshoot is exceeding target
         if (currentVel > target) {
             currentVel = target;
             currentAcc = 0.0f;
         }
     } else {
+        // Decelerating or moving downwards towards target: overshoot is dropping below target
         if (currentVel < target) {
             currentVel = target;
             currentAcc = 0.0f;

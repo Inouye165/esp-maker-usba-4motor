@@ -1,0 +1,75 @@
+# ===================================================================
+# Concise Firmware Candidate Source Diff
+# Baseline: 1.3.2-olp-safe (staging_open_loop_safety_review)
+# Candidate: 1.3.3-cand-r41c (rev41-floor-c)
+# Scope: Direction-Aware Piecewise Ultra-Low Reverse Crawl Correction
+# ===================================================================
+diff --git a/staging_open_loop_safety_review/updated_source/RoverConfig.h b/src/RoverConfig.h
+index 39d8f35..6942a0e 100644
+--- a/staging_open_loop_safety_review/updated_source/RoverConfig.h
++++ b/src/RoverConfig.h
+@@ -102,7 +102,11 @@ const float RECOVERY_ASSIST_RAMP_RATE_PWPS = 40.0f;  // Rate of recovery torque
+ const float RECOVERY_ASSIST_DECAY_RATE_PWPS = 30.0f; // Rate of recovery torque decay post-breakout (30 PWM/s)
+ const float RECOVERY_ASSIST_MAX_PWM = 14.0f;         // Maximum recovery assist authority cap (14 PWM)
+ const float ULTRA_LOW_SPEED_SCOPE_RADPS = 0.80f;     // Speed threshold below which ultra-low speed straight crawl adjustments apply
+-const float ULTRA_LOW_SPEED_MIN_FF_FLOOR = 37.0f;    // Scaled minimum kinetic feedforward floor at zero target for ultra-low crawl (delivers 48.0 PWM at Case 2)
++const float ULTRA_LOW_SPEED_MIN_FF_FLOOR_FWD = 37.0f;// Forward crawl zero-speed intercept (delivers 48.0 PWM at Case 2 +0.461538 rad/s)
++const float ULTRA_LOW_SPEED_REVERSE_CRAWL_FLOOR_PWM = 41.0f; // Piecewise flat reverse feedforward floor for |target| in [0.01, 0.461538] rad/s
++const float ULTRA_LOW_SPEED_REVERSE_ANCHOR_RADPS = 0.461538f; // Reverse Case 13 setpoint boundary (v_x = -0.015 m/s, r = 0.0325 m)
++// Backward compatibility alias for legacy test runners referencing the previous single forward floor:
++const float ULTRA_LOW_SPEED_MIN_FF_FLOOR = ULTRA_LOW_SPEED_MIN_FF_FLOOR_FWD;
+ const int SPIN_STICTION_BOOST_PWM = 102;           // Empirically validated pure-spin startup breakout PWM (102 PWM)
+ const uint16_t SPIN_BREAKOUT_MIN_CYCLES = 10;      // Minimum breakout dwell duration: 100 ms @ 100 Hz (10 control cycles)
+ const uint16_t SPIN_BREAKOUT_MAX_CYCLES = 20;      // Hard max breakout boost duration: 200 ms @ 100 Hz (20 control cycles)
+
+diff --git a/staging_open_loop_safety_review/updated_source/WheelController.cpp b/src/WheelController.cpp
+index 5dbd5a6..98b9ad0 100644
+--- a/staging_open_loop_safety_review/updated_source/WheelController.cpp
++++ b/src/WheelController.cpp
+@@ -460,10 +460,25 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
+         } else {
+             // Ordinary straight forward/reverse driving uses dedicated kinetic floor.
+             if (ultraLowSpeedMode == ULTRA_LOW_MODE_GAINS_AND_FF && abs(targetVel) < ULTRA_LOW_SPEED_SCOPE_RADPS) {
+-                // Scaled feedforward floor below 0.80 rad/s (Case 10/11/12 retain full 56.0 PWM):
+-                // Linearly scales from 46.0 PWM at zero speed up to 56.0 PWM at 0.80 rad/s.
+-                // At 0.45 rad/s (Case 2), minFfFloor = 46.0 + (0.45/0.80)*10.0 = 51.6 PWM.
+-                minFfFloor = ULTRA_LOW_SPEED_MIN_FF_FLOOR + (abs(targetVel) / ULTRA_LOW_SPEED_SCOPE_RADPS) * (STRAIGHT_KINETIC_FF_FLOOR - ULTRA_LOW_SPEED_MIN_FF_FLOOR);
++                if (targetVel >= 0.0f) {
++                    // Forward straight ultra-low crawl (unchanged): linearly scales from ULTRA_LOW_SPEED_MIN_FF_FLOOR_FWD (37.0)
++                    // up to STRAIGHT_KINETIC_FF_FLOOR (56.0) at 0.80 rad/s, delivering 48.0 PWM at Case 2 (+0.461538 rad/s).
++                    minFfFloor = ULTRA_LOW_SPEED_MIN_FF_FLOOR_FWD + (targetVel / ULTRA_LOW_SPEED_SCOPE_RADPS) * (STRAIGHT_KINETIC_FF_FLOOR - ULTRA_LOW_SPEED_MIN_FF_FLOOR_FWD);
++                } else {
++                    // Reverse straight ultra-low crawl piecewise floor:
++                    // 1. For |targetVel| in [0.01, 0.461538] rad/s: constant 41.0 PWM floor.
++                    //    Prevents sub-sustaining feedforward (22-38 PWM) at low speeds that would stall and cycle.
++                    // 2. For |targetVel| in (0.461538, 0.80) rad/s: continuous linear interpolation from 41.0 PWM to 56.0 PWM.
++                    float absTarget = abs(targetVel);
++                    if (absTarget <= ULTRA_LOW_SPEED_REVERSE_ANCHOR_RADPS) {
++                        minFfFloor = ULTRA_LOW_SPEED_REVERSE_CRAWL_FLOOR_PWM;
++                    } else {
++                        minFfFloor = ULTRA_LOW_SPEED_REVERSE_CRAWL_FLOOR_PWM +
++                            ((absTarget - ULTRA_LOW_SPEED_REVERSE_ANCHOR_RADPS) /
++                             (ULTRA_LOW_SPEED_SCOPE_RADPS - ULTRA_LOW_SPEED_REVERSE_ANCHOR_RADPS)) *
++                            (STRAIGHT_KINETIC_FF_FLOOR - ULTRA_LOW_SPEED_REVERSE_CRAWL_FLOOR_PWM);
++                    }
++                }
+             } else {
+                 minFfFloor = STRAIGHT_KINETIC_FF_FLOOR;
+             }
+
+diff --git a/staging_open_loop_safety_review/updated_source/SerialProtocol.cpp b/src/SerialProtocol.cpp
+index 7cb5e4a..b97c790 100644
+--- a/staging_open_loop_safety_review/updated_source/SerialProtocol.cpp
++++ b/src/SerialProtocol.cpp
+@@ -820,9 +820,9 @@ void SerialProtocol::sendFirmwareInfo() {
+     memset(data, 0, sizeof(data));
+     
+     strncpy((char*)&data[0],  "Maker-ESP32-Unified-Rover", 32);
+-    strncpy((char*)&data[32], "1.3.2-olp-safe", 16);
++    strncpy((char*)&data[32], "1.3.3-cand-r41c", 16);
+     strncpy((char*)&data[48], "v1.1", 8);
+-    strncpy((char*)&data[56], "olp-safe-case2", 16);
++    strncpy((char*)&data[56], "rev41-floor-c", 16);
+     strncpy((char*)&data[72], __DATE__ " " __TIME__, 24);
+     strncpy((char*)&data[96], "Maker-ESP32-Pro", 16);
+     

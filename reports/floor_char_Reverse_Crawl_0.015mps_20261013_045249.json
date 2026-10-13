@@ -1,0 +1,6823 @@
+{
+  "name": "Reverse_Crawl_0.015mps",
+  "segments": [
+    [
+      -0.015,
+      0.0,
+      1.8
+    ]
+  ],
+  "geometry": {
+    "wheel_diameter_m": 0.065,
+    "wheel_radius_m": 0.0325,
+    "effective_track_width_m": 0.3408575433,
+    "ticks_per_rev": 1974.1666666667,
+    "meters_per_tick": 0.00010343783325453767
+  },
+  "samples": [
+    {
+      "t_rel": 0.0095,
+      "dt_s": 0.0095,
+      "receipt_mono": 2943.023939643,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": 0.0,
+      "disp_accum_m": 0.0,
+      "yaw_net_deg": 0.01,
+      "yaw_accum_deg": 0.01,
+      "gyro_z": 0.002,
+      "ticks": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "delta_ticks": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "raw_ticks": {
+        "m1": -203,
+        "m2": -202,
+        "m3": -210,
+        "m4": -205
+      },
+      "measured_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "measured_mps": {
+        "m1": 0.0,
+        "m2": 0.0,
+        "m3": 0.0,
+        "m4": 0.0
+      },
+      "signed_chassis_mps": 0.0,
+      "mean_abs_wheel_speed_mps": 0.0,
+      "measured_chassis_mps": 0.0,
+      "target_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pwm": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m4": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        }
+      },
+      "stiction": {
+        "m1": "IDLE",
+        "m2": "IDLE",
+        "m3": "IDLE",
+        "m4": "IDLE"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.023939643,
+        "drive_rx": 1791892367097,
+        "pid": 1791892367061,
+        "pid_data_age_ms": 42,
+        "encoders": 1791892367104,
+        "imu": 1791892367104
+      },
+      "sequences": {
+        "drive": 24580,
+        "pid": 12290,
+        "encoders": 49160,
+        "imu": 61886
+      }
+    },
+    {
+      "t_rel": 0.0603,
+      "dt_s": 0.0507,
+      "receipt_mono": 2943.07466674,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": 0.0,
+      "disp_accum_m": 0.0,
+      "yaw_net_deg": 0.02,
+      "yaw_accum_deg": 0.02,
+      "gyro_z": 0.0078,
+      "ticks": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "delta_ticks": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "raw_ticks": {
+        "m1": -203,
+        "m2": -202,
+        "m3": -210,
+        "m4": -205
+      },
+      "measured_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "measured_mps": {
+        "m1": 0.0,
+        "m2": 0.0,
+        "m3": 0.0,
+        "m4": 0.0
+      },
+      "signed_chassis_mps": 0.0,
+      "mean_abs_wheel_speed_mps": 0.0,
+      "measured_chassis_mps": 0.0,
+      "target_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pwm": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m4": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        }
+      },
+      "stiction": {
+        "m1": "IDLE",
+        "m2": "IDLE",
+        "m3": "IDLE",
+        "m4": "IDLE"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.07466674,
+        "drive_rx": 1791892367144,
+        "pid": 1791892367061,
+        "pid_data_age_ms": 93,
+        "encoders": 1791892367151,
+        "imu": 1791892367151
+      },
+      "sequences": {
+        "drive": 24581,
+        "pid": 12290,
+        "encoders": 49162,
+        "imu": 61888
+      }
+    },
+    {
+      "t_rel": 0.1086,
+      "dt_s": 0.0484,
+      "receipt_mono": 2943.123043541,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0007,
+      "disp_accum_m": 0.0009,
+      "yaw_net_deg": 0.01,
+      "yaw_accum_deg": 0.06,
+      "gyro_z": 0.0215,
+      "ticks": {
+        "m1": -6,
+        "m2": -9,
+        "m3": -6,
+        "m4": -8
+      },
+      "delta_ticks": {
+        "m1": -6,
+        "m2": -9,
+        "m3": -6,
+        "m4": -8
+      },
+      "raw_ticks": {
+        "m1": -209,
+        "m2": -211,
+        "m3": -216,
+        "m4": -213
+      },
+      "measured_radps": {
+        "m1": -0.2,
+        "m2": -0.16,
+        "m3": -0.1,
+        "m4": -0.2
+      },
+      "measured_mps": {
+        "m1": -0.0065,
+        "m2": -0.0052,
+        "m3": -0.0033,
+        "m4": -0.0065
+      },
+      "signed_chassis_mps": -0.0054,
+      "mean_abs_wheel_speed_mps": 0.0054,
+      "measured_chassis_mps": 0.0054,
+      "target_radps": {
+        "m1": -0.46,
+        "m2": -0.46,
+        "m3": -0.46,
+        "m4": -0.46
+      },
+      "pwm": {
+        "m1": -64,
+        "m2": -64,
+        "m3": -64,
+        "m4": -64
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -64,
+          "basePwm": -64,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -64
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -64,
+          "basePwm": -64,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -64
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -64,
+          "basePwm": -64,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -64
+        },
+        "m4": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -64,
+          "basePwm": -64,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -64
+        }
+      },
+      "stiction": {
+        "m1": "STICTION_BOOST",
+        "m2": "STICTION_BOOST",
+        "m3": "STICTION_BOOST",
+        "m4": "STICTION_BOOST"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.123043541,
+        "drive_rx": 1791892367196,
+        "pid": 1791892367162,
+        "pid_data_age_ms": 41,
+        "encoders": 1791892367196,
+        "imu": 1791892367184
+      },
+      "sequences": {
+        "drive": 24582,
+        "pid": 12291,
+        "encoders": 49164,
+        "imu": 61890
+      }
+    },
+    {
+      "t_rel": 0.1615,
+      "dt_s": 0.0529,
+      "receipt_mono": 2943.175905285,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0015,
+      "disp_accum_m": 0.002,
+      "yaw_net_deg": 0.04,
+      "yaw_accum_deg": 0.12,
+      "gyro_z": -0.0215,
+      "ticks": {
+        "m1": -10,
+        "m2": -18,
+        "m3": -12,
+        "m4": -19
+      },
+      "delta_ticks": {
+        "m1": -4,
+        "m2": -9,
+        "m3": -6,
+        "m4": -11
+      },
+      "raw_ticks": {
+        "m1": -213,
+        "m2": -220,
+        "m3": -222,
+        "m4": -224
+      },
+      "measured_radps": {
+        "m1": -0.2,
+        "m2": -0.16,
+        "m3": -0.1,
+        "m4": -0.2
+      },
+      "measured_mps": {
+        "m1": -0.0065,
+        "m2": -0.0052,
+        "m3": -0.0033,
+        "m4": -0.0065
+      },
+      "signed_chassis_mps": -0.0054,
+      "mean_abs_wheel_speed_mps": 0.0054,
+      "measured_chassis_mps": 0.0054,
+      "target_radps": {
+        "m1": -0.46,
+        "m2": -0.46,
+        "m3": -0.46,
+        "m4": -0.46
+      },
+      "pwm": {
+        "m1": -64,
+        "m2": -64,
+        "m3": -64,
+        "m4": -64
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -64,
+          "basePwm": -64,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -64
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -64,
+          "basePwm": -64,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -64
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -64,
+          "basePwm": -64,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -64
+        },
+        "m4": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -64,
+          "basePwm": -64,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -64
+        }
+      },
+      "stiction": {
+        "m1": "STICTION_BOOST",
+        "m2": "STICTION_BOOST",
+        "m3": "STICTION_BOOST",
+        "m4": "STICTION_BOOST"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.175905285,
+        "drive_rx": 1791892367246,
+        "pid": 1791892367162,
+        "pid_data_age_ms": 93,
+        "encoders": 1791892367253,
+        "imu": 1791892367253
+      },
+      "sequences": {
+        "drive": 24583,
+        "pid": 12291,
+        "encoders": 49166,
+        "imu": 61893
+      }
+    },
+    {
+      "t_rel": 0.2091,
+      "dt_s": 0.0476,
+      "receipt_mono": 2943.223493068,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0024,
+      "disp_accum_m": 0.0027,
+      "yaw_net_deg": 0.01,
+      "yaw_accum_deg": 0.15,
+      "gyro_z": 0.0508,
+      "ticks": {
+        "m1": -21,
+        "m2": -25,
+        "m3": -20,
+        "m4": -26
+      },
+      "delta_ticks": {
+        "m1": -11,
+        "m2": -7,
+        "m3": -8,
+        "m4": -7
+      },
+      "raw_ticks": {
+        "m1": -224,
+        "m2": -227,
+        "m3": -230,
+        "m4": -231
+      },
+      "measured_radps": {
+        "m1": -0.52,
+        "m2": -0.45,
+        "m3": -0.31,
+        "m4": -0.6
+      },
+      "measured_mps": {
+        "m1": -0.0169,
+        "m2": -0.0146,
+        "m3": -0.0101,
+        "m4": -0.0195
+      },
+      "signed_chassis_mps": -0.0153,
+      "mean_abs_wheel_speed_mps": 0.0153,
+      "measured_chassis_mps": 0.0153,
+      "target_radps": {
+        "m1": -0.48,
+        "m2": -0.45,
+        "m3": -0.48,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -41,
+        "m3": -43,
+        "m4": -41
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0,
+          "iTerm": -0.1,
+          "dTerm": 0.5,
+          "feedforward": -41.8,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": -0.2,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m3": {
+          "pTerm": -0.3,
+          "iTerm": 0,
+          "dTerm": -0.9,
+          "feedforward": -41.8,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m4": {
+          "pTerm": 0.3,
+          "iTerm": 0.1,
+          "dTerm": -0.7,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.223493068,
+        "drive_rx": 1791892367296,
+        "pid": 1791892367263,
+        "pid_data_age_ms": 40,
+        "encoders": 1791892367304,
+        "imu": 1791892367304
+      },
+      "sequences": {
+        "drive": 24584,
+        "pid": 12292,
+        "encoders": 49168,
+        "imu": 61896
+      }
+    },
+    {
+      "t_rel": 0.2638,
+      "dt_s": 0.0547,
+      "receipt_mono": 2943.278235127,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.003,
+      "disp_accum_m": 0.0033,
+      "yaw_net_deg": 0.01,
+      "yaw_accum_deg": 0.17,
+      "gyro_z": 0.0078,
+      "ticks": {
+        "m1": -27,
+        "m2": -31,
+        "m3": -27,
+        "m4": -32
+      },
+      "delta_ticks": {
+        "m1": -6,
+        "m2": -6,
+        "m3": -7,
+        "m4": -6
+      },
+      "raw_ticks": {
+        "m1": -230,
+        "m2": -233,
+        "m3": -237,
+        "m4": -237
+      },
+      "measured_radps": {
+        "m1": -0.52,
+        "m2": -0.45,
+        "m3": -0.31,
+        "m4": -0.6
+      },
+      "measured_mps": {
+        "m1": -0.0169,
+        "m2": -0.0146,
+        "m3": -0.0101,
+        "m4": -0.0195
+      },
+      "signed_chassis_mps": -0.0153,
+      "mean_abs_wheel_speed_mps": 0.0153,
+      "measured_chassis_mps": 0.0153,
+      "target_radps": {
+        "m1": -0.48,
+        "m2": -0.45,
+        "m3": -0.48,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -41,
+        "m3": -43,
+        "m4": -41
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0,
+          "iTerm": -0.1,
+          "dTerm": 0.5,
+          "feedforward": -41.8,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": -0.2,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m3": {
+          "pTerm": -0.3,
+          "iTerm": 0,
+          "dTerm": -0.9,
+          "feedforward": -41.8,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m4": {
+          "pTerm": 0.3,
+          "iTerm": 0.1,
+          "dTerm": -0.7,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.278235127,
+        "drive_rx": 1791892367346,
+        "pid": 1791892367263,
+        "pid_data_age_ms": 94,
+        "encoders": 1791892367352,
+        "imu": 1791892367352
+      },
+      "sequences": {
+        "drive": 24585,
+        "pid": 12292,
+        "encoders": 49170,
+        "imu": 61898
+      }
+    },
+    {
+      "t_rel": 0.3102,
+      "dt_s": 0.0464,
+      "receipt_mono": 2943.324613429,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0035,
+      "disp_accum_m": 0.004,
+      "yaw_net_deg": 0.03,
+      "yaw_accum_deg": 0.21,
+      "gyro_z": 0.0332,
+      "ticks": {
+        "m1": -32,
+        "m2": -35,
+        "m3": -29,
+        "m4": -39
+      },
+      "delta_ticks": {
+        "m1": -5,
+        "m2": -4,
+        "m3": -2,
+        "m4": -7
+      },
+      "raw_ticks": {
+        "m1": -235,
+        "m2": -237,
+        "m3": -239,
+        "m4": -244
+      },
+      "measured_radps": {
+        "m1": -0.22,
+        "m2": -0.38,
+        "m3": -0.23,
+        "m4": -0.53
+      },
+      "measured_mps": {
+        "m1": -0.0072,
+        "m2": -0.0123,
+        "m3": -0.0075,
+        "m4": -0.0172
+      },
+      "signed_chassis_mps": -0.011,
+      "mean_abs_wheel_speed_mps": 0.011,
+      "measured_chassis_mps": 0.011,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.45,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -43,
+        "m2": -41,
+        "m3": -43,
+        "m4": -40
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": -0.5,
+          "iTerm": 0,
+          "dTerm": -0.7,
+          "feedforward": -41.7,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m2": {
+          "pTerm": -0.1,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m3": {
+          "pTerm": -0.5,
+          "iTerm": 0,
+          "dTerm": -0.7,
+          "feedforward": -41.7,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m4": {
+          "pTerm": 0.2,
+          "iTerm": 0,
+          "dTerm": 0.5,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.324613429,
+        "drive_rx": 1791892367396,
+        "pid": 1791892367365,
+        "pid_data_age_ms": 38,
+        "encoders": 1791892367404,
+        "imu": 1791892367404
+      },
+      "sequences": {
+        "drive": 24586,
+        "pid": 12293,
+        "encoders": 49172,
+        "imu": 61901
+      }
+    },
+    {
+      "t_rel": 0.3617,
+      "dt_s": 0.0515,
+      "receipt_mono": 2943.376066396,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.004,
+      "disp_accum_m": 0.0044,
+      "yaw_net_deg": 0.03,
+      "yaw_accum_deg": 0.21,
+      "gyro_z": -0.0039,
+      "ticks": {
+        "m1": -35,
+        "m2": -40,
+        "m3": -36,
+        "m4": -43
+      },
+      "delta_ticks": {
+        "m1": -3,
+        "m2": -5,
+        "m3": -7,
+        "m4": -4
+      },
+      "raw_ticks": {
+        "m1": -238,
+        "m2": -242,
+        "m3": -246,
+        "m4": -248
+      },
+      "measured_radps": {
+        "m1": -0.22,
+        "m2": -0.38,
+        "m3": -0.23,
+        "m4": -0.53
+      },
+      "measured_mps": {
+        "m1": -0.0072,
+        "m2": -0.0123,
+        "m3": -0.0075,
+        "m4": -0.0172
+      },
+      "signed_chassis_mps": -0.011,
+      "mean_abs_wheel_speed_mps": 0.011,
+      "measured_chassis_mps": 0.011,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.45,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -43,
+        "m2": -41,
+        "m3": -43,
+        "m4": -40
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": -0.5,
+          "iTerm": 0,
+          "dTerm": -0.7,
+          "feedforward": -41.7,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m2": {
+          "pTerm": -0.1,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m3": {
+          "pTerm": -0.5,
+          "iTerm": 0,
+          "dTerm": -0.7,
+          "feedforward": -41.7,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m4": {
+          "pTerm": 0.2,
+          "iTerm": 0,
+          "dTerm": 0.5,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.376066396,
+        "drive_rx": 1791892367447,
+        "pid": 1791892367365,
+        "pid_data_age_ms": 89,
+        "encoders": 1791892367453,
+        "imu": 1791892367453
+      },
+      "sequences": {
+        "drive": 24587,
+        "pid": 12293,
+        "encoders": 49174,
+        "imu": 61903
+      }
+    },
+    {
+      "t_rel": 0.4101,
+      "dt_s": 0.0485,
+      "receipt_mono": 2943.42456003,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0044,
+      "disp_accum_m": 0.0048,
+      "yaw_net_deg": 0.0,
+      "yaw_accum_deg": 0.24,
+      "gyro_z": -0.0059,
+      "ticks": {
+        "m1": -38,
+        "m2": -44,
+        "m3": -41,
+        "m4": -46
+      },
+      "delta_ticks": {
+        "m1": -3,
+        "m2": -4,
+        "m3": -5,
+        "m4": -3
+      },
+      "raw_ticks": {
+        "m1": -241,
+        "m2": -246,
+        "m3": -251,
+        "m4": -251
+      },
+      "measured_radps": {
+        "m1": -0.13,
+        "m2": -0.2,
+        "m3": -0.43,
+        "m4": -0.36
+      },
+      "measured_mps": {
+        "m1": -0.0042,
+        "m2": -0.0065,
+        "m3": -0.014,
+        "m4": -0.0117
+      },
+      "signed_chassis_mps": -0.0091,
+      "mean_abs_wheel_speed_mps": 0.0091,
+      "measured_chassis_mps": 0.0091,
+      "target_radps": {
+        "m1": -0.48,
+        "m2": -0.45,
+        "m3": -0.46,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -43,
+        "m2": -42,
+        "m3": -42,
+        "m4": -41
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": -0.7,
+          "iTerm": -0.2,
+          "dTerm": -0.3,
+          "feedforward": -41.9,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m2": {
+          "pTerm": -0.5,
+          "iTerm": -0.1,
+          "dTerm": 0.2,
+          "feedforward": -41,
+          "basePwm": -42,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -42
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": -0.1,
+          "dTerm": -0.3,
+          "feedforward": -41.3,
+          "basePwm": -42,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -42
+        },
+        "m4": {
+          "pTerm": -0.1,
+          "iTerm": 0,
+          "dTerm": -0.1,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.42456003,
+        "drive_rx": 1791892367498,
+        "pid": 1791892367465,
+        "pid_data_age_ms": 39,
+        "encoders": 1791892367498,
+        "imu": 1791892367506
+      },
+      "sequences": {
+        "drive": 24588,
+        "pid": 12294,
+        "encoders": 49176,
+        "imu": 61906
+      }
+    },
+    {
+      "t_rel": 0.4625,
+      "dt_s": 0.0523,
+      "receipt_mono": 2943.476874738,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0047,
+      "disp_accum_m": 0.005,
+      "yaw_net_deg": 0.04,
+      "yaw_accum_deg": 0.28,
+      "gyro_z": 0.0234,
+      "ticks": {
+        "m1": -46,
+        "m2": -48,
+        "m3": -42,
+        "m4": -46
+      },
+      "delta_ticks": {
+        "m1": -8,
+        "m2": -4,
+        "m3": -1,
+        "m4": 0
+      },
+      "raw_ticks": {
+        "m1": -249,
+        "m2": -250,
+        "m3": -252,
+        "m4": -251
+      },
+      "measured_radps": {
+        "m1": -0.13,
+        "m2": -0.2,
+        "m3": -0.43,
+        "m4": -0.36
+      },
+      "measured_mps": {
+        "m1": -0.0042,
+        "m2": -0.0065,
+        "m3": -0.014,
+        "m4": -0.0117
+      },
+      "signed_chassis_mps": -0.0091,
+      "mean_abs_wheel_speed_mps": 0.0091,
+      "measured_chassis_mps": 0.0091,
+      "target_radps": {
+        "m1": -0.48,
+        "m2": -0.45,
+        "m3": -0.46,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -43,
+        "m2": -42,
+        "m3": -42,
+        "m4": -41
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": -0.7,
+          "iTerm": -0.2,
+          "dTerm": -0.3,
+          "feedforward": -41.9,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m2": {
+          "pTerm": -0.5,
+          "iTerm": -0.1,
+          "dTerm": 0.2,
+          "feedforward": -41,
+          "basePwm": -42,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -42
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": -0.1,
+          "dTerm": -0.3,
+          "feedforward": -41.3,
+          "basePwm": -42,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -42
+        },
+        "m4": {
+          "pTerm": -0.1,
+          "iTerm": 0,
+          "dTerm": -0.1,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.476874738,
+        "drive_rx": 1791892367547,
+        "pid": 1791892367465,
+        "pid_data_age_ms": 91,
+        "encoders": 1791892367553,
+        "imu": 1791892367553
+      },
+      "sequences": {
+        "drive": 24589,
+        "pid": 12294,
+        "encoders": 49178,
+        "imu": 61908
+      }
+    },
+    {
+      "t_rel": 0.5103,
+      "dt_s": 0.0479,
+      "receipt_mono": 2943.524735428,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0049,
+      "disp_accum_m": 0.0054,
+      "yaw_net_deg": 0.02,
+      "yaw_accum_deg": 0.3,
+      "gyro_z": 0.0059,
+      "ticks": {
+        "m1": -48,
+        "m2": -52,
+        "m3": -42,
+        "m4": -46
+      },
+      "delta_ticks": {
+        "m1": -2,
+        "m2": -4,
+        "m3": 0,
+        "m4": 0
+      },
+      "raw_ticks": {
+        "m1": -251,
+        "m2": -254,
+        "m3": -252,
+        "m4": -251
+      },
+      "measured_radps": {
+        "m1": -0.37,
+        "m2": -0.06,
+        "m3": -0.02,
+        "m4": 0
+      },
+      "measured_mps": {
+        "m1": -0.012,
+        "m2": -0.0019,
+        "m3": -0.0007,
+        "m4": 0.0
+      },
+      "signed_chassis_mps": -0.0037,
+      "mean_abs_wheel_speed_mps": 0.0037,
+      "measured_chassis_mps": 0.0037,
+      "target_radps": {
+        "m1": -0.45,
+        "m2": -0.45,
+        "m3": -0.48,
+        "m4": -0.46
+      },
+      "pwm": {
+        "m1": -42,
+        "m2": -43,
+        "m3": -45,
+        "m4": -45
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": -0.1,
+          "iTerm": -0.9,
+          "dTerm": -0.1,
+          "feedforward": -41,
+          "basePwm": -42,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -42
+        },
+        "m2": {
+          "pTerm": -0.8,
+          "iTerm": -0.2,
+          "dTerm": -0.1,
+          "feedforward": -41,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -0.3,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m3": {
+          "pTerm": -1,
+          "iTerm": -0.2,
+          "dTerm": 0,
+          "feedforward": -41.8,
+          "basePwm": -45,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -1.5,
+          "candidateEnabled": true,
+          "finalPwm": -45
+        },
+        "m4": {
+          "pTerm": -1,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -45,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -2.8,
+          "candidateEnabled": true,
+          "finalPwm": -45
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": -0.3,
+          "m3": -1.5,
+          "m4": -2.8
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.524735428,
+        "drive_rx": 1791892367597,
+        "pid": 1791892367565,
+        "pid_data_age_ms": 38,
+        "encoders": 1791892367604,
+        "imu": 1791892367604
+      },
+      "sequences": {
+        "drive": 24590,
+        "pid": 12295,
+        "encoders": 49180,
+        "imu": 61911
+      }
+    },
+    {
+      "t_rel": 0.5615,
+      "dt_s": 0.0512,
+      "receipt_mono": 2943.575908284,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.005,
+      "disp_accum_m": 0.0056,
+      "yaw_net_deg": 0.05,
+      "yaw_accum_deg": 0.33,
+      "gyro_z": 0.0176,
+      "ticks": {
+        "m1": -49,
+        "m2": -54,
+        "m3": -42,
+        "m4": -47
+      },
+      "delta_ticks": {
+        "m1": -1,
+        "m2": -2,
+        "m3": 0,
+        "m4": -1
+      },
+      "raw_ticks": {
+        "m1": -252,
+        "m2": -256,
+        "m3": -252,
+        "m4": -252
+      },
+      "measured_radps": {
+        "m1": -0.37,
+        "m2": -0.06,
+        "m3": -0.02,
+        "m4": 0
+      },
+      "measured_mps": {
+        "m1": -0.012,
+        "m2": -0.0019,
+        "m3": -0.0007,
+        "m4": 0.0
+      },
+      "signed_chassis_mps": -0.0037,
+      "mean_abs_wheel_speed_mps": 0.0037,
+      "measured_chassis_mps": 0.0037,
+      "target_radps": {
+        "m1": -0.45,
+        "m2": -0.45,
+        "m3": -0.48,
+        "m4": -0.46
+      },
+      "pwm": {
+        "m1": -42,
+        "m2": -43,
+        "m3": -45,
+        "m4": -45
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": -0.1,
+          "iTerm": -0.9,
+          "dTerm": -0.1,
+          "feedforward": -41,
+          "basePwm": -42,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -42
+        },
+        "m2": {
+          "pTerm": -0.8,
+          "iTerm": -0.2,
+          "dTerm": -0.1,
+          "feedforward": -41,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -0.3,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m3": {
+          "pTerm": -1,
+          "iTerm": -0.2,
+          "dTerm": 0,
+          "feedforward": -41.8,
+          "basePwm": -45,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -1.5,
+          "candidateEnabled": true,
+          "finalPwm": -45
+        },
+        "m4": {
+          "pTerm": -1,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -45,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -2.8,
+          "candidateEnabled": true,
+          "finalPwm": -45
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 49,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": -0.3,
+          "m3": -1.5,
+          "m4": -2.8
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.575908284,
+        "drive_rx": 1791892367647,
+        "pid": 1791892367565,
+        "pid_data_age_ms": 90,
+        "encoders": 1791892367653,
+        "imu": 1791892367653
+      },
+      "sequences": {
+        "drive": 24591,
+        "pid": 12295,
+        "encoders": 49182,
+        "imu": 61913
+      }
+    },
+    {
+      "t_rel": 0.6098,
+      "dt_s": 0.0483,
+      "receipt_mono": 2943.624172437,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.005,
+      "disp_accum_m": 0.0056,
+      "yaw_net_deg": 0.02,
+      "yaw_accum_deg": 0.36,
+      "gyro_z": -0.002,
+      "ticks": {
+        "m1": -50,
+        "m2": -54,
+        "m3": -43,
+        "m4": -47
+      },
+      "delta_ticks": {
+        "m1": -1,
+        "m2": 0,
+        "m3": -1,
+        "m4": 0
+      },
+      "raw_ticks": {
+        "m1": -253,
+        "m2": -256,
+        "m3": -253,
+        "m4": -252
+      },
+      "measured_radps": {
+        "m1": -0.12,
+        "m2": -0.03,
+        "m3": 0,
+        "m4": -0.03
+      },
+      "measured_mps": {
+        "m1": -0.0039,
+        "m2": -0.001,
+        "m3": 0.0,
+        "m4": -0.001
+      },
+      "signed_chassis_mps": -0.0015,
+      "mean_abs_wheel_speed_mps": 0.0015,
+      "measured_chassis_mps": 0.0015,
+      "target_radps": {
+        "m1": -0.45,
+        "m2": -0.43,
+        "m3": -0.49,
+        "m4": -0.46
+      },
+      "pwm": {
+        "m1": -45,
+        "m2": -44,
+        "m3": -49,
+        "m4": -49
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": -0.7,
+          "iTerm": -1.6,
+          "dTerm": -0.3,
+          "feedforward": -41,
+          "basePwm": -45,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -1.3,
+          "candidateEnabled": true,
+          "finalPwm": -45
+        },
+        "m2": {
+          "pTerm": -0.8,
+          "iTerm": -0.7,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -1.2,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        },
+        "m3": {
+          "pTerm": -1,
+          "iTerm": -0.2,
+          "dTerm": 0,
+          "feedforward": -42.3,
+          "basePwm": -49,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -5.6,
+          "candidateEnabled": true,
+          "finalPwm": -49
+        },
+        "m4": {
+          "pTerm": -0.9,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -41.2,
+          "basePwm": -49,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -6.8,
+          "candidateEnabled": true,
+          "finalPwm": -49
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 100,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": -1.3,
+          "m2": -1.2,
+          "m3": -5.6,
+          "m4": -6.8
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.624172437,
+        "drive_rx": 1791892367701,
+        "pid": 1791892367665,
+        "pid_data_age_ms": 39,
+        "encoders": 1791892367701,
+        "imu": 1791892367684
+      },
+      "sequences": {
+        "drive": 24592,
+        "pid": 12296,
+        "encoders": 49184,
+        "imu": 61915
+      }
+    },
+    {
+      "t_rel": 0.6623,
+      "dt_s": 0.0525,
+      "receipt_mono": 2943.676689663,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0051,
+      "disp_accum_m": 0.0056,
+      "yaw_net_deg": 0.03,
+      "yaw_accum_deg": 0.36,
+      "gyro_z": -0.002,
+      "ticks": {
+        "m1": -50,
+        "m2": -54,
+        "m3": -48,
+        "m4": -47
+      },
+      "delta_ticks": {
+        "m1": 0,
+        "m2": 0,
+        "m3": -5,
+        "m4": 0
+      },
+      "raw_ticks": {
+        "m1": -253,
+        "m2": -256,
+        "m3": -258,
+        "m4": -252
+      },
+      "measured_radps": {
+        "m1": -0.12,
+        "m2": -0.03,
+        "m3": 0,
+        "m4": -0.03
+      },
+      "measured_mps": {
+        "m1": -0.0039,
+        "m2": -0.001,
+        "m3": 0.0,
+        "m4": -0.001
+      },
+      "signed_chassis_mps": -0.0015,
+      "mean_abs_wheel_speed_mps": 0.0015,
+      "measured_chassis_mps": 0.0015,
+      "target_radps": {
+        "m1": -0.45,
+        "m2": -0.43,
+        "m3": -0.49,
+        "m4": -0.46
+      },
+      "pwm": {
+        "m1": -45,
+        "m2": -44,
+        "m3": -49,
+        "m4": -49
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": -0.7,
+          "iTerm": -1.6,
+          "dTerm": -0.3,
+          "feedforward": -41,
+          "basePwm": -45,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -1.3,
+          "candidateEnabled": true,
+          "finalPwm": -45
+        },
+        "m2": {
+          "pTerm": -0.8,
+          "iTerm": -0.7,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -1.2,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        },
+        "m3": {
+          "pTerm": -1,
+          "iTerm": -0.2,
+          "dTerm": 0,
+          "feedforward": -42.3,
+          "basePwm": -49,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -5.6,
+          "candidateEnabled": true,
+          "finalPwm": -49
+        },
+        "m4": {
+          "pTerm": -0.9,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -41.2,
+          "basePwm": -49,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -6.8,
+          "candidateEnabled": true,
+          "finalPwm": -49
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 100,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": -1.3,
+          "m2": -1.2,
+          "m3": -5.6,
+          "m4": -6.8
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.676689663,
+        "drive_rx": 1791892367701,
+        "pid": 1791892367665,
+        "pid_data_age_ms": 89,
+        "encoders": 1791892367755,
+        "imu": 1791892367744
+      },
+      "sequences": {
+        "drive": 24592,
+        "pid": 12296,
+        "encoders": 49186,
+        "imu": 61918
+      }
+    },
+    {
+      "t_rel": 0.7171,
+      "dt_s": 0.0548,
+      "receipt_mono": 2943.731523888,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0055,
+      "disp_accum_m": 0.0058,
+      "yaw_net_deg": 0.02,
+      "yaw_accum_deg": 0.41,
+      "gyro_z": -0.0293,
+      "ticks": {
+        "m1": -50,
+        "m2": -56,
+        "m3": -55,
+        "m4": -53
+      },
+      "delta_ticks": {
+        "m1": 0,
+        "m2": -2,
+        "m3": -7,
+        "m4": -6
+      },
+      "raw_ticks": {
+        "m1": -253,
+        "m2": -258,
+        "m3": -265,
+        "m4": -258
+      },
+      "measured_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": -0.44,
+        "m4": 0
+      },
+      "measured_mps": {
+        "m1": 0.0,
+        "m2": 0.0,
+        "m3": -0.0143,
+        "m4": 0.0
+      },
+      "signed_chassis_mps": -0.0036,
+      "mean_abs_wheel_speed_mps": 0.0036,
+      "measured_chassis_mps": 0.0036,
+      "target_radps": {
+        "m1": -0.46,
+        "m2": -0.44,
+        "m3": -0.45,
+        "m4": -0.48
+      },
+      "pwm": {
+        "m1": -49,
+        "m2": -48,
+        "m3": -49,
+        "m4": -54
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": -1,
+          "iTerm": -1.6,
+          "dTerm": 0,
+          "feedforward": -41.1,
+          "basePwm": -49,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -5.3,
+          "candidateEnabled": true,
+          "finalPwm": -49
+        },
+        "m2": {
+          "pTerm": -0.9,
+          "iTerm": -0.7,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -48,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -5.2,
+          "candidateEnabled": true,
+          "finalPwm": -48
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": -1.4,
+          "dTerm": -0.3,
+          "feedforward": -41,
+          "basePwm": -49,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -5.9,
+          "candidateEnabled": true,
+          "finalPwm": -49
+        },
+        "m4": {
+          "pTerm": -1,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -41.8,
+          "basePwm": -54,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -10.8,
+          "candidateEnabled": true,
+          "finalPwm": -54
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": -5.3,
+          "m2": -5.2,
+          "m3": -5.9,
+          "m4": -10.8
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.731523888,
+        "drive_rx": 1791892367801,
+        "pid": 1791892367779,
+        "pid_data_age_ms": 27,
+        "encoders": 1791892367807,
+        "imu": 1791892367807
+      },
+      "sequences": {
+        "drive": 24594,
+        "pid": 12297,
+        "encoders": 49188,
+        "imu": 61921
+      }
+    },
+    {
+      "t_rel": 0.7642,
+      "dt_s": 0.0471,
+      "receipt_mono": 2943.778593875,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0064,
+      "disp_accum_m": 0.007,
+      "yaw_net_deg": 0.02,
+      "yaw_accum_deg": 0.45,
+      "gyro_z": -0.0156,
+      "ticks": {
+        "m1": -60,
+        "m2": -63,
+        "m3": -56,
+        "m4": -68
+      },
+      "delta_ticks": {
+        "m1": -10,
+        "m2": -7,
+        "m3": -1,
+        "m4": -15
+      },
+      "raw_ticks": {
+        "m1": -263,
+        "m2": -265,
+        "m3": -266,
+        "m4": -273
+      },
+      "measured_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": -0.44,
+        "m4": 0
+      },
+      "measured_mps": {
+        "m1": 0.0,
+        "m2": 0.0,
+        "m3": -0.0143,
+        "m4": 0.0
+      },
+      "signed_chassis_mps": -0.0036,
+      "mean_abs_wheel_speed_mps": 0.0036,
+      "measured_chassis_mps": 0.0036,
+      "target_radps": {
+        "m1": -0.46,
+        "m2": -0.44,
+        "m3": -0.45,
+        "m4": -0.48
+      },
+      "pwm": {
+        "m1": -49,
+        "m2": -48,
+        "m3": -49,
+        "m4": -54
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": -1,
+          "iTerm": -1.6,
+          "dTerm": 0,
+          "feedforward": -41.1,
+          "basePwm": -49,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -5.3,
+          "candidateEnabled": true,
+          "finalPwm": -49
+        },
+        "m2": {
+          "pTerm": -0.9,
+          "iTerm": -0.7,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -48,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -5.2,
+          "candidateEnabled": true,
+          "finalPwm": -48
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": -1.4,
+          "dTerm": -0.3,
+          "feedforward": -41,
+          "basePwm": -49,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -5.9,
+          "candidateEnabled": true,
+          "finalPwm": -49
+        },
+        "m4": {
+          "pTerm": -1,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": -41.8,
+          "basePwm": -54,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -10.8,
+          "candidateEnabled": true,
+          "finalPwm": -54
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": -5.3,
+          "m2": -5.2,
+          "m3": -5.9,
+          "m4": -10.8
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.778593875,
+        "drive_rx": 1791892367801,
+        "pid": 1791892367779,
+        "pid_data_age_ms": 77,
+        "encoders": 1791892367858,
+        "imu": 1791892367844
+      },
+      "sequences": {
+        "drive": 24594,
+        "pid": 12297,
+        "encoders": 49190,
+        "imu": 61923
+      }
+    },
+    {
+      "t_rel": 0.8108,
+      "dt_s": 0.0466,
+      "receipt_mono": 2943.825235602,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0072,
+      "disp_accum_m": 0.008,
+      "yaw_net_deg": 0.02,
+      "yaw_accum_deg": 0.46,
+      "gyro_z": -0.0098,
+      "ticks": {
+        "m1": -68,
+        "m2": -74,
+        "m3": -58,
+        "m4": -77
+      },
+      "delta_ticks": {
+        "m1": -8,
+        "m2": -11,
+        "m3": -2,
+        "m4": -9
+      },
+      "raw_ticks": {
+        "m1": -271,
+        "m2": -276,
+        "m3": -268,
+        "m4": -282
+      },
+      "measured_radps": {
+        "m1": -0.54,
+        "m2": -0.64,
+        "m3": -0.18,
+        "m4": -0.74
+      },
+      "measured_mps": {
+        "m1": -0.0176,
+        "m2": -0.0208,
+        "m3": -0.0059,
+        "m4": -0.0241
+      },
+      "signed_chassis_mps": -0.0171,
+      "mean_abs_wheel_speed_mps": 0.0171,
+      "measured_chassis_mps": 0.0171,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.44,
+        "m3": -0.5,
+        "m4": -0.42
+      },
+      "pwm": {
+        "m1": -48,
+        "m2": -45,
+        "m3": -51,
+        "m4": -48
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.1,
+          "iTerm": -2.4,
+          "dTerm": 0.2,
+          "feedforward": -41.4,
+          "basePwm": -48,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -4.7,
+          "candidateEnabled": true,
+          "finalPwm": -48
+        },
+        "m2": {
+          "pTerm": 0.4,
+          "iTerm": -2.4,
+          "dTerm": 0.8,
+          "feedforward": -41,
+          "basePwm": -45,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -3.2,
+          "candidateEnabled": true,
+          "finalPwm": -45
+        },
+        "m3": {
+          "pTerm": -0.7,
+          "iTerm": -4,
+          "dTerm": 0.3,
+          "feedforward": -42.8,
+          "basePwm": -51,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -3.4,
+          "candidateEnabled": true,
+          "finalPwm": -51
+        },
+        "m4": {
+          "pTerm": 0.6,
+          "iTerm": 0,
+          "dTerm": -0.2,
+          "feedforward": -41,
+          "basePwm": -48,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -7.6,
+          "candidateEnabled": true,
+          "finalPwm": -48
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": -4.7,
+          "m2": -3.2,
+          "m3": -3.4,
+          "m4": -7.6
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.825235602,
+        "drive_rx": 1791892367900,
+        "pid": 1791892367876,
+        "pid_data_age_ms": 28,
+        "encoders": 1791892367900,
+        "imu": 1791892367907
+      },
+      "sequences": {
+        "drive": 24596,
+        "pid": 12298,
+        "encoders": 49192,
+        "imu": 61926
+      }
+    },
+    {
+      "t_rel": 0.8613,
+      "dt_s": 0.0505,
+      "receipt_mono": 2943.87568694,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0088,
+      "disp_accum_m": 0.0095,
+      "yaw_net_deg": 0.05,
+      "yaw_accum_deg": 0.48,
+      "gyro_z": 0.0293,
+      "ticks": {
+        "m1": -84,
+        "m2": -86,
+        "m3": -77,
+        "m4": -92
+      },
+      "delta_ticks": {
+        "m1": -16,
+        "m2": -12,
+        "m3": -19,
+        "m4": -15
+      },
+      "raw_ticks": {
+        "m1": -287,
+        "m2": -288,
+        "m3": -287,
+        "m4": -297
+      },
+      "measured_radps": {
+        "m1": -0.54,
+        "m2": -0.64,
+        "m3": -0.18,
+        "m4": -0.74
+      },
+      "measured_mps": {
+        "m1": -0.0176,
+        "m2": -0.0208,
+        "m3": -0.0059,
+        "m4": -0.0241
+      },
+      "signed_chassis_mps": -0.0171,
+      "mean_abs_wheel_speed_mps": 0.0171,
+      "measured_chassis_mps": 0.0171,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.44,
+        "m3": -0.5,
+        "m4": -0.42
+      },
+      "pwm": {
+        "m1": -48,
+        "m2": -45,
+        "m3": -51,
+        "m4": -48
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.1,
+          "iTerm": -2.4,
+          "dTerm": 0.2,
+          "feedforward": -41.4,
+          "basePwm": -48,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -4.7,
+          "candidateEnabled": true,
+          "finalPwm": -48
+        },
+        "m2": {
+          "pTerm": 0.4,
+          "iTerm": -2.4,
+          "dTerm": 0.8,
+          "feedforward": -41,
+          "basePwm": -45,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -3.2,
+          "candidateEnabled": true,
+          "finalPwm": -45
+        },
+        "m3": {
+          "pTerm": -0.7,
+          "iTerm": -4,
+          "dTerm": 0.3,
+          "feedforward": -42.8,
+          "basePwm": -51,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -3.4,
+          "candidateEnabled": true,
+          "finalPwm": -51
+        },
+        "m4": {
+          "pTerm": 0.6,
+          "iTerm": 0,
+          "dTerm": -0.2,
+          "feedforward": -41,
+          "basePwm": -48,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -7.6,
+          "candidateEnabled": true,
+          "finalPwm": -48
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": -4.7,
+          "m2": -3.2,
+          "m3": -3.4,
+          "m4": -7.6
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.87568694,
+        "drive_rx": 1791892367900,
+        "pid": 1791892367876,
+        "pid_data_age_ms": 79,
+        "encoders": 1791892367952,
+        "imu": 1791892367946
+      },
+      "sequences": {
+        "drive": 24596,
+        "pid": 12298,
+        "encoders": 49194,
+        "imu": 61928
+      }
+    },
+    {
+      "t_rel": 0.9105,
+      "dt_s": 0.0492,
+      "receipt_mono": 2943.924865945,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0101,
+      "disp_accum_m": 0.0106,
+      "yaw_net_deg": 0.03,
+      "yaw_accum_deg": 0.49,
+      "gyro_z": 0.0039,
+      "ticks": {
+        "m1": -95,
+        "m2": -98,
+        "m3": -97,
+        "m4": -102
+      },
+      "delta_ticks": {
+        "m1": -11,
+        "m2": -12,
+        "m3": -20,
+        "m4": -10
+      },
+      "raw_ticks": {
+        "m1": -298,
+        "m2": -300,
+        "m3": -307,
+        "m4": -307
+      },
+      "measured_radps": {
+        "m1": -0.69,
+        "m2": -0.6,
+        "m3": -1.26,
+        "m4": -0.69
+      },
+      "measured_mps": {
+        "m1": -0.0224,
+        "m2": -0.0195,
+        "m3": -0.041,
+        "m4": -0.0224
+      },
+      "signed_chassis_mps": -0.0263,
+      "mean_abs_wheel_speed_mps": 0.0263,
+      "measured_chassis_mps": 0.0263,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.46,
+        "m3": -0.48,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -44,
+        "m2": -43,
+        "m3": -44,
+        "m4": -44
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.4,
+          "iTerm": -1.9,
+          "dTerm": -0.1,
+          "feedforward": -41.4,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -1.2,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        },
+        "m2": {
+          "pTerm": 0.3,
+          "iTerm": -2,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m3": {
+          "pTerm": 1.7,
+          "iTerm": -4.2,
+          "dTerm": 0.9,
+          "feedforward": -41.8,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -0.5,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        },
+        "m4": {
+          "pTerm": 0.5,
+          "iTerm": 0.3,
+          "dTerm": -0.1,
+          "feedforward": -41,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -4.1,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": -1.2,
+          "m2": 0,
+          "m3": -0.5,
+          "m4": -4.1
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.924865945,
+        "drive_rx": 1791892368002,
+        "pid": 1791892367974,
+        "pid_data_age_ms": 30,
+        "encoders": 1791892368002,
+        "imu": 1791892367986
+      },
+      "sequences": {
+        "drive": 24598,
+        "pid": 12299,
+        "encoders": 49196,
+        "imu": 61930
+      }
+    },
+    {
+      "t_rel": 0.9634,
+      "dt_s": 0.053,
+      "receipt_mono": 2943.977838079,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0115,
+      "disp_accum_m": 0.0118,
+      "yaw_net_deg": 0.01,
+      "yaw_accum_deg": 0.52,
+      "gyro_z": -0.0449,
+      "ticks": {
+        "m1": -110,
+        "m2": -112,
+        "m3": -107,
+        "m4": -114
+      },
+      "delta_ticks": {
+        "m1": -15,
+        "m2": -14,
+        "m3": -10,
+        "m4": -12
+      },
+      "raw_ticks": {
+        "m1": -313,
+        "m2": -314,
+        "m3": -317,
+        "m4": -319
+      },
+      "measured_radps": {
+        "m1": -0.69,
+        "m2": -0.6,
+        "m3": -1.26,
+        "m4": -0.69
+      },
+      "measured_mps": {
+        "m1": -0.0224,
+        "m2": -0.0195,
+        "m3": -0.041,
+        "m4": -0.0224
+      },
+      "signed_chassis_mps": -0.0263,
+      "mean_abs_wheel_speed_mps": 0.0263,
+      "measured_chassis_mps": 0.0263,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.46,
+        "m3": -0.48,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -44,
+        "m2": -43,
+        "m3": -44,
+        "m4": -44
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.4,
+          "iTerm": -1.9,
+          "dTerm": -0.1,
+          "feedforward": -41.4,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -1.2,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        },
+        "m2": {
+          "pTerm": 0.3,
+          "iTerm": -2,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m3": {
+          "pTerm": 1.7,
+          "iTerm": -4.2,
+          "dTerm": 0.9,
+          "feedforward": -41.8,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -0.5,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        },
+        "m4": {
+          "pTerm": 0.5,
+          "iTerm": 0.3,
+          "dTerm": -0.1,
+          "feedforward": -41,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -4.1,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": -1.2,
+          "m2": 0,
+          "m3": -0.5,
+          "m4": -4.1
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2943.977838079,
+        "drive_rx": 1791892368002,
+        "pid": 1791892367974,
+        "pid_data_age_ms": 83,
+        "encoders": 1791892368057,
+        "imu": 1791892368044
+      },
+      "sequences": {
+        "drive": 24598,
+        "pid": 12299,
+        "encoders": 49198,
+        "imu": 61933
+      }
+    },
+    {
+      "t_rel": 1.0118,
+      "dt_s": 0.0483,
+      "receipt_mono": 2944.026176454,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0127,
+      "disp_accum_m": 0.0132,
+      "yaw_net_deg": 0.0,
+      "yaw_accum_deg": 0.52,
+      "gyro_z": -0.0137,
+      "ticks": {
+        "m1": -120,
+        "m2": -122,
+        "m3": -120,
+        "m4": -128
+      },
+      "delta_ticks": {
+        "m1": -10,
+        "m2": -10,
+        "m3": -13,
+        "m4": -14
+      },
+      "raw_ticks": {
+        "m1": -323,
+        "m2": -324,
+        "m3": -330,
+        "m4": -333
+      },
+      "measured_radps": {
+        "m1": -0.75,
+        "m2": -0.9,
+        "m3": -0.71,
+        "m4": -0.88
+      },
+      "measured_mps": {
+        "m1": -0.0244,
+        "m2": -0.0293,
+        "m3": -0.0231,
+        "m4": -0.0286
+      },
+      "signed_chassis_mps": -0.0263,
+      "mean_abs_wheel_speed_mps": 0.0263,
+      "measured_chassis_mps": 0.0263,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.45,
+        "m3": -0.48,
+        "m4": -0.44
+      },
+      "pwm": {
+        "m1": -42,
+        "m2": -41,
+        "m3": -45,
+        "m4": -40
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.6,
+          "iTerm": -1.3,
+          "dTerm": -0.3,
+          "feedforward": -41.3,
+          "basePwm": -42,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -42
+        },
+        "m2": {
+          "pTerm": 0.9,
+          "iTerm": -1.3,
+          "dTerm": 0.1,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m3": {
+          "pTerm": 0.5,
+          "iTerm": -3.4,
+          "dTerm": -0.2,
+          "feedforward": -41.8,
+          "basePwm": -45,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -45
+        },
+        "m4": {
+          "pTerm": 0.9,
+          "iTerm": 0.5,
+          "dTerm": 0.2,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -0.5,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": -0.5
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.026176454,
+        "drive_rx": 1791892368102,
+        "pid": 1791892368074,
+        "pid_data_age_ms": 31,
+        "encoders": 1791892368102,
+        "imu": 1791892368086
+      },
+      "sequences": {
+        "drive": 24600,
+        "pid": 12300,
+        "encoders": 49200,
+        "imu": 61935
+      }
+    },
+    {
+      "t_rel": 1.0625,
+      "dt_s": 0.0507,
+      "receipt_mono": 2944.076879941,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0139,
+      "disp_accum_m": 0.0143,
+      "yaw_net_deg": 0.0,
+      "yaw_accum_deg": 0.52,
+      "gyro_z": 0.0137,
+      "ticks": {
+        "m1": -132,
+        "m2": -134,
+        "m3": -132,
+        "m4": -138
+      },
+      "delta_ticks": {
+        "m1": -12,
+        "m2": -12,
+        "m3": -12,
+        "m4": -10
+      },
+      "raw_ticks": {
+        "m1": -335,
+        "m2": -336,
+        "m3": -342,
+        "m4": -343
+      },
+      "measured_radps": {
+        "m1": -0.75,
+        "m2": -0.9,
+        "m3": -0.71,
+        "m4": -0.88
+      },
+      "measured_mps": {
+        "m1": -0.0244,
+        "m2": -0.0293,
+        "m3": -0.0231,
+        "m4": -0.0286
+      },
+      "signed_chassis_mps": -0.0263,
+      "mean_abs_wheel_speed_mps": 0.0263,
+      "measured_chassis_mps": 0.0263,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.45,
+        "m3": -0.48,
+        "m4": -0.44
+      },
+      "pwm": {
+        "m1": -42,
+        "m2": -41,
+        "m3": -45,
+        "m4": -40
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.6,
+          "iTerm": -1.3,
+          "dTerm": -0.3,
+          "feedforward": -41.3,
+          "basePwm": -42,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -42
+        },
+        "m2": {
+          "pTerm": 0.9,
+          "iTerm": -1.3,
+          "dTerm": 0.1,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m3": {
+          "pTerm": 0.5,
+          "iTerm": -3.4,
+          "dTerm": -0.2,
+          "feedforward": -41.8,
+          "basePwm": -45,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -45
+        },
+        "m4": {
+          "pTerm": 0.9,
+          "iTerm": 0.5,
+          "dTerm": 0.2,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": -0.5,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": -0.5
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.076879941,
+        "drive_rx": 1791892368102,
+        "pid": 1791892368074,
+        "pid_data_age_ms": 82,
+        "encoders": 1791892368157,
+        "imu": 1791892368144
+      },
+      "sequences": {
+        "drive": 24600,
+        "pid": 12300,
+        "encoders": 49202,
+        "imu": 61938
+      }
+    },
+    {
+      "t_rel": 1.1114,
+      "dt_s": 0.0489,
+      "receipt_mono": 2944.125762261,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0151,
+      "disp_accum_m": 0.0154,
+      "yaw_net_deg": 0.0,
+      "yaw_accum_deg": 0.53,
+      "gyro_z": -0.0078,
+      "ticks": {
+        "m1": -144,
+        "m2": -146,
+        "m3": -144,
+        "m4": -149
+      },
+      "delta_ticks": {
+        "m1": -12,
+        "m2": -12,
+        "m3": -12,
+        "m4": -11
+      },
+      "raw_ticks": {
+        "m1": -347,
+        "m2": -348,
+        "m3": -354,
+        "m4": -354
+      },
+      "measured_radps": {
+        "m1": -0.86,
+        "m2": -0.85,
+        "m3": -0.69,
+        "m4": -0.61
+      },
+      "measured_mps": {
+        "m1": -0.0279,
+        "m2": -0.0276,
+        "m3": -0.0224,
+        "m4": -0.0198
+      },
+      "signed_chassis_mps": -0.0245,
+      "mean_abs_wheel_speed_mps": 0.0245,
+      "measured_chassis_mps": 0.0245,
+      "target_radps": {
+        "m1": -0.46,
+        "m2": -0.45,
+        "m3": -0.47,
+        "m4": -0.44
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -41,
+        "m3": -44,
+        "m4": -40
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.8,
+          "iTerm": -0.8,
+          "dTerm": 0.2,
+          "feedforward": -41.2,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0.8,
+          "iTerm": -0.8,
+          "dTerm": 0.2,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m3": {
+          "pTerm": 0.4,
+          "iTerm": -2.9,
+          "dTerm": -0.1,
+          "feedforward": -41.6,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        },
+        "m4": {
+          "pTerm": 0.3,
+          "iTerm": 0.8,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.125762261,
+        "drive_rx": 1791892368157,
+        "pid": 1791892368176,
+        "pid_data_age_ms": 29,
+        "encoders": 1791892368203,
+        "imu": 1791892368186
+      },
+      "sequences": {
+        "drive": 24601,
+        "pid": 12301,
+        "encoders": 49204,
+        "imu": 61940
+      }
+    },
+    {
+      "t_rel": 1.1622,
+      "dt_s": 0.0508,
+      "receipt_mono": 2944.176585951,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0162,
+      "disp_accum_m": 0.0168,
+      "yaw_net_deg": 0.0,
+      "yaw_accum_deg": 0.53,
+      "gyro_z": -0.0078,
+      "ticks": {
+        "m1": -154,
+        "m2": -157,
+        "m3": -154,
+        "m4": -162
+      },
+      "delta_ticks": {
+        "m1": -10,
+        "m2": -11,
+        "m3": -10,
+        "m4": -13
+      },
+      "raw_ticks": {
+        "m1": -357,
+        "m2": -359,
+        "m3": -364,
+        "m4": -367
+      },
+      "measured_radps": {
+        "m1": -0.86,
+        "m2": -0.85,
+        "m3": -0.69,
+        "m4": -0.61
+      },
+      "measured_mps": {
+        "m1": -0.0279,
+        "m2": -0.0276,
+        "m3": -0.0224,
+        "m4": -0.0198
+      },
+      "signed_chassis_mps": -0.0245,
+      "mean_abs_wheel_speed_mps": 0.0245,
+      "measured_chassis_mps": 0.0245,
+      "target_radps": {
+        "m1": -0.46,
+        "m2": -0.45,
+        "m3": -0.47,
+        "m4": -0.44
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -41,
+        "m3": -44,
+        "m4": -40
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.8,
+          "iTerm": -0.8,
+          "dTerm": 0.2,
+          "feedforward": -41.2,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0.8,
+          "iTerm": -0.8,
+          "dTerm": 0.2,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m3": {
+          "pTerm": 0.4,
+          "iTerm": -2.9,
+          "dTerm": -0.1,
+          "feedforward": -41.6,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        },
+        "m4": {
+          "pTerm": 0.3,
+          "iTerm": 0.8,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.176585951,
+        "drive_rx": 1791892368203,
+        "pid": 1791892368176,
+        "pid_data_age_ms": 79,
+        "encoders": 1791892368252,
+        "imu": 1791892368245
+      },
+      "sequences": {
+        "drive": 24602,
+        "pid": 12301,
+        "encoders": 49206,
+        "imu": 61943
+      }
+    },
+    {
+      "t_rel": 1.2116,
+      "dt_s": 0.0495,
+      "receipt_mono": 2944.226039456,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0174,
+      "disp_accum_m": 0.0179,
+      "yaw_net_deg": 0.02,
+      "yaw_accum_deg": 0.55,
+      "gyro_z": 0.002,
+      "ticks": {
+        "m1": -166,
+        "m2": -168,
+        "m3": -164,
+        "m4": -173
+      },
+      "delta_ticks": {
+        "m1": -12,
+        "m2": -11,
+        "m3": -10,
+        "m4": -11
+      },
+      "raw_ticks": {
+        "m1": -369,
+        "m2": -370,
+        "m3": -374,
+        "m4": -378
+      },
+      "measured_radps": {
+        "m1": -0.74,
+        "m2": -0.71,
+        "m3": -0.64,
+        "m4": -0.78
+      },
+      "measured_mps": {
+        "m1": -0.0241,
+        "m2": -0.0231,
+        "m3": -0.0208,
+        "m4": -0.0254
+      },
+      "signed_chassis_mps": -0.0233,
+      "mean_abs_wheel_speed_mps": 0.0233,
+      "measured_chassis_mps": 0.0233,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.45,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -41,
+        "m3": -44,
+        "m4": -39
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.5,
+          "iTerm": -0.4,
+          "dTerm": 0.5,
+          "feedforward": -41.5,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0.5,
+          "iTerm": -0.4,
+          "dTerm": -0.2,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m3": {
+          "pTerm": 0.3,
+          "iTerm": -2.5,
+          "dTerm": 0,
+          "feedforward": -41.7,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        },
+        "m4": {
+          "pTerm": 0.7,
+          "iTerm": 1.1,
+          "dTerm": -0.3,
+          "feedforward": -41,
+          "basePwm": -39,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -39
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.226039456,
+        "drive_rx": 1791892368258,
+        "pid": 1791892368274,
+        "pid_data_age_ms": 31,
+        "encoders": 1791892368304,
+        "imu": 1791892368284
+      },
+      "sequences": {
+        "drive": 24603,
+        "pid": 12302,
+        "encoders": 49208,
+        "imu": 61945
+      }
+    },
+    {
+      "t_rel": 1.2636,
+      "dt_s": 0.052,
+      "receipt_mono": 2944.278040572,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0185,
+      "disp_accum_m": 0.019,
+      "yaw_net_deg": 0.01,
+      "yaw_accum_deg": 0.56,
+      "gyro_z": 0.0215,
+      "ticks": {
+        "m1": -176,
+        "m2": -180,
+        "m3": -176,
+        "m4": -184
+      },
+      "delta_ticks": {
+        "m1": -10,
+        "m2": -12,
+        "m3": -12,
+        "m4": -11
+      },
+      "raw_ticks": {
+        "m1": -379,
+        "m2": -382,
+        "m3": -386,
+        "m4": -389
+      },
+      "measured_radps": {
+        "m1": -0.74,
+        "m2": -0.71,
+        "m3": -0.64,
+        "m4": -0.78
+      },
+      "measured_mps": {
+        "m1": -0.0241,
+        "m2": -0.0231,
+        "m3": -0.0208,
+        "m4": -0.0254
+      },
+      "signed_chassis_mps": -0.0233,
+      "mean_abs_wheel_speed_mps": 0.0233,
+      "measured_chassis_mps": 0.0233,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.45,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -41,
+        "m3": -44,
+        "m4": -39
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.5,
+          "iTerm": -0.4,
+          "dTerm": 0.5,
+          "feedforward": -41.5,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0.5,
+          "iTerm": -0.4,
+          "dTerm": -0.2,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m3": {
+          "pTerm": 0.3,
+          "iTerm": -2.5,
+          "dTerm": 0,
+          "feedforward": -41.7,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        },
+        "m4": {
+          "pTerm": 0.7,
+          "iTerm": 1.1,
+          "dTerm": -0.3,
+          "feedforward": -41,
+          "basePwm": -39,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -39
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.278040572,
+        "drive_rx": 1791892368304,
+        "pid": 1791892368274,
+        "pid_data_age_ms": 83,
+        "encoders": 1791892368356,
+        "imu": 1791892368344
+      },
+      "sequences": {
+        "drive": 24604,
+        "pid": 12302,
+        "encoders": 49210,
+        "imu": 61948
+      }
+    },
+    {
+      "t_rel": 1.3122,
+      "dt_s": 0.0485,
+      "receipt_mono": 2944.326568244,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0196,
+      "disp_accum_m": 0.0202,
+      "yaw_net_deg": 0.01,
+      "yaw_accum_deg": 0.58,
+      "gyro_z": 0.0117,
+      "ticks": {
+        "m1": -187,
+        "m2": -190,
+        "m3": -186,
+        "m4": -195
+      },
+      "delta_ticks": {
+        "m1": -11,
+        "m2": -10,
+        "m3": -10,
+        "m4": -11
+      },
+      "raw_ticks": {
+        "m1": -390,
+        "m2": -392,
+        "m3": -396,
+        "m4": -400
+      },
+      "measured_radps": {
+        "m1": -0.71,
+        "m2": -0.72,
+        "m3": -0.66,
+        "m4": -0.64
+      },
+      "measured_mps": {
+        "m1": -0.0231,
+        "m2": -0.0234,
+        "m3": -0.0215,
+        "m4": -0.0208
+      },
+      "signed_chassis_mps": -0.0222,
+      "mean_abs_wheel_speed_mps": 0.0222,
+      "measured_chassis_mps": 0.0222,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.45,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -40,
+        "m3": -44,
+        "m4": -39
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.5,
+          "iTerm": 0,
+          "dTerm": -0.3,
+          "feedforward": -41.4,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0.5,
+          "iTerm": 0,
+          "dTerm": 0.3,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        },
+        "m3": {
+          "pTerm": 0.4,
+          "iTerm": -2.1,
+          "dTerm": -0.2,
+          "feedforward": -41.7,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        },
+        "m4": {
+          "pTerm": 0.4,
+          "iTerm": 1.4,
+          "dTerm": -0.1,
+          "feedforward": -41,
+          "basePwm": -39,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -39
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.326568244,
+        "drive_rx": 1791892368356,
+        "pid": 1791892368374,
+        "pid_data_age_ms": 31,
+        "encoders": 1791892368406,
+        "imu": 1791892368386
+      },
+      "sequences": {
+        "drive": 24605,
+        "pid": 12303,
+        "encoders": 49212,
+        "imu": 61950
+      }
+    },
+    {
+      "t_rel": 1.3637,
+      "dt_s": 0.0516,
+      "receipt_mono": 2944.378122637,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0207,
+      "disp_accum_m": 0.0212,
+      "yaw_net_deg": 0.0,
+      "yaw_accum_deg": 0.59,
+      "gyro_z": -0.002,
+      "ticks": {
+        "m1": -197,
+        "m2": -201,
+        "m3": -197,
+        "m4": -205
+      },
+      "delta_ticks": {
+        "m1": -10,
+        "m2": -11,
+        "m3": -11,
+        "m4": -10
+      },
+      "raw_ticks": {
+        "m1": -400,
+        "m2": -403,
+        "m3": -407,
+        "m4": -410
+      },
+      "measured_radps": {
+        "m1": -0.71,
+        "m2": -0.72,
+        "m3": -0.66,
+        "m4": -0.64
+      },
+      "measured_mps": {
+        "m1": -0.0231,
+        "m2": -0.0234,
+        "m3": -0.0215,
+        "m4": -0.0208
+      },
+      "signed_chassis_mps": -0.0222,
+      "mean_abs_wheel_speed_mps": 0.0222,
+      "measured_chassis_mps": 0.0222,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.45,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -40,
+        "m3": -44,
+        "m4": -39
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.5,
+          "iTerm": 0,
+          "dTerm": -0.3,
+          "feedforward": -41.4,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0.5,
+          "iTerm": 0,
+          "dTerm": 0.3,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        },
+        "m3": {
+          "pTerm": 0.4,
+          "iTerm": -2.1,
+          "dTerm": -0.2,
+          "feedforward": -41.7,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        },
+        "m4": {
+          "pTerm": 0.4,
+          "iTerm": 1.4,
+          "dTerm": -0.1,
+          "feedforward": -41,
+          "basePwm": -39,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -39
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.378122637,
+        "drive_rx": 1791892368406,
+        "pid": 1791892368374,
+        "pid_data_age_ms": 83,
+        "encoders": 1791892368456,
+        "imu": 1791892368444
+      },
+      "sequences": {
+        "drive": 24606,
+        "pid": 12303,
+        "encoders": 49214,
+        "imu": 61953
+      }
+    },
+    {
+      "t_rel": 1.4116,
+      "dt_s": 0.0479,
+      "receipt_mono": 2944.426057828,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0216,
+      "disp_accum_m": 0.0221,
+      "yaw_net_deg": 0.02,
+      "yaw_accum_deg": 0.61,
+      "gyro_z": 0.0098,
+      "ticks": {
+        "m1": -206,
+        "m2": -210,
+        "m3": -206,
+        "m4": -214
+      },
+      "delta_ticks": {
+        "m1": -9,
+        "m2": -9,
+        "m3": -9,
+        "m4": -9
+      },
+      "raw_ticks": {
+        "m1": -409,
+        "m2": -412,
+        "m3": -416,
+        "m4": -419
+      },
+      "measured_radps": {
+        "m1": -0.65,
+        "m2": -0.6,
+        "m3": -0.68,
+        "m4": -0.63
+      },
+      "measured_mps": {
+        "m1": -0.0211,
+        "m2": -0.0195,
+        "m3": -0.0221,
+        "m4": -0.0205
+      },
+      "signed_chassis_mps": -0.0208,
+      "mean_abs_wheel_speed_mps": 0.0208,
+      "measured_chassis_mps": 0.0208,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.46,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -40,
+        "m3": -43,
+        "m4": -39
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.3,
+          "iTerm": 0.1,
+          "dTerm": 0,
+          "feedforward": -41.6,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0.3,
+          "iTerm": 0.1,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        },
+        "m3": {
+          "pTerm": 0.4,
+          "iTerm": -1.7,
+          "dTerm": -0.1,
+          "feedforward": -41.6,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m4": {
+          "pTerm": 0.4,
+          "iTerm": 1.6,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -39,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -39
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.426057828,
+        "drive_rx": 1791892368456,
+        "pid": 1791892368476,
+        "pid_data_age_ms": 29,
+        "encoders": 1791892368506,
+        "imu": 1791892368486
+      },
+      "sequences": {
+        "drive": 24607,
+        "pid": 12304,
+        "encoders": 49216,
+        "imu": 61955
+      }
+    },
+    {
+      "t_rel": 1.4623,
+      "dt_s": 0.0507,
+      "receipt_mono": 2944.476728074,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0225,
+      "disp_accum_m": 0.0231,
+      "yaw_net_deg": 0.01,
+      "yaw_accum_deg": 0.62,
+      "gyro_z": -0.0117,
+      "ticks": {
+        "m1": -215,
+        "m2": -218,
+        "m3": -216,
+        "m4": -223
+      },
+      "delta_ticks": {
+        "m1": -9,
+        "m2": -8,
+        "m3": -10,
+        "m4": -9
+      },
+      "raw_ticks": {
+        "m1": -418,
+        "m2": -420,
+        "m3": -426,
+        "m4": -428
+      },
+      "measured_radps": {
+        "m1": -0.65,
+        "m2": -0.6,
+        "m3": -0.68,
+        "m4": -0.63
+      },
+      "measured_mps": {
+        "m1": -0.0211,
+        "m2": -0.0195,
+        "m3": -0.0221,
+        "m4": -0.0205
+      },
+      "signed_chassis_mps": -0.0208,
+      "mean_abs_wheel_speed_mps": 0.0208,
+      "measured_chassis_mps": 0.0208,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.46,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -40,
+        "m3": -43,
+        "m4": -39
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.3,
+          "iTerm": 0.1,
+          "dTerm": 0,
+          "feedforward": -41.6,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0.3,
+          "iTerm": 0.1,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        },
+        "m3": {
+          "pTerm": 0.4,
+          "iTerm": -1.7,
+          "dTerm": -0.1,
+          "feedforward": -41.6,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m4": {
+          "pTerm": 0.4,
+          "iTerm": 1.6,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -39,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -39
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.476728074,
+        "drive_rx": 1791892368506,
+        "pid": 1791892368476,
+        "pid_data_age_ms": 80,
+        "encoders": 1791892368557,
+        "imu": 1791892368544
+      },
+      "sequences": {
+        "drive": 24608,
+        "pid": 12304,
+        "encoders": 49218,
+        "imu": 61958
+      }
+    },
+    {
+      "t_rel": 1.5117,
+      "dt_s": 0.0494,
+      "receipt_mono": 2944.526099912,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0235,
+      "disp_accum_m": 0.0239,
+      "yaw_net_deg": 0.02,
+      "yaw_accum_deg": 0.63,
+      "gyro_z": -0.0078,
+      "ticks": {
+        "m1": -225,
+        "m2": -228,
+        "m3": -224,
+        "m4": -231
+      },
+      "delta_ticks": {
+        "m1": -10,
+        "m2": -10,
+        "m3": -8,
+        "m4": -8
+      },
+      "raw_ticks": {
+        "m1": -428,
+        "m2": -430,
+        "m3": -434,
+        "m4": -436
+      },
+      "measured_radps": {
+        "m1": -0.6,
+        "m2": -0.62,
+        "m3": -0.51,
+        "m4": -0.47
+      },
+      "measured_mps": {
+        "m1": -0.0195,
+        "m2": -0.0202,
+        "m3": -0.0166,
+        "m4": -0.0153
+      },
+      "signed_chassis_mps": -0.0179,
+      "mean_abs_wheel_speed_mps": 0.0179,
+      "measured_chassis_mps": 0.0179,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.45,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -40,
+        "m3": -44,
+        "m4": -40
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.2,
+          "iTerm": 0.2,
+          "dTerm": 0.3,
+          "feedforward": -41.5,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0.3,
+          "iTerm": 0.2,
+          "dTerm": 0.2,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": -1.5,
+          "dTerm": -0.5,
+          "feedforward": -41.5,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        },
+        "m4": {
+          "pTerm": 0,
+          "iTerm": 1.7,
+          "dTerm": -0.3,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.526099912,
+        "drive_rx": 1791892368557,
+        "pid": 1791892368574,
+        "pid_data_age_ms": 31,
+        "encoders": 1791892368606,
+        "imu": 1791892368584
+      },
+      "sequences": {
+        "drive": 24609,
+        "pid": 12305,
+        "encoders": 49220,
+        "imu": 61960
+      }
+    },
+    {
+      "t_rel": 1.5641,
+      "dt_s": 0.0524,
+      "receipt_mono": 2944.578523472,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0244,
+      "disp_accum_m": 0.025,
+      "yaw_net_deg": 0.01,
+      "yaw_accum_deg": 0.63,
+      "gyro_z": 0.0137,
+      "ticks": {
+        "m1": -232,
+        "m2": -236,
+        "m3": -233,
+        "m4": -242
+      },
+      "delta_ticks": {
+        "m1": -7,
+        "m2": -8,
+        "m3": -9,
+        "m4": -11
+      },
+      "raw_ticks": {
+        "m1": -435,
+        "m2": -438,
+        "m3": -443,
+        "m4": -447
+      },
+      "measured_radps": {
+        "m1": -0.6,
+        "m2": -0.62,
+        "m3": -0.51,
+        "m4": -0.47
+      },
+      "measured_mps": {
+        "m1": -0.0195,
+        "m2": -0.0202,
+        "m3": -0.0166,
+        "m4": -0.0153
+      },
+      "signed_chassis_mps": -0.0179,
+      "mean_abs_wheel_speed_mps": 0.0179,
+      "measured_chassis_mps": 0.0179,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.45,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -40,
+        "m3": -44,
+        "m4": -40
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.2,
+          "iTerm": 0.2,
+          "dTerm": 0.3,
+          "feedforward": -41.5,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0.3,
+          "iTerm": 0.2,
+          "dTerm": 0.2,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": -1.5,
+          "dTerm": -0.5,
+          "feedforward": -41.5,
+          "basePwm": -44,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -44
+        },
+        "m4": {
+          "pTerm": 0,
+          "iTerm": 1.7,
+          "dTerm": -0.3,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.578523472,
+        "drive_rx": 1791892368606,
+        "pid": 1791892368574,
+        "pid_data_age_ms": 83,
+        "encoders": 1791892368658,
+        "imu": 1791892368645
+      },
+      "sequences": {
+        "drive": 24610,
+        "pid": 12305,
+        "encoders": 49222,
+        "imu": 61963
+      }
+    },
+    {
+      "t_rel": 1.6147,
+      "dt_s": 0.0506,
+      "receipt_mono": 2944.629159162,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0253,
+      "disp_accum_m": 0.0259,
+      "yaw_net_deg": 0.01,
+      "yaw_accum_deg": 0.65,
+      "gyro_z": -0.002,
+      "ticks": {
+        "m1": -242,
+        "m2": -246,
+        "m3": -242,
+        "m4": -250
+      },
+      "delta_ticks": {
+        "m1": -10,
+        "m2": -10,
+        "m3": -9,
+        "m4": -8
+      },
+      "raw_ticks": {
+        "m1": -445,
+        "m2": -448,
+        "m3": -452,
+        "m4": -455
+      },
+      "measured_radps": {
+        "m1": -0.59,
+        "m2": -0.61,
+        "m3": -0.51,
+        "m4": -0.56
+      },
+      "measured_mps": {
+        "m1": -0.0192,
+        "m2": -0.0198,
+        "m3": -0.0166,
+        "m4": -0.0182
+      },
+      "signed_chassis_mps": -0.0184,
+      "mean_abs_wheel_speed_mps": 0.0184,
+      "measured_chassis_mps": 0.0184,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.45,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -40,
+        "m3": -43,
+        "m4": -40
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.2,
+          "iTerm": 0.2,
+          "dTerm": 0,
+          "feedforward": -41.7,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0.3,
+          "iTerm": 0.4,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": -1.4,
+          "dTerm": 0.1,
+          "feedforward": -41.7,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m4": {
+          "pTerm": 0.2,
+          "iTerm": 1.8,
+          "dTerm": -0.6,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.629159162,
+        "drive_rx": 1791892368658,
+        "pid": 1791892368678,
+        "pid_data_age_ms": 28,
+        "encoders": 1791892368708,
+        "imu": 1791892368687
+      },
+      "sequences": {
+        "drive": 24611,
+        "pid": 12306,
+        "encoders": 49224,
+        "imu": 61965
+      }
+    },
+    {
+      "t_rel": 1.6653,
+      "dt_s": 0.0505,
+      "receipt_mono": 2944.679681037,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0263,
+      "disp_accum_m": 0.0268,
+      "yaw_net_deg": 0.01,
+      "yaw_accum_deg": 0.66,
+      "gyro_z": 0.002,
+      "ticks": {
+        "m1": -252,
+        "m2": -254,
+        "m3": -251,
+        "m4": -259
+      },
+      "delta_ticks": {
+        "m1": -10,
+        "m2": -8,
+        "m3": -9,
+        "m4": -9
+      },
+      "raw_ticks": {
+        "m1": -455,
+        "m2": -456,
+        "m3": -461,
+        "m4": -464
+      },
+      "measured_radps": {
+        "m1": -0.59,
+        "m2": -0.61,
+        "m3": -0.51,
+        "m4": -0.56
+      },
+      "measured_mps": {
+        "m1": -0.0192,
+        "m2": -0.0198,
+        "m3": -0.0166,
+        "m4": -0.0182
+      },
+      "signed_chassis_mps": -0.0184,
+      "mean_abs_wheel_speed_mps": 0.0184,
+      "measured_chassis_mps": 0.0184,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.45,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -40,
+        "m3": -43,
+        "m4": -40
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.2,
+          "iTerm": 0.2,
+          "dTerm": 0,
+          "feedforward": -41.7,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0.3,
+          "iTerm": 0.4,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": -1.4,
+          "dTerm": 0.1,
+          "feedforward": -41.7,
+          "basePwm": -43,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -43
+        },
+        "m4": {
+          "pTerm": 0.2,
+          "iTerm": 1.8,
+          "dTerm": -0.6,
+          "feedforward": -41,
+          "basePwm": -40,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -40
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.679681037,
+        "drive_rx": 1791892368708,
+        "pid": 1791892368678,
+        "pid_data_age_ms": 79,
+        "encoders": 1791892368757,
+        "imu": 1791892368744
+      },
+      "sequences": {
+        "drive": 24612,
+        "pid": 12306,
+        "encoders": 49226,
+        "imu": 61968
+      }
+    },
+    {
+      "t_rel": 1.7177,
+      "dt_s": 0.0524,
+      "receipt_mono": 2944.732075579,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0273,
+      "disp_accum_m": 0.0278,
+      "yaw_net_deg": 0.0,
+      "yaw_accum_deg": 0.67,
+      "gyro_z": 0.0078,
+      "ticks": {
+        "m1": -260,
+        "m2": -264,
+        "m3": -261,
+        "m4": -269
+      },
+      "delta_ticks": {
+        "m1": -8,
+        "m2": -10,
+        "m3": -10,
+        "m4": -10
+      },
+      "raw_ticks": {
+        "m1": -463,
+        "m2": -466,
+        "m3": -471,
+        "m4": -474
+      },
+      "measured_radps": {
+        "m1": -0.59,
+        "m2": -0.49,
+        "m3": -0.62,
+        "m4": -0.7
+      },
+      "measured_mps": {
+        "m1": -0.0192,
+        "m2": -0.0159,
+        "m3": -0.0202,
+        "m4": -0.0227
+      },
+      "signed_chassis_mps": -0.0195,
+      "mean_abs_wheel_speed_mps": 0.0195,
+      "measured_chassis_mps": 0.0195,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.46,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -41,
+        "m3": -42,
+        "m4": -38
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.2,
+          "iTerm": 0.3,
+          "dTerm": 0.3,
+          "feedforward": -41.6,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0.4,
+          "dTerm": -0.4,
+          "feedforward": -41.1,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m3": {
+          "pTerm": 0.3,
+          "iTerm": -1.2,
+          "dTerm": 0.2,
+          "feedforward": -41.6,
+          "basePwm": -42,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -42
+        },
+        "m4": {
+          "pTerm": 0.6,
+          "iTerm": 2,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -38,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -38
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.732075579,
+        "drive_rx": 1791892368763,
+        "pid": 1791892368779,
+        "pid_data_age_ms": 30,
+        "encoders": 1791892368810,
+        "imu": 1791892368804
+      },
+      "sequences": {
+        "drive": 24613,
+        "pid": 12307,
+        "encoders": 49228,
+        "imu": 61971
+      }
+    },
+    {
+      "t_rel": 1.7649,
+      "dt_s": 0.0473,
+      "receipt_mono": 2944.779358251,
+      "seg_idx": 0,
+      "cmd": {
+        "vx": -0.015,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0282,
+      "disp_accum_m": 0.0288,
+      "yaw_net_deg": 0.0,
+      "yaw_accum_deg": 0.67,
+      "gyro_z": 0.0059,
+      "ticks": {
+        "m1": -270,
+        "m2": -273,
+        "m3": -270,
+        "m4": -278
+      },
+      "delta_ticks": {
+        "m1": -10,
+        "m2": -9,
+        "m3": -9,
+        "m4": -9
+      },
+      "raw_ticks": {
+        "m1": -473,
+        "m2": -475,
+        "m3": -480,
+        "m4": -483
+      },
+      "measured_radps": {
+        "m1": -0.59,
+        "m2": -0.49,
+        "m3": -0.62,
+        "m4": -0.7
+      },
+      "measured_mps": {
+        "m1": -0.0192,
+        "m2": -0.0159,
+        "m3": -0.0202,
+        "m4": -0.0227
+      },
+      "signed_chassis_mps": -0.0195,
+      "mean_abs_wheel_speed_mps": 0.0195,
+      "measured_chassis_mps": 0.0195,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.46,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -41,
+        "m2": -41,
+        "m3": -42,
+        "m4": -38
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.2,
+          "iTerm": 0.3,
+          "dTerm": 0.3,
+          "feedforward": -41.6,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0.4,
+          "dTerm": -0.4,
+          "feedforward": -41.1,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m3": {
+          "pTerm": 0.3,
+          "iTerm": -1.2,
+          "dTerm": 0.2,
+          "feedforward": -41.6,
+          "basePwm": -42,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -42
+        },
+        "m4": {
+          "pTerm": 0.6,
+          "iTerm": 2,
+          "dTerm": 0,
+          "feedforward": -41,
+          "basePwm": -38,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -38
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.779358251,
+        "drive_rx": 1791892368816,
+        "pid": 1791892368779,
+        "pid_data_age_ms": 79,
+        "encoders": 1791892368854,
+        "imu": 1791892368844
+      },
+      "sequences": {
+        "drive": 24614,
+        "pid": 12307,
+        "encoders": 49230,
+        "imu": 61973
+      }
+    },
+    {
+      "t_rel": 1.8213,
+      "dt_s": 0.0564,
+      "receipt_mono": 2944.835758699,
+      "seg_idx": -1,
+      "cmd": {
+        "vx": 0.0,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0294,
+      "disp_accum_m": 0.0299,
+      "yaw_net_deg": 0.02,
+      "yaw_accum_deg": 0.69,
+      "gyro_z": -0.0156,
+      "ticks": {
+        "m1": -280,
+        "m2": -284,
+        "m3": -282,
+        "m4": -289
+      },
+      "delta_ticks": {
+        "m1": -10,
+        "m2": -11,
+        "m3": -12,
+        "m4": -11
+      },
+      "raw_ticks": {
+        "m1": -483,
+        "m2": -486,
+        "m3": -492,
+        "m4": -494
+      },
+      "measured_radps": {
+        "m1": -0.53,
+        "m2": -0.48,
+        "m3": -0.66,
+        "m4": -0.66
+      },
+      "measured_mps": {
+        "m1": -0.0172,
+        "m2": -0.0156,
+        "m3": -0.0215,
+        "m4": -0.0215
+      },
+      "signed_chassis_mps": -0.0189,
+      "mean_abs_wheel_speed_mps": 0.0189,
+      "measured_chassis_mps": 0.0189,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.46,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -42,
+        "m2": -41,
+        "m3": -42,
+        "m4": -38
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.1,
+          "iTerm": 0.4,
+          "dTerm": -0.4,
+          "feedforward": -41.7,
+          "basePwm": -42,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -42
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0.6,
+          "dTerm": -0.3,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m3": {
+          "pTerm": 0.4,
+          "iTerm": -1,
+          "dTerm": 0.4,
+          "feedforward": -41.4,
+          "basePwm": -42,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -42
+        },
+        "m4": {
+          "pTerm": 0.5,
+          "iTerm": 2.1,
+          "dTerm": 0.4,
+          "feedforward": -41,
+          "basePwm": -38,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -38
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.835758699,
+        "drive_rx": 1791892368860,
+        "pid": 1791892368879,
+        "pid_data_age_ms": 34,
+        "encoders": 1791892368915,
+        "imu": 1791892368908
+      },
+      "sequences": {
+        "drive": 24615,
+        "pid": 12308,
+        "encoders": 49232,
+        "imu": 61976
+      }
+    },
+    {
+      "t_rel": 1.8669,
+      "dt_s": 0.0455,
+      "receipt_mono": 2944.881281409,
+      "seg_idx": -1,
+      "cmd": {
+        "vx": 0.0,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0299,
+      "disp_accum_m": 0.0303,
+      "yaw_net_deg": 0.02,
+      "yaw_accum_deg": 0.69,
+      "gyro_z": -0.0137,
+      "ticks": {
+        "m1": -286,
+        "m2": -290,
+        "m3": -286,
+        "m4": -293
+      },
+      "delta_ticks": {
+        "m1": -6,
+        "m2": -6,
+        "m3": -4,
+        "m4": -4
+      },
+      "raw_ticks": {
+        "m1": -489,
+        "m2": -492,
+        "m3": -496,
+        "m4": -498
+      },
+      "measured_radps": {
+        "m1": -0.53,
+        "m2": -0.48,
+        "m3": -0.66,
+        "m4": -0.66
+      },
+      "measured_mps": {
+        "m1": -0.0172,
+        "m2": -0.0156,
+        "m3": -0.0215,
+        "m4": -0.0215
+      },
+      "signed_chassis_mps": -0.0189,
+      "mean_abs_wheel_speed_mps": 0.0189,
+      "measured_chassis_mps": 0.0189,
+      "target_radps": {
+        "m1": -0.47,
+        "m2": -0.46,
+        "m3": -0.47,
+        "m4": -0.43
+      },
+      "pwm": {
+        "m1": -42,
+        "m2": -41,
+        "m3": -42,
+        "m4": -38
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0.1,
+          "iTerm": 0.4,
+          "dTerm": -0.4,
+          "feedforward": -41.7,
+          "basePwm": -42,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -42
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0.6,
+          "dTerm": -0.3,
+          "feedforward": -41,
+          "basePwm": -41,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -41
+        },
+        "m3": {
+          "pTerm": 0.4,
+          "iTerm": -1,
+          "dTerm": 0.4,
+          "feedforward": -41.4,
+          "basePwm": -42,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -42
+        },
+        "m4": {
+          "pTerm": 0.5,
+          "iTerm": 2.1,
+          "dTerm": 0.4,
+          "feedforward": -41,
+          "basePwm": -38,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": -38
+        }
+      },
+      "stiction": {
+        "m1": "KINETIC",
+        "m2": "KINETIC",
+        "m3": "KINETIC",
+        "m4": "KINETIC"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.881281409,
+        "drive_rx": 1791892368917,
+        "pid": 1791892368879,
+        "pid_data_age_ms": 80,
+        "encoders": 1791892368956,
+        "imu": 1791892368944
+      },
+      "sequences": {
+        "drive": 24616,
+        "pid": 12308,
+        "encoders": 49234,
+        "imu": 61978
+      }
+    },
+    {
+      "t_rel": 1.9161,
+      "dt_s": 0.0492,
+      "receipt_mono": 2944.930512396,
+      "seg_idx": -1,
+      "cmd": {
+        "vx": 0.0,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0299,
+      "disp_accum_m": 0.0303,
+      "yaw_net_deg": 0.03,
+      "yaw_accum_deg": 0.7,
+      "gyro_z": -0.0098,
+      "ticks": {
+        "m1": -286,
+        "m2": -290,
+        "m3": -286,
+        "m4": -293
+      },
+      "delta_ticks": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "raw_ticks": {
+        "m1": -489,
+        "m2": -492,
+        "m3": -496,
+        "m4": -498
+      },
+      "measured_radps": {
+        "m1": -0.1,
+        "m2": -0.1,
+        "m3": -0.07,
+        "m4": -0.07
+      },
+      "measured_mps": {
+        "m1": -0.0033,
+        "m2": -0.0033,
+        "m3": -0.0023,
+        "m4": -0.0023
+      },
+      "signed_chassis_mps": -0.0028,
+      "mean_abs_wheel_speed_mps": 0.0028,
+      "measured_chassis_mps": 0.0028,
+      "target_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pwm": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m4": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        }
+      },
+      "stiction": {
+        "m1": "IDLE",
+        "m2": "IDLE",
+        "m3": "IDLE",
+        "m4": "IDLE"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.930512396,
+        "drive_rx": 1791892368962,
+        "pid": 1791892368979,
+        "pid_data_age_ms": 29,
+        "encoders": 1791892369007,
+        "imu": 1791892369004
+      },
+      "sequences": {
+        "drive": 24617,
+        "pid": 12309,
+        "encoders": 49236,
+        "imu": 61981
+      }
+    },
+    {
+      "t_rel": 1.9657,
+      "dt_s": 0.0496,
+      "receipt_mono": 2944.98010592,
+      "seg_idx": -1,
+      "cmd": {
+        "vx": 0.0,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0299,
+      "disp_accum_m": 0.0303,
+      "yaw_net_deg": 0.02,
+      "yaw_accum_deg": 0.71,
+      "gyro_z": -0.0059,
+      "ticks": {
+        "m1": -286,
+        "m2": -290,
+        "m3": -286,
+        "m4": -293
+      },
+      "delta_ticks": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "raw_ticks": {
+        "m1": -489,
+        "m2": -492,
+        "m3": -496,
+        "m4": -498
+      },
+      "measured_radps": {
+        "m1": -0.1,
+        "m2": -0.1,
+        "m3": -0.07,
+        "m4": -0.07
+      },
+      "measured_mps": {
+        "m1": -0.0033,
+        "m2": -0.0033,
+        "m3": -0.0023,
+        "m4": -0.0023
+      },
+      "signed_chassis_mps": -0.0028,
+      "mean_abs_wheel_speed_mps": 0.0028,
+      "measured_chassis_mps": 0.0028,
+      "target_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pwm": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m4": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        }
+      },
+      "stiction": {
+        "m1": "IDLE",
+        "m2": "IDLE",
+        "m3": "IDLE",
+        "m4": "IDLE"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2944.98010592,
+        "drive_rx": 1791892369016,
+        "pid": 1791892368979,
+        "pid_data_age_ms": 79,
+        "encoders": 1791892369057,
+        "imu": 1791892369046
+      },
+      "sequences": {
+        "drive": 24618,
+        "pid": 12309,
+        "encoders": 49238,
+        "imu": 61983
+      }
+    },
+    {
+      "t_rel": 2.0182,
+      "dt_s": 0.0525,
+      "receipt_mono": 2945.032593184,
+      "seg_idx": -1,
+      "cmd": {
+        "vx": 0.0,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0299,
+      "disp_accum_m": 0.0303,
+      "yaw_net_deg": 0.02,
+      "yaw_accum_deg": 0.71,
+      "gyro_z": 0.0039,
+      "ticks": {
+        "m1": -286,
+        "m2": -290,
+        "m3": -286,
+        "m4": -293
+      },
+      "delta_ticks": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "raw_ticks": {
+        "m1": -489,
+        "m2": -492,
+        "m3": -496,
+        "m4": -498
+      },
+      "measured_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "measured_mps": {
+        "m1": 0.0,
+        "m2": 0.0,
+        "m3": 0.0,
+        "m4": 0.0
+      },
+      "signed_chassis_mps": 0.0,
+      "mean_abs_wheel_speed_mps": 0.0,
+      "measured_chassis_mps": 0.0,
+      "target_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pwm": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m4": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        }
+      },
+      "stiction": {
+        "m1": "IDLE",
+        "m2": "IDLE",
+        "m3": "IDLE",
+        "m4": "IDLE"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2945.032593184,
+        "drive_rx": 1791892369062,
+        "pid": 1791892369080,
+        "pid_data_age_ms": 28,
+        "encoders": 1791892369107,
+        "imu": 1791892369104
+      },
+      "sequences": {
+        "drive": 24619,
+        "pid": 12310,
+        "encoders": 49240,
+        "imu": 61986
+      }
+    },
+    {
+      "t_rel": 2.0648,
+      "dt_s": 0.0466,
+      "receipt_mono": 2945.079180691,
+      "seg_idx": -1,
+      "cmd": {
+        "vx": 0.0,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0299,
+      "disp_accum_m": 0.0303,
+      "yaw_net_deg": 0.02,
+      "yaw_accum_deg": 0.71,
+      "gyro_z": -0.0117,
+      "ticks": {
+        "m1": -286,
+        "m2": -290,
+        "m3": -286,
+        "m4": -293
+      },
+      "delta_ticks": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "raw_ticks": {
+        "m1": -489,
+        "m2": -492,
+        "m3": -496,
+        "m4": -498
+      },
+      "measured_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "measured_mps": {
+        "m1": 0.0,
+        "m2": 0.0,
+        "m3": 0.0,
+        "m4": 0.0
+      },
+      "signed_chassis_mps": 0.0,
+      "mean_abs_wheel_speed_mps": 0.0,
+      "measured_chassis_mps": 0.0,
+      "target_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pwm": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m4": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        }
+      },
+      "stiction": {
+        "m1": "IDLE",
+        "m2": "IDLE",
+        "m3": "IDLE",
+        "m4": "IDLE"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2945.079180691,
+        "drive_rx": 1791892369117,
+        "pid": 1791892369080,
+        "pid_data_age_ms": 78,
+        "encoders": 1791892369157,
+        "imu": 1791892369144
+      },
+      "sequences": {
+        "drive": 24620,
+        "pid": 12310,
+        "encoders": 49242,
+        "imu": 61988
+      }
+    },
+    {
+      "t_rel": 2.1179,
+      "dt_s": 0.0532,
+      "receipt_mono": 2945.132339714,
+      "seg_idx": -1,
+      "cmd": {
+        "vx": 0.0,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0299,
+      "disp_accum_m": 0.0303,
+      "yaw_net_deg": 0.0,
+      "yaw_accum_deg": 0.72,
+      "gyro_z": 0.0117,
+      "ticks": {
+        "m1": -286,
+        "m2": -290,
+        "m3": -286,
+        "m4": -293
+      },
+      "delta_ticks": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "raw_ticks": {
+        "m1": -489,
+        "m2": -492,
+        "m3": -496,
+        "m4": -498
+      },
+      "measured_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "measured_mps": {
+        "m1": 0.0,
+        "m2": 0.0,
+        "m3": 0.0,
+        "m4": 0.0
+      },
+      "signed_chassis_mps": 0.0,
+      "mean_abs_wheel_speed_mps": 0.0,
+      "measured_chassis_mps": 0.0,
+      "target_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pwm": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m4": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        }
+      },
+      "stiction": {
+        "m1": "IDLE",
+        "m2": "IDLE",
+        "m3": "IDLE",
+        "m4": "IDLE"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2945.132339714,
+        "drive_rx": 1791892369163,
+        "pid": 1791892369184,
+        "pid_data_age_ms": 25,
+        "encoders": 1791892369210,
+        "imu": 1791892369204
+      },
+      "sequences": {
+        "drive": 24621,
+        "pid": 12311,
+        "encoders": 49244,
+        "imu": 61991
+      }
+    },
+    {
+      "t_rel": 2.1715,
+      "dt_s": 0.0536,
+      "receipt_mono": 2945.185899793,
+      "seg_idx": -1,
+      "cmd": {
+        "vx": 0.0,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0299,
+      "disp_accum_m": 0.0303,
+      "yaw_net_deg": 0.01,
+      "yaw_accum_deg": 0.73,
+      "gyro_z": 0.002,
+      "ticks": {
+        "m1": -286,
+        "m2": -290,
+        "m3": -286,
+        "m4": -293
+      },
+      "delta_ticks": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "raw_ticks": {
+        "m1": -489,
+        "m2": -492,
+        "m3": -496,
+        "m4": -498
+      },
+      "measured_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "measured_mps": {
+        "m1": 0.0,
+        "m2": 0.0,
+        "m3": 0.0,
+        "m4": 0.0
+      },
+      "signed_chassis_mps": 0.0,
+      "mean_abs_wheel_speed_mps": 0.0,
+      "measured_chassis_mps": 0.0,
+      "target_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pwm": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m4": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        }
+      },
+      "stiction": {
+        "m1": "IDLE",
+        "m2": "IDLE",
+        "m3": "IDLE",
+        "m4": "IDLE"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2945.185899793,
+        "drive_rx": 1791892369216,
+        "pid": 1791892369184,
+        "pid_data_age_ms": 78,
+        "encoders": 1791892369258,
+        "imu": 1791892369244
+      },
+      "sequences": {
+        "drive": 24622,
+        "pid": 12311,
+        "encoders": 49246,
+        "imu": 61993
+      }
+    },
+    {
+      "t_rel": 2.2181,
+      "dt_s": 0.0466,
+      "receipt_mono": 2945.232515874,
+      "seg_idx": -1,
+      "cmd": {
+        "vx": 0.0,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0299,
+      "disp_accum_m": 0.0303,
+      "yaw_net_deg": 0.01,
+      "yaw_accum_deg": 0.73,
+      "gyro_z": 0.002,
+      "ticks": {
+        "m1": -286,
+        "m2": -290,
+        "m3": -286,
+        "m4": -293
+      },
+      "delta_ticks": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "raw_ticks": {
+        "m1": -489,
+        "m2": -492,
+        "m3": -496,
+        "m4": -498
+      },
+      "measured_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "measured_mps": {
+        "m1": 0.0,
+        "m2": 0.0,
+        "m3": 0.0,
+        "m4": 0.0
+      },
+      "signed_chassis_mps": 0.0,
+      "mean_abs_wheel_speed_mps": 0.0,
+      "measured_chassis_mps": 0.0,
+      "target_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pwm": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m4": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        }
+      },
+      "stiction": {
+        "m1": "IDLE",
+        "m2": "IDLE",
+        "m3": "IDLE",
+        "m4": "IDLE"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2945.232515874,
+        "drive_rx": 1791892369265,
+        "pid": 1791892369282,
+        "pid_data_age_ms": 27,
+        "encoders": 1791892369307,
+        "imu": 1791892369304
+      },
+      "sequences": {
+        "drive": 24623,
+        "pid": 12312,
+        "encoders": 49248,
+        "imu": 61996
+      }
+    },
+    {
+      "t_rel": 2.2655,
+      "dt_s": 0.0474,
+      "receipt_mono": 2945.27986788,
+      "seg_idx": -1,
+      "cmd": {
+        "vx": 0.0,
+        "wz": 0.0
+      },
+      "disp_net_m": -0.0299,
+      "disp_accum_m": 0.0303,
+      "yaw_net_deg": 0.01,
+      "yaw_accum_deg": 0.74,
+      "gyro_z": 0.0,
+      "ticks": {
+        "m1": -286,
+        "m2": -290,
+        "m3": -286,
+        "m4": -293
+      },
+      "delta_ticks": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "raw_ticks": {
+        "m1": -489,
+        "m2": -492,
+        "m3": -496,
+        "m4": -498
+      },
+      "measured_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "measured_mps": {
+        "m1": 0.0,
+        "m2": 0.0,
+        "m3": 0.0,
+        "m4": 0.0
+      },
+      "signed_chassis_mps": 0.0,
+      "mean_abs_wheel_speed_mps": 0.0,
+      "measured_chassis_mps": 0.0,
+      "target_radps": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pwm": {
+        "m1": 0,
+        "m2": 0,
+        "m3": 0,
+        "m4": 0
+      },
+      "pid_terms": {
+        "m1": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m2": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m3": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        },
+        "m4": {
+          "pTerm": 0,
+          "iTerm": 0,
+          "dTerm": 0,
+          "feedforward": 0,
+          "basePwm": 0,
+          "spinSyncTrim": 0,
+          "recoveryAssist": 0,
+          "candidateEnabled": true,
+          "finalPwm": 0
+        }
+      },
+      "stiction": {
+        "m1": "IDLE",
+        "m2": "IDLE",
+        "m3": "IDLE",
+        "m4": "IDLE"
+      },
+      "recovery": {
+        "noMotionBudgetMs": 0,
+        "spinFailedExhausted": false,
+        "spinRecoveryCode": 0,
+        "spinRecoveryState": "IDLE",
+        "chassisRebreakoutConsumed": false,
+        "recoveryAssist": {
+          "m1": 0,
+          "m2": 0,
+          "m3": 0,
+          "m4": 0
+        },
+        "candidateEnabled": {
+          "m1": true,
+          "m2": true,
+          "m3": true,
+          "m4": true
+        }
+      },
+      "timestamps": {
+        "receipt_mono": 2945.27986788,
+        "drive_rx": 1791892369316,
+        "pid": 1791892369282,
+        "pid_data_age_ms": 76,
+        "encoders": 1791892369357,
+        "imu": 1791892369347
+      },
+      "sequences": {
+        "drive": 24624,
+        "pid": 12312,
+        "encoders": 49250,
+        "imu": 61998
+      }
+    }
+  ],
+  "breakaway": {
+    "first_tick_time_s": 0.10863165499995375,
+    "breakout_pwm": {
+      "m1": -64,
+      "m2": -64,
+      "m3": -64,
+      "m4": -64
+    }
+  },
+  "segment_metrics": [
+    {
+      "segment_index": 0,
+      "command": {
+        "vx": -0.015,
+        "wz": 0.0,
+        "duration_s": 1.8
+      },
+      "sample_count": 36,
+      "unique_pid_packets": 18,
+      "wheels": {
+        "m1": {
+          "target_radps": -0.467,
+          "mean_measured_radps": -0.46,
+          "mean_error_radps": 0.019,
+          "std_dev_radps": 0.271,
+          "mean_pwm": -41.6,
+          "stall_intervals_count": 1,
+          "longest_stall_ms": 47.1,
+          "wrong_direction_samples": 0
+        },
+        "m2": {
+          "target_radps": -0.45,
+          "mean_measured_radps": -0.446,
+          "mean_error_radps": 0.021,
+          "std_dev_radps": 0.291,
+          "mean_pwm": -40.8,
+          "stall_intervals_count": 1,
+          "longest_stall_ms": 154.4,
+          "wrong_direction_samples": 0
+        },
+        "m3": {
+          "target_radps": -0.473,
+          "mean_measured_radps": -0.444,
+          "mean_error_radps": -0.003,
+          "std_dev_radps": 0.317,
+          "mean_pwm": -43.3,
+          "stall_intervals_count": 1,
+          "longest_stall_ms": 152.0,
+          "wrong_direction_samples": 0
+        },
+        "m4": {
+          "target_radps": -0.439,
+          "mean_measured_radps": -0.468,
+          "mean_error_radps": 0.053,
+          "std_dev_radps": 0.287,
+          "mean_pwm": -41.2,
+          "stall_intervals_count": 1,
+          "longest_stall_ms": 253.9,
+          "wrong_direction_samples": 0
+        }
+      }
+    }
+  ],
+  "stopping": {
+    "overrun_distance_mm": -0.5,
+    "overrun_yaw_deg": -0.01,
+    "settle_time_s": 0.444
+  },
+  "status": "SUCCESS",
+  "command_boundaries": {
+    "first_cmd_dispatch_mono": 2943.0144,
+    "first_cmd_ack_mono": 2943.0169,
+    "last_cmd_dispatch_mono": 2944.7676,
+    "last_cmd_ack_mono": 2944.7701,
+    "first_zero_dispatch_mono": 2944.8177,
+    "first_zero_ack_mono": 2944.8206,
+    "telemetry_cutoff_mono": 2944.8177,
+    "command_duration_s": 1.8033,
+    "command_start_mono": 2943.0144,
+    "command_cutoff_mono": 2944.8177,
+    "first_zero_command_mono": 2944.8177
+  },
+  "cleanup_verification": {
+    "zero_command_confirmed": true,
+    "disarm_mode0_confirmed": true
+  },
+  "lifecycle_completion": {
+    "lifecycle_status": "COMPLETED",
+    "stop_confirmed": true,
+    "zero_confirmed": true,
+    "disarm_confirmed": true,
+    "settle_time_s": 0.444
+  },
+  "motion_tracking": {
+    "nominal_requested_distance_m": 0.027,
+    "script_command_profile_distance_m": 0.0263,
+    "firmware_wheel_target_distance_m": 0.0261,
+    "telemetry_observed_profile_distance_m": 0.0263,
+    "last_active_sample_distance_m": 0.0282,
+    "final_stopped_encoder_distance_m": 0.0299,
+    "post_command_overrun_distance_m": 0.0017,
+    "operator_physical_measurement_mm": null,
+    "expected_distance_m": 0.027,
+    "achieved_distance_m": 0.0299,
+    "final_displacement_signed_m": -0.0299,
+    "last_active_displacement_signed_m": -0.0282,
+    "distance_ratio": 1.107,
+    "distance_ratio_pct": 110.7,
+    "tracking_status": "TRACKING_NOMINAL",
+    "tracking_deficit_threshold_pct": 70.0
+  },
+  "communication_status": {
+    "total_telemetry_samples": 46,
+    "communication_healthy": true
+  },
+  "recovery_status": {
+    "final_no_motion_budget_ms": 0,
+    "spin_failed_exhausted": false,
+    "chassis_rebreakout_consumed": false,
+    "recovery_exhausted": false,
+    "candidate_recovery_assist_enabled": true,
+    "candidate_recovery_assist_wheels": {
+      "m1": true,
+      "m2": true,
+      "m3": true,
+      "m4": true
+    },
+    "final_recovery_assist": {
+      "m1": 0,
+      "m2": 0,
+      "m3": 0,
+      "m4": 0
+    }
+  }
+}

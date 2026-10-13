@@ -1,0 +1,627 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_NeoPixel.h>
+
+// Brownout workaround headers
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
+#include <esp_system.h>
+#include <rom/rtc.h>
+
+// Persistent RTC reset reason & boot tracking across reboots
+RTC_DATA_ATTR static uint32_t s_rtcBootCount = 0;
+RTC_DATA_ATTR static uint32_t s_rtcResetReason = 0;
+RTC_DATA_ATTR static uint32_t s_rtcRtc0Reason = 0;
+RTC_DATA_ATTR static uint32_t s_rtcRtc1Reason = 0;
+
+uint32_t getEspBootCount() { return s_rtcBootCount; }
+uint32_t getEspResetReason() { return s_rtcResetReason; }
+uint32_t getEspRtc0ResetReason() { return s_rtcRtc0Reason; }
+
+// Unified Controller Components
+#include "RoverConfig.h"
+#include "MotorDriver.h"
+#include "EncoderManager.h"
+#include "CommandManager.h"
+#include "MotionLimiter.h"
+#include "DifferentialDrive.h"
+#include "WheelController.h"
+#include "SafetyManager.h"
+#include "SerialProtocol.h"
+#include "CalibrationManager.h"
+#include "MaintenanceManager.h"
+#include "ImuManager.h"
+#include "ChassisSupervisor.h"
+
+// Onboard RGB LEDs Configuration
+#define RGB_PIN 16
+#define NUM_LEDS 4
+
+// Initialize NeoPixel strip
+Adafruit_NeoPixel strip(NUM_LEDS, RGB_PIN, NEO_GRB + NEO_KHZ800);
+
+// Unified control component instances
+MotorDriver motorDriver;
+EncoderManager encoderManager;
+CommandManager commandManager;
+MotionLimiter motionLimiter;
+WheelController wheelController;
+SafetyManager safetyManager;
+SerialProtocol serialProtocol;
+CalibrationManager calManager;
+MaintenanceManager maintenanceManager;
+ImuManager imuManager;
+
+ControlLoopStats loopStats = {0, 9999999, 0, 0, 0, 0};
+
+unsigned long lastControlTime = 0;
+
+// Structure to track individual LED colors
+struct RGBColor {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+};
+
+// Default colors: Pulsing Green/Blue on boot
+RGBColor leds[NUM_LEDS] = {
+  {0, 255, 0},
+  {0, 0, 255},
+  {0, 255, 0},
+  {0, 0, 255}
+};
+
+// Set a single LED color
+void setLED(int index, uint8_t r, uint8_t g, uint8_t b) {
+  if (index >= 0 && index < NUM_LEDS) {
+    leds[index] = {r, g, b};
+    strip.setPixelColor(index, strip.Color(r, g, b));
+    strip.show();
+  }
+}
+
+// Set all LEDs to a single color
+void setAllLEDs(uint8_t r, uint8_t g, uint8_t b) {
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = {r, g, b};
+    strip.setPixelColor(i, strip.Color(r, g, b));
+  }
+  strip.show();
+}
+
+
+
+
+
+
+
+void setup() {
+  // Capture ESP32 hardware reset reason and increment persistent RTC boot count
+  s_rtcBootCount++;
+  esp_reset_reason_t rst_reason = esp_reset_reason();
+  RESET_REASON rtc0 = rtc_get_reset_reason(0);
+  RESET_REASON rtc1 = rtc_get_reset_reason(1);
+  s_rtcResetReason = (uint32_t)rst_reason;
+  s_rtcRtc0Reason = (uint32_t)rtc0;
+  s_rtcRtc1Reason = (uint32_t)rtc1;
+
+  // Disable brownout detector to prevent low-voltage reset loop
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
+  // Initialize Serial & Protocol
+  serialProtocol.begin();
+  delay(100);
+  
+  // Explicit hardware reset forensic banner (captured by Cockpit serial reader)
+  Serial.printf("\n[ESP32_BOOT] BootCount=%lu ResetReason=%lu (%s) ROM_Rst_CPU0=0x%lx (%s) ROM_Rst_CPU1=0x%lx (%s)\n",
+      (unsigned long)s_rtcBootCount,
+      (unsigned long)s_rtcResetReason, getEspResetReasonString(s_rtcResetReason),
+      (unsigned long)s_rtcRtc0Reason, getEspRtcResetReasonString(s_rtcRtc0Reason),
+      (unsigned long)s_rtcRtc1Reason, getEspRtcResetReasonString(s_rtcRtc1Reason)
+  );
+  delay(100);
+
+  // Definitive firmware identification serial print
+  LOG_SERIAL_PRINTLN("\n=================================");
+  LOG_SERIAL_PRINTLN("Firmware Name: Maker-ESP32-Unified-Rover");
+  LOG_SERIAL_PRINTLN("Firmware Version: 1.0.0-phase1");
+  LOG_SERIAL_PRINTLN("Protocol Version: v1.1");
+  LOG_SERIAL_PRINTLN("Source Identifier: refactor-p1-cleanup");
+  LOG_SERIAL_PRINT("Build Timestamp: ");
+  LOG_SERIAL_PRINTLN(__DATE__ " " __TIME__);
+  LOG_SERIAL_PRINTLN("Hardware Target: Maker-ESP32-Pro");
+  LOG_SERIAL_PRINTLN("=================================");
+
+  // Initialize NVS configurations
+  initConfigStorage();
+
+  // Initialize Managers
+  motorDriver.begin();
+  encoderManager.begin();
+  commandManager.begin();
+  motionLimiter.begin();
+  wheelController.begin();
+  wheelController.setTimeoutDisarmHook([]() {
+    commandManager.disarmNormalDrive();
+    commandManager.requestSourceChange(SOURCE_NONE, 0.0f, 0.0f);
+    motionLimiter.reset(0.0f, 0.0f);
+    Serial.println("[Safety] Open-loop PWM command expired (>300ms). Disarmed and locked.");
+  });
+  safetyManager.begin();
+  calManager.begin();
+  imuManager.begin(21, 22, 0x4B);
+
+  // Initialize NeoPixels
+  strip.begin();
+  strip.setBrightness(128); // Moderate brightness
+  setLED(0, 66, 133, 244);  // Google Blue
+  setLED(1, 234, 67, 53);   // Google Red
+  setLED(2, 251, 188, 5);   // Google Yellow
+  setLED(3, 52, 168, 83);   // Google Green
+  
+  lastControlTime = millis();
+}
+
+void runMotionControlLoop() {
+  int64_t startTimeUs = esp_timer_get_time();
+  
+  unsigned long now = millis();
+  float dt = (now - lastControlTime) / 1000.0f;
+  
+  // Guard against extreme dt values during boot or overflow
+  if (dt <= 0.0f || dt > 0.1f) {
+    dt = CONTROL_PERIOD_S;
+  }
+  lastControlTime = now;
+  
+  // 1. Read hardware encoders and update ticks and filtered speeds
+  encoderManager.update(dt);
+  
+  // 2. Fetch ticks for calibration manager
+  int32_t currentTicks[4];
+  for (int i = 0; i < 4; i++) {
+    currentTicks[i] = encoderManager.getTicks(i);
+  }
+  
+  // 3. Process breakaway calibration if active (replaces main loop)
+  if (calManager.getState() != CAL_IDLE) {
+    calManager.update(currentTicks, motorDriver);
+    // Measure calibration run control loop execution time
+    int64_t endTimeUs = esp_timer_get_time();
+    uint32_t durationUs = (uint32_t)(endTimeUs - startTimeUs);
+    
+    // Update stats
+    loopStats.lastDurationUs = durationUs;
+    loopStats.minDurationUs = min(loopStats.minDurationUs, durationUs);
+    loopStats.maxDurationUs = max(loopStats.maxDurationUs, durationUs);
+    loopStats.totalIterations++;
+    loopStats.avgDurationUs = (uint32_t)(((uint64_t)loopStats.avgDurationUs * (loopStats.totalIterations - 1) + durationUs) / loopStats.totalIterations);
+    if (durationUs > 10000) {
+      loopStats.missedDeadlines++;
+    }
+    return;
+  }
+  
+  // 3b. Process maintenance mode if active (replaces main loop)
+  if (maintenanceManager.isActive()) {
+    maintenanceManager.update(motorDriver);
+    int64_t endTimeUs = esp_timer_get_time();
+    uint32_t durationUs = (uint32_t)(endTimeUs - startTimeUs);
+    
+    // Update stats
+    loopStats.lastDurationUs = durationUs;
+    loopStats.minDurationUs = min(loopStats.minDurationUs, durationUs);
+    loopStats.maxDurationUs = max(loopStats.maxDurationUs, durationUs);
+    loopStats.totalIterations++;
+    loopStats.avgDurationUs = (uint32_t)(((uint64_t)loopStats.avgDurationUs * (loopStats.totalIterations - 1) + durationUs) / loopStats.totalIterations);
+    if (durationUs > 10000) {
+      loopStats.missedDeadlines++;
+    }
+    return;
+  }
+  
+  // 4. Check watchdog and fetch active command target (linear, angular)
+  ChassisCommand activeCmd;
+  if (commandManager.isNormalDriveArmed()) {
+      activeCmd = commandManager.getActiveCommand(now);
+  } else {
+      activeCmd.linearVelocity = 0.0f;
+      activeCmd.angularVelocity = 0.0f;
+      activeCmd.source = SOURCE_NONE;
+  }
+    // Handle controlled stop transition on disarm
+  if (!commandManager.isNormalDriveArmed() && motorDriver.getMode() == MotorOutputMode::NORMAL_DRIVE) {
+      bool stopped = (abs(motionLimiter.getLinearVelocity()) < 0.01f) && 
+                     (abs(motionLimiter.getAngularVelocity()) < 0.01f);
+      if (stopped) {
+          motorDriver.setMode(MotorOutputMode::LOCKED);
+          Serial.println("[Command] Rover stopped. Normal drive transitioned to LOCKED.");
+      }
+  }
+
+  // 4b. Run Coordinated Chassis Stalled-KINETIC Recovery Supervisor
+  updateChassisStallSupervisor(activeCmd, commandManager.isNormalDriveArmed(), now, wheelController, encoderManager, imuManager);
+
+  // 5. Update Motion Limiter (S-curve acceleration profile)
+  motionLimiter.update(activeCmd.linearVelocity, activeCmd.angularVelocity, dt);
+  
+  float targetLinear = motionLimiter.getLinearVelocity();
+  float targetAngular = motionLimiter.getAngularVelocity();
+  
+  // Apply Candidate A Characterization Test Harness overrides
+  updateSpinRecoveryHarness(activeCmd, targetLinear, targetAngular, now, dt, wheelController, encoderManager, imuManager);
+  
+  // 6. Kinematic Translation: target (v, w) to individual left/right targets (rad/s)
+  float leftTargetRadps = 0.0f;
+  float rightTargetRadps = 0.0f;
+  DifferentialDrive::velocityToWheels(targetLinear, targetAngular, leftTargetRadps, rightTargetRadps);
+  
+  // Apply straight drive trims dynamically based on direction
+  if (targetLinear >= 0.0f) {
+      LEFT_TRIM = LEFT_TRIM_FWD;
+      RIGHT_TRIM = RIGHT_TRIM_FWD;
+  } else {
+      LEFT_TRIM = LEFT_TRIM_REV;
+      RIGHT_TRIM = RIGHT_TRIM_REV;
+   }
+  leftTargetRadps *= LEFT_TRIM;
+  rightTargetRadps *= RIGHT_TRIM;
+  
+  // Pure in-place spin detection: zero linear velocity with active angular velocity
+  const float ZERO_VELOCITY_EPSILON = 0.005f;
+  bool isSpinManeuver = (abs(targetLinear) <= ZERO_VELOCITY_EPSILON) && (abs(targetAngular) > ZERO_VELOCITY_EPSILON);
+  
+  // Opposing-wheel tight arc detection: wheels commanded in opposite directions (counter-rotating scrub)
+  bool isOpposingManeuver = (leftTargetRadps * rightTargetRadps < -0.001f);
+  // Commanded turning arc: differential speed between tracks creating lateral tire scrub
+  bool isTurningManeuver = !isSpinManeuver && (abs(leftTargetRadps - rightTargetRadps) > 0.01f);
+  
+  // 7. Route target wheel speeds to controllers with active straight-line synchronization
+  static int32_t syncStartTicks[4] = {0, 0, 0, 0};
+  static bool wasGoingStraight = false;
+  
+  bool isGoingStraight = (activeCmd.linearVelocity != 0.0f) && (activeCmd.angularVelocity == 0.0f);
+
+  if (!wheelController.isOpenLoop()) {
+      
+      if (isGoingStraight) {
+          if (!wasGoingStraight) {
+              wasGoingStraight = true;
+              for (int i = 0; i < 4; i++) {
+                  syncStartTicks[i] = encoderManager.getTicks(i);
+              }
+          }
+          
+          int32_t relTicks[4];
+          for (int i = 0; i < 4; i++) {
+              relTicks[i] = encoderManager.getTicks(i) - syncStartTicks[i];
+          }
+          
+          float avgTicks = (relTicks[0] + relTicks[1] + relTicks[2] + relTicks[3]) / 4.0f;
+          const float K_SYNC = 0.005f; // rad/s target correction per tick error
+          
+          float target0 = leftTargetRadps - (relTicks[0] - avgTicks) * K_SYNC;
+          float target2 = leftTargetRadps - (relTicks[2] - avgTicks) * K_SYNC;
+          float target1 = rightTargetRadps - (relTicks[1] - avgTicks) * K_SYNC;
+          float target3 = rightTargetRadps - (relTicks[3] - avgTicks) * K_SYNC;
+          
+          wheelController.setWheelTarget(0, target0, isSpinManeuver, false, false);
+          wheelController.setWheelTarget(1, target1, isSpinManeuver, false, false);
+          wheelController.setWheelTarget(2, target2, isSpinManeuver, false, false);
+          wheelController.setWheelTarget(3, target3, isSpinManeuver, false, false);
+      } else {
+          wasGoingStraight = false;
+          wheelController.setTargets(leftTargetRadps, rightTargetRadps, isSpinManeuver, isOpposingManeuver, isTurningManeuver);
+      }
+  }
+  
+  // 8. Run PI Speed loops and update motor PWMs
+  float measuredVels[4];
+  int32_t rawTicks[4];
+  float targetVels[4];
+  int pwmOutputs[4];
+  
+  for (int i = 0; i < 4; i++) {
+    measuredVels[i] = encoderManager.getVelocity(i);
+    rawTicks[i] = encoderManager.getTicks(i);
+    targetVels[i] = wheelController.getController(i).getTarget();
+  }
+  
+  // Run closed-loop PID, dynamic stiction state machine, and driver output update
+  uint32_t nowMs = millis();
+  bool encodersFresh = encoderManager.isEncoderDataFresh(nowMs, 200);
+  wheelController.update(measuredVels, rawTicks, dt, motorDriver, isSpinManeuver, isGoingStraight, encodersFresh, nowMs);
+
+  // Dynamic Brake Pulse & Actuation State Machine
+  enum class BrakePulseState {
+    DRIVING = 0,
+    BRAKING = 1,
+    COASTING = 2
+  };
+  static BrakePulseState brakePulseState = BrakePulseState::COASTING;
+  static uint32_t brakePulseStartMs = 0;
+  static float lastActiveAngSpeed = 0.0f;
+  static float lastActiveLinSpeed = 0.0f;
+
+  if (wheelController.isOpenLoop()) {
+    // Open-loop PWM session active: arbitrate away from dynamic braking and preserve motor PWMs
+    brakePulseState = BrakePulseState::DRIVING;
+    lastActiveAngSpeed = 0.0f;
+    lastActiveLinSpeed = 0.0f;
+  } else {
+    bool isTargetZero = (abs(targetLinear) < 0.005f) && (abs(targetAngular) < 0.005f);
+    bool isCommandZero = (abs(activeCmd.linearVelocity) < 0.005f) && (abs(activeCmd.angularVelocity) < 0.005f);
+
+    if (!isTargetZero && !isCommandZero) {
+      // Active motion: release brake pulse if one was active, record speeds, and set driving state
+      if (brakePulseState == BrakePulseState::BRAKING) {
+        motorDriver.coastAll();
+      }
+      brakePulseState = BrakePulseState::DRIVING;
+      lastActiveAngSpeed = abs(targetAngular);
+      lastActiveLinSpeed = abs(targetLinear);
+    } else {
+      // Target is zero (stopping or settled)
+      if (DYNAMIC_BRAKE_ENABLED && commandManager.isNormalDriveArmed() && motorDriver.getMode() == MotorOutputMode::NORMAL_DRIVE) {
+        if (brakePulseState == BrakePulseState::DRIVING) {
+          // Transition to stop: verify eligibility based on configured max trigger speeds (rad/s and m/s)
+          bool eligibleForBrake = (lastActiveAngSpeed <= DYNAMIC_BRAKE_MAX_TRIGGER_RADPS) && (lastActiveLinSpeed <= DYNAMIC_BRAKE_MAX_TRIGGER_MPS);
+          if (eligibleForBrake) {
+            brakePulseState = BrakePulseState::BRAKING;
+            brakePulseStartMs = nowMs;
+            motorDriver.brakeAll();
+            wheelController.reset();
+          } else {
+            brakePulseState = BrakePulseState::COASTING;
+            motorDriver.coastAll();
+            wheelController.reset();
+          }
+        } else if (brakePulseState == BrakePulseState::BRAKING) {
+          // Bounded non-blocking duration check
+          if (nowMs - brakePulseStartMs >= DYNAMIC_BRAKE_DURATION_MS) {
+            brakePulseState = BrakePulseState::COASTING;
+            motorDriver.coastAll();
+            wheelController.reset();
+          } else {
+            motorDriver.brakeAll();
+          }
+        } else {
+          // Settled coast: lock in coast, repeated zeros do NOT restart pulse
+          motorDriver.coastAll();
+        }
+      } else {
+        brakePulseState = BrakePulseState::COASTING;
+        if (isTargetZero) {
+          motorDriver.coastAll();
+        }
+      }
+    }
+  }
+
+  for (int i = 0; i < 4; i++) {
+    pwmOutputs[i] = (motorDriver.getActuationState() == DrivetrainActuationState::BRAKE)
+                    ? 0 : wheelController.getController(i).getPwmOutput();
+  }
+
+  // 9. Evaluate safety checks (stall / encoder faults)
+  uint32_t faults = safetyManager.update(targetVels, measuredVels, pwmOutputs, dt, motorDriver);
+  if (faults != FAULT_NONE) {
+    motorDriver.emergencyStop();
+    wheelController.reset();
+  }
+  
+  // End loop timing calculation
+  int64_t endTimeUs = esp_timer_get_time();
+  uint32_t durationUs = (uint32_t)(endTimeUs - startTimeUs);
+  
+  // Update control loop timing statistics
+  loopStats.lastDurationUs = durationUs;
+  loopStats.minDurationUs = min(loopStats.minDurationUs, durationUs);
+  loopStats.maxDurationUs = max(loopStats.maxDurationUs, durationUs);
+  loopStats.totalIterations++;
+  loopStats.avgDurationUs = (uint32_t)(((uint64_t)loopStats.avgDurationUs * (loopStats.totalIterations - 1) + durationUs) / loopStats.totalIterations);
+  if (durationUs > 10000) {
+    loopStats.missedDeadlines++;
+  }
+}
+
+struct SectionProf {
+  uint32_t maxUs = 0;
+  uint32_t countGte5ms = 0;
+  uint32_t countGte10ms = 0;
+  uint32_t countGte20ms = 0;
+
+  void record(uint32_t durUs) {
+    if (durUs > maxUs) maxUs = durUs;
+    if (durUs >= 5000) countGte5ms++;
+    if (durUs >= 10000) countGte10ms++;
+    if (durUs >= 20000) countGte20ms++;
+  }
+
+  void reset() {
+    maxUs = 0;
+    countGte5ms = 0;
+    countGte10ms = 0;
+    countGte20ms = 0;
+  }
+};
+
+struct MainLoopProf {
+  SectionProf imuUpdate;
+  SectionProf serialRx;
+  SectionProf controlSched;
+  SectionProf sendImuTx;
+  SectionProf sendBulkTx;
+  SectionProf delayYield;
+  SectionProf totalLoop;
+  uint32_t iterations = 0;
+  uint32_t windowStartMs = 0;
+
+  void reset() {
+    imuUpdate.reset();
+    serialRx.reset();
+    controlSched.reset();
+    sendImuTx.reset();
+    sendBulkTx.reset();
+    delayYield.reset();
+    totalLoop.reset();
+    iterations = 0;
+  }
+};
+
+static MainLoopProf g_loopProf;
+
+void loop() {
+  uint64_t loopStartUs = esp_timer_get_time();
+
+  // Section 1: Non-blocking update of BNO08x IMU reports
+  uint64_t t0 = loopStartUs;
+  imuManager.update();
+  uint64_t t1 = esp_timer_get_time();
+  g_loopProf.imuUpdate.record((uint32_t)(t1 - t0));
+
+  // Section 2: Non-blocking parse of incoming USB/ROS serial packets
+  serialProtocol.update(commandManager, calManager, maintenanceManager, safetyManager, loopStats);
+  uint64_t t2 = esp_timer_get_time();
+  g_loopProf.serialRx.record((uint32_t)(t2 - t1));
+
+  // Section 3: Truthful 100 Hz (10,000 us) control loop scheduling via esp_timer_get_time()
+  static uint64_t scheduledStartUs = 0;
+  uint64_t nowUs = t2;
+
+  if (scheduledStartUs == 0) {
+    scheduledStartUs = nowUs;
+  }
+
+  if (nowUs >= scheduledStartUs + 10000) {
+    // Advance scheduledStartUs to target scheduled start time for this period
+    scheduledStartUs += 10000;
+
+    // True start lateness offset relative to target scheduled start time (0us when on deadline)
+    uint32_t latenessUs = (uint32_t)(nowUs - scheduledStartUs);
+    loopStats.lastStartLatenessUs = latenessUs;
+    if (latenessUs > loopStats.maxStartLatenessUs) {
+      loopStats.maxStartLatenessUs = latenessUs;
+    }
+
+    uint32_t periodsElapsed = (latenessUs / 10000) + 1;
+
+    // Missed 100 Hz periods: if lateness >= 10,000 us, missed = periodsElapsed - 1
+    if (periodsElapsed > 1) {
+      uint32_t missedThisTick = periodsElapsed - 1;
+      loopStats.missedControlPeriods += missedThisTick;
+      if (missedThisTick > loopStats.maxConsecutiveMissedPeriods) {
+        loopStats.maxConsecutiveMissedPeriods = missedThisTick;
+      }
+      // Advance scheduledStartUs by missed periods so absolute schedule phase is preserved
+      scheduledStartUs += (uint64_t)missedThisTick * 10000;
+    }
+
+    // Execute motor/safety control loop EXACTLY ONCE per tick (no catch-up bursts)
+    runMotionControlLoop();
+  }
+  uint64_t t3 = esp_timer_get_time();
+  g_loopProf.controlSched.record((uint32_t)(t3 - t2));
+
+  unsigned long now = millis();
+
+#if !IMU_DIAGNOSTIC_MODE
+  // Section 4: Production 50 Hz IMU telemetry packet dispatch (fixed 20ms period, no catch-up bursts)
+  static uint32_t lastImuTime = 0;
+  constexpr uint32_t IMU_PERIOD_MS = 20;
+
+  uint32_t elapsedImu = now - lastImuTime;
+  if (elapsedImu >= IMU_PERIOD_MS) {
+    uint32_t periodsElapsed = elapsedImu / IMU_PERIOD_MS;
+    lastImuTime += periodsElapsed * IMU_PERIOD_MS;
+    serialProtocol.sendImuTelemetry(imuManager);
+  }
+  uint64_t t4 = esp_timer_get_time();
+  g_loopProf.sendImuTx.record((uint32_t)(t4 - t3));
+
+  // Section 5: Periodic bulk telemetry stream update at 20Hz (50ms)
+  static unsigned long lastTelemetryTime = 0;
+  if (now - lastTelemetryTime >= 50) {
+    lastTelemetryTime = now;
+    
+    int32_t ticks[4];
+    for (int i = 0; i < 4; i++) {
+      ticks[i] = encoderManager.getTicks(i);
+    }
+    
+    float linearVel = 0.0f;
+    float angularVel = 0.0f;
+    DifferentialDrive::wheelsToVelocity(
+      encoderManager.getVelocity(0),
+      encoderManager.getVelocity(1),
+      encoderManager.getVelocity(2),
+      encoderManager.getVelocity(3),
+      linearVel, angularVel
+    );
+    
+    // Broadcast bulk telemetry to Serial Port
+    serialProtocol.sendTelemetry(ticks, 0.0f, angularVel, calManager, maintenanceManager, loopStats, safetyManager.getFaults());
+  }
+
+  // Section 5b: Interleaved 10 Hz PID & Wheel Telemetry (offset by >=20ms to prevent UART TX buffer congestion)
+  static unsigned long lastPidTelemetryTime = 0;
+  if (now - lastPidTelemetryTime >= 100 && (now - lastTelemetryTime >= 20)) {
+    lastPidTelemetryTime = now;
+    uint8_t cfgFlags = (WHEEL_BALANCE_ENABLED ? 0x01 : 0x00) | (DYNAMIC_BRAKE_ENABLED ? 0x02 : 0x00);
+    serialProtocol.sendPidTelemetry(wheelController, YawOuterLoopDiag(), (uint8_t)motorDriver.getActuationState(), cfgFlags);
+  }
+  uint64_t t5 = esp_timer_get_time();
+  g_loopProf.sendBulkTx.record((uint32_t)(t5 - t4));
+#else
+  uint64_t t5 = t3;
+#endif
+
+  // Section 6: Brief yield
+  delay(1);
+  uint64_t t6 = esp_timer_get_time();
+  g_loopProf.delayYield.record((uint32_t)(t6 - t5));
+
+  // Total loop iteration
+  g_loopProf.totalLoop.record((uint32_t)(t6 - loopStartUs));
+  g_loopProf.iterations++;
+
+#if !PRODUCTION_BINARY_ONLY_SERIAL
+  // 10-Second Rate-Limited Main Loop Profiling Diagnostic Output (non-blocking, capacity-checked)
+  if (g_loopProf.windowStartMs == 0) {
+    g_loopProf.windowStartMs = now;
+  }
+  if (now - g_loopProf.windowStartMs >= 10000) {
+    char profBuf[384];
+    int len = snprintf(profBuf, sizeof(profBuf),
+      "[LOOP PROF 10S] WinMs:%lu Iter:%u | MaxUs(Imu:%u, Serial:%u, Sched:%u, SendImu:%u, SendBulk:%u, Delay:%u, Tot:%u) | >=5ms(Imu:%u, SendImu:%u, SendBulk:%u, Delay:%u) | >=10ms(Imu:%u, SendImu:%u, SendBulk:%u, Delay:%u) | >=20ms(Imu:%u, SendImu:%u, SendBulk:%u, Delay:%u)\n",
+      now - g_loopProf.windowStartMs,
+      g_loopProf.iterations,
+      g_loopProf.imuUpdate.maxUs,
+      g_loopProf.serialRx.maxUs,
+      g_loopProf.controlSched.maxUs,
+      g_loopProf.sendImuTx.maxUs,
+      g_loopProf.sendBulkTx.maxUs,
+      g_loopProf.delayYield.maxUs,
+      g_loopProf.totalLoop.maxUs,
+      g_loopProf.imuUpdate.countGte5ms,
+      g_loopProf.sendImuTx.countGte5ms,
+      g_loopProf.sendBulkTx.countGte5ms,
+      g_loopProf.delayYield.countGte5ms,
+      g_loopProf.imuUpdate.countGte10ms,
+      g_loopProf.sendImuTx.countGte10ms,
+      g_loopProf.sendBulkTx.countGte10ms,
+      g_loopProf.delayYield.countGte10ms,
+      g_loopProf.imuUpdate.countGte20ms,
+      g_loopProf.sendImuTx.countGte20ms,
+      g_loopProf.sendBulkTx.countGte20ms,
+      g_loopProf.delayYield.countGte20ms
+    );
+
+    if (len > 0 && len < (int)sizeof(profBuf) && Serial.availableForWrite() >= len) {
+      Serial.write((const uint8_t*)profBuf, len);
+      g_loopProf.reset();
+      g_loopProf.windowStartMs = now;
+    }
+  }
+#endif
+}

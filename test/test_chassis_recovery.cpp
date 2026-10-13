@@ -319,10 +319,46 @@ public:
                 if (std::abs(currentTicks[i] - s_stallWindowStartTicks[i]) < 3) staticDispCount++;
             }
 
-            bool imuStationary = (std::abs(imuGz) < 0.04f);
-            bool chassisStalled = allKinetic && (zeroVelCount >= 3) && (staticDispCount >= 3) && imuStationary;
+            float gz = imuGz;
+            bool imuStationary = (std::abs(gz) < 0.04f);
 
-            if (chassisStalled) {
+            // Track-level commanded state and kinetic/stationary detection:
+            // Canonical indices: Left = M1 (0), M3 (2); Right = M2 (1), M4 (3)
+            const float WHEEL_SEPARATION_M = 0.3408575f;
+            const float WHEEL_RADIUS_M = 0.033475f;
+            float leftTarget = (activeCmd.linearVelocity - (activeCmd.angularVelocity * WHEEL_SEPARATION_M / 2.0f)) / WHEEL_RADIUS_M;
+            float rightTarget = (activeCmd.linearVelocity + (activeCmd.angularVelocity * WHEEL_SEPARATION_M / 2.0f)) / WHEEL_RADIUS_M;
+            const float MIN_RELIABLE_SPEED_RADPS = 0.35f;
+            bool leftCommanded = (std::abs(leftTarget) >= MIN_RELIABLE_SPEED_RADPS);
+            bool rightCommanded = (std::abs(rightTarget) >= MIN_RELIABLE_SPEED_RADPS);
+
+            bool leftKinetic = (wheelCtrl.controllers[0].getStictionState() == STICTION_KINETIC) &&
+                               (wheelCtrl.controllers[2].getStictionState() == STICTION_KINETIC);
+            bool rightKinetic = (wheelCtrl.controllers[1].getStictionState() == STICTION_KINETIC) &&
+                                (wheelCtrl.controllers[3].getStictionState() == STICTION_KINETIC);
+
+            bool leftStationary = (std::abs(measuredVel[0]) < 0.05f) &&
+                                  (std::abs(measuredVel[2]) < 0.05f) &&
+                                  (std::abs(currentTicks[0] - s_stallWindowStartTicks[0]) < 3) &&
+                                  (std::abs(currentTicks[2] - s_stallWindowStartTicks[2]) < 3);
+
+            bool rightStationary = (std::abs(measuredVel[1]) < 0.05f) &&
+                                   (std::abs(measuredVel[3]) < 0.05f) &&
+                                   (std::abs(currentTicks[1] - s_stallWindowStartTicks[1]) < 3) &&
+                                   (std::abs(currentTicks[3] - s_stallWindowStartTicks[3]) < 3);
+
+            // Condition A: Whole chassis stalled (>= 3 wheels zero velocity & static displacement, IMU stationary)
+            bool wholeChassisStalled = allKinetic && (zeroVelCount >= 3) && (staticDispCount >= 3) && imuStationary;
+
+            // Condition B: Asymmetric track stall during commanded motion:
+            // When both tracks are commanded, one commanded track is stalled in KINETIC while the other track is moving
+            bool leftTrackStalled = leftCommanded && leftKinetic && leftStationary && !rightStationary;
+            bool rightTrackStalled = rightCommanded && rightKinetic && rightStationary && !leftStationary;
+            bool asymmetricTrackStalled = (leftCommanded && rightCommanded) && (leftTrackStalled || rightTrackStalled);
+
+            bool stallDetected = wholeChassisStalled || asymmetricTrackStalled;
+
+            if (stallDetected) {
                 s_stalledKineticTicks++;
                 if (s_stalledKineticTicks >= 20) { // 200 ms @ 100 Hz
                     wheelCtrl.reset();
@@ -659,7 +695,74 @@ void runAllTests() {
         std::cout << "[PASS] Test 13: Failed final retry reaches BLOCKED and 0 PWM." << std::endl;
     }
 
-    std::cout << "\n>>> ALL 13 TEST CASES PASSED PERFECTLY! <<<\n" << std::endl;
+    // Test 14: Asymmetric Right-Track Stall during Turning Arc (Run 050405 condition)
+    {
+        ChassisSupervisorHarness h;
+        h.activeCmd = {0.057f, -0.50f}; // Arc command: Left target +4.37 rad/s, Right target -0.86 rad/s
+        for (int w = 0; w < 4; w++) h.wheelCtrl.controllers[w].stictionState = STICTION_KINETIC;
+
+        // Left moves (1.5 rad/s), Right stalls (0.0 rad/s), IMU yawing due to left pushing (-0.30 rad/s)
+        for (int i = 0; i < 21; i++) {
+            h.currentTicks[0] += 5; h.currentTicks[2] += 5; // Left moving
+            h.measuredVel[0] = 1.5f; h.measuredVel[2] = 1.5f;
+            h.measuredVel[1] = 0.0f; h.measuredVel[3] = 0.0f;
+            h.imuGz = -0.30f;
+            h.runCycle(i * 10);
+        }
+        assert(h.rebreakoutEventsCount == 1);
+        assert(h.s_rebreakoutConsumedForEpisode == true);
+        std::cout << "[PASS] Test 14: Asymmetric Right-Track Stall during Turning Arc triggers re-breakout." << std::endl;
+    }
+
+    // Test 15: Asymmetric Left-Track Stall during Turning Arc
+    {
+        ChassisSupervisorHarness h;
+        h.activeCmd = {0.057f, 0.50f}; // Arc command: Left target -0.86 rad/s, Right target +4.37 rad/s
+        for (int w = 0; w < 4; w++) h.wheelCtrl.controllers[w].stictionState = STICTION_KINETIC;
+
+        // Right moves (1.5 rad/s), Left stalls (0.0 rad/s)
+        for (int i = 0; i < 21; i++) {
+            h.currentTicks[1] += 5; h.currentTicks[3] += 5; // Right moving
+            h.measuredVel[0] = 0.0f; h.measuredVel[2] = 0.0f;
+            h.measuredVel[1] = 1.5f; h.measuredVel[3] = 1.5f;
+            h.imuGz = 0.30f;
+            h.runCycle(i * 10);
+        }
+        assert(h.rebreakoutEventsCount == 1);
+        assert(h.s_rebreakoutConsumedForEpisode == true);
+        std::cout << "[PASS] Test 15: Asymmetric Left-Track Stall during Turning Arc triggers re-breakout." << std::endl;
+    }
+
+    // Test 16: Spin-to-Arc Transition with Asymmetric Re-Stall
+    {
+        ChassisSupervisorHarness h;
+        // Phase 1: Pure CW spin
+        h.activeCmd = {0.0f, -0.50f};
+        for (int w = 0; w < 4; w++) h.wheelCtrl.controllers[w].stictionState = STICTION_KINETIC;
+        for (int i = 0; i < 20; i++) {
+            h.currentTicks[0] += 3; h.currentTicks[2] += 3;
+            h.currentTicks[1] -= 3; h.currentTicks[3] -= 3;
+            h.measuredVel[0] = 2.6f; h.measuredVel[2] = 2.6f;
+            h.measuredVel[1] = -2.6f; h.measuredVel[3] = -2.6f;
+            h.imuGz = -0.50f;
+            h.runCycle(i * 10);
+        }
+        assert(h.rebreakoutEventsCount == 0);
+
+        // Phase 2: Transition to arc where right track stalls
+        h.activeCmd = {0.057f, -0.50f};
+        for (int i = 20; i < 41; i++) {
+            h.currentTicks[0] += 4; h.currentTicks[2] += 4;
+            h.measuredVel[0] = 1.5f; h.measuredVel[2] = 1.5f;
+            h.measuredVel[1] = 0.0f; h.measuredVel[3] = 0.0f;
+            h.imuGz = -0.30f;
+            h.runCycle(i * 10);
+        }
+        assert(h.rebreakoutEventsCount == 1);
+        std::cout << "[PASS] Test 16: Spin-to-Arc Transition with Asymmetric Re-Stall triggers re-breakout." << std::endl;
+    }
+
+    std::cout << "\n>>> ALL 16 TEST CASES PASSED PERFECTLY! <<<\n" << std::endl;
 }
 
 int main() {
