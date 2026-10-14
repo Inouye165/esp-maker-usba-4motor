@@ -451,6 +451,12 @@ def complete_zero_handshake(
         z_count = auto_stat.get("zeroHandshakeCount", 0)
 
         if state == "READY_DISARMED" or z_count >= 3:
+            # Send one post-handshake zero command while in READY_DISARMED so server.js
+            # updates autonomyState.lastCmdTime = performance.now() before entering READY_ARMED
+            try:
+                cockpit.send_cmd_vel(0.0, 0.0)
+            except Exception:
+                pass
             handshake_success = True
             if transitions is not None:
                 transitions.append({
@@ -502,6 +508,10 @@ def arm_and_verify_ready_armed(
     """
     Arms drivetrain and confirms that both Cockpit and ESP32 report READY_ARMED and armed=True stably.
     """
+    try:
+        cockpit.send_cmd_vel(0.0, 0.0)
+    except Exception:
+        pass
     arm_res = cockpit.arm_drive()
     if not arm_res.get("ok", False):
         arm_err = arm_res.get("error", "Unknown arm error")
@@ -526,6 +536,10 @@ def arm_and_verify_ready_armed(
         is_ready = auto_stat.get("state") in ("READY_ARMED", "ACTIVE")
 
         if is_armed and is_ready:
+            try:
+                cockpit.send_cmd_vel(0.0, 0.0)
+            except Exception:
+                pass
             if transitions is not None:
                 transitions.append({
                     "timestamp": time.time(),
