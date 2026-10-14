@@ -373,7 +373,8 @@ class CockpitClient:
         }
         payload = json.dumps({
             "linear": {"x": float(vx)},
-            "angular": {"z": float(wz)}
+            "angular": {"z": float(wz)},
+            "source": "CALIBRATION_TEST"
         }).encode("utf-8")
 
         last_error = "Unknown connection failure"

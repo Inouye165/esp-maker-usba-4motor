@@ -1882,6 +1882,36 @@ def main():
         print(f"[PREFLIGHT FAILED] {e}")
         sys.exit(1)
 
+    nom_dist_mm = sum(vx * dur for vx, _, dur in case["segments"]) * 1000.0
+    nom_yaw_deg = math.degrees(sum(wz * dur for _, wz, dur in case["segments"]))
+    if abs(nom_dist_mm) > 0.1 and abs(nom_yaw_deg) < 0.1:
+        exp_str = f"{nom_dist_mm:+.1f} mm linear travel (Pass window: {abs(nom_dist_mm)*0.889:.1f} to {abs(nom_dist_mm)*1.111:.1f} mm)"
+        meas_str = "Measure net straight-line physical travel in millimeters (mm) with ruler."
+    elif abs(nom_yaw_deg) > 0.1 and abs(nom_dist_mm) < 0.1:
+        exp_str = f"{nom_yaw_deg:+.1f}° in-place rotation (Bounds: max_yaw={case['max_yaw_deg']}°)"
+        meas_str = "Measure physical angle turned in degrees (°) using protractor / floor reference mark."
+    else:
+        exp_str = f"Net linear ~{nom_dist_mm:+.1f} mm, net yaw ~{nom_yaw_deg:+.1f}°"
+        meas_str = "Observe smooth arc/transition handoff and measure net linear (mm) and angular (°) change."
+
+    print("\n" + "=" * 80)
+    print(f"ROVER ONE REUSABLE FLOOR CHARACTERIZATION: CASE [{selected_key}] {case['name']}")
+    print(f"Segments: {case['segments']} | Bounds: max_dist={case['max_dist_m']:.3f}m, max_yaw={case['max_yaw_deg']:.1f}°")
+    print("-" * 80)
+    print("1. TEST GOAL:")
+    print(f"   {case['desc']}")
+    print("2. WHAT TO MONITOR & MEASURE (OPERATOR):")
+    print("   • Before confirming ('CONFIRM'): Ensure >= 1.0 m clear floor space and align")
+    print("     Rover 1 starting reference pointer.")
+    print("   • During motion: Watch whether wheel breakaway and crawl/spin look smooth,")
+    print("     hesitant, or stop-and-restart.")
+    print(f"   • After stop & disarm: {meas_str}")
+    print("3. EXPECTED RESULT (PASS CRITERIA):")
+    print(f"   • Expected Motion   : {exp_str}")
+    print("   • Terminal Status   : Overall Step Result = SUCCESS (TRACKING_NOMINAL)")
+    print("   • Final Safe State  : zero=True, disarm=True (Mode 0 LOCKED)")
+    print("=" * 80)
+
     print("\nOPERATOR CONFIRMATION REQUIRED:")
     print(f"Confirm Rover 1 has >= 1.0 m clear floor space.")
     print("Type 'CONFIRM' to arm and execute this single case: ")

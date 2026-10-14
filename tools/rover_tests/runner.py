@@ -261,11 +261,32 @@ class PhysicalTestRunner:
             stopping_advance_deg=effective_advance
         )
 
+        dir_label = "CLOCKWISE (CW)" if self.params.direction.lower() == "cw" else "COUNTER-CLOCKWISE (CCW)"
+        tol_deg = self.params.angle_tolerance_deg
+        min_ok_deg = self.params.degrees - tol_deg
+        max_ok_deg = self.params.degrees + tol_deg
+        total_deg = self.params.degrees * self.params.trials
         print("=" * 80)
         print(f"ROVER ONE REUSABLE PHYSICAL TEST FRAMEWORK: TURN {self.params.degrees:.1f}° {self.params.direction.upper()}")
         print(f"Repetitions: {self.params.trials} | Max Speed: {self.params.max_angular_speed:.2f} rad/s | Creep: {self.params.creep_angular_speed:.2f} rad/s")
         print(f"Balancing: {'ENABLED' if effective_bal else 'DISABLED'} | Braking: {'ENABLED' if effective_brk else 'DISABLED'} | Stopping Advance: {effective_advance:.2f}°")
         print(f"Mode: {'DRY RUN (STATIONARY - NO MOTOR POWER)' if self.params.dry_run else 'PHYSICAL MOTION EXECUTION'}")
+        print("-" * 80)
+        print("1. TEST GOAL:")
+        print(f"   Validate closed-loop in-place {dir_label} rotation accuracy, wheel-pair")
+        print(f"   symmetry, and stop settling using non-magnetic IMU (SH2_GAME_ROTATION_VECTOR).")
+        print("2. WHAT TO MONITOR & MEASURE (OPERATOR):")
+        print("   • Before approving ('y'): Ensure >= 0.5 m clear floor space around Rover 1")
+        print("     and align chassis reference pointer with 0° floor mark / protractor.")
+        print(f"   • During motion: Watch Rover 1 pivot in place {dir_label} at cruise")
+        print(f"     ({self.params.max_angular_speed:.2f} rad/s), slow to creep ({self.params.creep_angular_speed:.2f} rad/s) in the final {self.params.creep_threshold_deg:.0f}°, and stop cleanly.")
+        print("   • After 2.0s settle: Measure the physical angle turned (in degrees) and")
+        print("     enter your physical measurement at the prompt.")
+        print("3. EXPECTED RESULT (PASS CRITERIA):")
+        print(f"   • Per-Step Rotation : {self.params.signed_target_deg:+.2f}° ({self.params.direction.upper()}) | Pass Window: {min_ok_deg:.1f}° to {max_ok_deg:.1f}° (±{tol_deg:.1f}°)")
+        print(f"   • Cumulative ({self.params.trials}x)   : {total_deg:.1f}° ({self.params.direction.upper()}) total across {self.params.trials} repetition(s)")
+        print("   • Wheel Behavior    : 0 wheel stalls while commanded; opposing L/R tracks")
+        print("   • Final Safe State  : Stopped, Disarmed (armed=False, mode=0), Autonomy DISABLED")
         print("=" * 80)
 
         # Connect WebSocket unless in pure offline mock mode
@@ -430,11 +451,31 @@ class PhysicalTestRunner:
         )
 
         effective_brk = self.params.enable_braking if self.params.enable_braking is not None else True
+        tol_m = self.params.distance_tolerance_m
+        min_ok_m = max(0.0, self.params.distance - tol_m)
+        max_ok_m = self.params.distance + tol_m
+        total_m = self.params.distance * self.params.trials
         print("=" * 80)
         print(f"ROVER ONE REUSABLE PHYSICAL TEST FRAMEWORK: LINEAR {self.params.distance:.3f}m {self.params.direction.upper()}")
         print(f"Repetitions: {self.params.trials} | Requested Velocity: {self.params.max_linear_speed:.2f} m/s (Constant Production Speed)")
         print(f"Balancing: {'ENABLED' if self.params.enable_balancing else 'DISABLED'} | Braking: {'ENABLED' if effective_brk else 'DISABLED'}")
         print(f"Mode: {'DRY RUN (STATIONARY - NO MOTOR POWER)' if self.params.dry_run else 'PHYSICAL MOTION EXECUTION'}")
+        print("-" * 80)
+        print("1. TEST GOAL:")
+        print(f"   Validate closed-loop {self.params.direction.upper()} straight-line translation accuracy,")
+        print("   heading hold, and creep approach stopping using calibrated wheel odometry (0.06695m).")
+        print("2. WHAT TO MONITOR & MEASURE (OPERATOR):")
+        print(f"   • Before approving ('y'): Ensure >= {self.params.distance + 0.5:.1f} m clear floor space in {self.params.direction.upper()}")
+        print("     direction and mark chassis starting reference pointer.")
+        print(f"   • During motion: Watch Rover 1 drive {self.params.direction.upper()} at cruise ({self.params.max_linear_speed:.2f} m/s),")
+        print(f"     slow to creep ({self.params.creep_linear_speed:.2f} m/s) in the final {self.params.creep_threshold_m*1000:.0f} mm, and stop straight.")
+        print("   • After 2.0s settle: Measure physical distance traveled (in meters or mm)")
+        print("     from starting mark to settled reference pointer.")
+        print("3. EXPECTED RESULT (PASS CRITERIA):")
+        print(f"   • Per-Step Distance : {self.params.distance:.3f} m ({self.params.distance*1000:.0f} mm) {self.params.direction.upper()} | Pass Window: {min_ok_m:.3f}m to {max_ok_m:.3f}m (±{tol_m*1000:.0f} mm)")
+        print(f"   • Cumulative ({self.params.trials}x)   : {total_m:.3f} m ({total_m*1000:.0f} mm) total across {self.params.trials} repetition(s)")
+        print("   • Wheel Behavior    : 0 wheel stalls while commanded; straight heading hold")
+        print("   • Final Safe State  : Stopped, Disarmed (armed=False, mode=0), Autonomy DISABLED")
         print("=" * 80)
 
         # Connect WebSocket unless in pure offline mock mode
@@ -1296,8 +1337,8 @@ class PhysicalTestRunner:
             return f"Pre-motion invariant violated: autonomyState is '{cur_state}' (expected READY_ARMED)"
 
         cmd_source = auto_stat.get("cmdSource") or drv_stat.get("cmdSource")
-        if cmd_source not in ("NONE", "ROS_AUTONOMY", None):
-            return f"Pre-motion invariant violated: unexpected cmdSource '{cmd_source}' (expected NONE or ROS_AUTONOMY)"
+        if cmd_source not in ("NONE", "ROS_AUTONOMY", "CALIBRATION_TEST", None):
+            return f"Pre-motion invariant violated: unexpected cmdSource '{cmd_source}' (expected NONE, ROS_AUTONOMY, or CALIBRATION_TEST)"
 
         is_fresh, freshness_msg = check_imu_freshness(imu_stat, max_age_ms=250.0)
         if not is_fresh:
