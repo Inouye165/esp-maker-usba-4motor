@@ -136,4 +136,42 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
 
 *\*Note on 2026-10-13 18:16 (A2): Wheel encoders turned `-259` ticks (`26.8 mm` @ 65mm / `27.6 mm` @ 66.95mm max tire travel), confirming nominal motor travel (`99.3%`) with a ~5 mm mark placement offset.*
 *\*Note on 2026-10-14 04:42 (Turn 90° CW): Step 1 passed (`+90.95°` IMU, `90.0°` physical, `0` wheel stalls). Step 2 aborted before motion because `complete_zero_handshake` in `tools/rover_tests/transport.py` did not refresh `autonomyState.lastCmdTime` after reaching `READY_DISARMED`; fixed in `transport.py` and `server.js` (`d59c58f` / `43e828d`).*
-*\*Note on 2026-10-14 05:15–05:30 (ESP32 `POWERON_RESET` progression): Even the 90° CW test that passed 3/3 at `05:06` now aborted at `~40°` (`-1110` ticks, `1.1s`) with an ESP32 hardware `POWERON_RESET (0x1)` (`0xE))` boot banner in `journalctl`), confirming progressive power/voltage sag or a loose power/USB connection under 4-motor spin load.*
+*\*Note on 2026-10-14 05:15–05:30 (ESP32 `POWERON_RESET` progression): Even the 90° CW test that passed 3/3 at `05:06` now aborted at `~40°` (`-1110` ticks, `1.1s`) with an ESP32 hardware `POWERON_RESET (0x1)` (`0xE))` boot banner in `journalctl`), confirming progressive power/voltage sag or thermal protection under 4-motor spin load.*
+
+---
+
+## 6. Daily Engineering & Activity Log
+
+### 2026-10-14 (Wednesday)
+- **Active Firmware**: `1.3.3-cand-r41c` (`source: rev41-floor-c`)
+- **Accomplishments & Code Changes**:
+  1. **Project Organization & Root Status File**: Created [`PROJECT_STATUS.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/PROJECT_STATUS.md) and updated [`AGENTS.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/AGENTS.md) / [`.agents/AGENTS.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/.agents/AGENTS.md) to enforce pre-change git checkpoints, reusable test suites, and automatic report pulling from RPi5 (`10.0.0.246`).
+  2. **Standardized 3-Part Test Brief Banner**: Updated [`tools/rover_tests/runner.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/tools/rover_tests/runner.py) and [`scripts/characterize_floor_speeds.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/scripts/characterize_floor_speeds.py) (`daaf523`, `d59c58f`) so all tests print `1. TEST GOAL`, `2. WHAT TO MONITOR & MEASURE (OPERATOR)`, and `3. EXPECTED RESULT (PASS CRITERIA)` in the top header before operator confirmation.
+  3. **Fixed Multi-Trial Autonomy Handshake & Localization Guard**:
+     - Updated [`tools/rover_tests/transport.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/tools/rover_tests/transport.py) (`d59c58f`) to tag commands with `"source": "CALIBRATION_TEST"` and refresh `lastCmdTime` after `READY_DISARMED` and `READY_ARMED`.
+     - Updated [`server.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/server.js) in `yahboom-encoder` (`28759ef`, `43e828d`) so `CALIBRATION_TEST` transitions `READY_ARMED -> ACTIVE` and skips Nav2 AMCL `abortAutonomyDueToLocalizationLost` during scripted calibration turns.
+  4. **Phase 2 Rotate-in-Place Calibration & Thermal/Battery Timeline**:
+     - **`04:42 PDT` (`turn_cw_90deg_1791978108.json`)**: 90° CW Step 1 **PASSED** (`+90.95°` IMU, `90.0°` Physical, `+0.95°` err).
+     - **`05:06 PDT` (`turn_cw_90deg_1791979545.json`)**: 90° CW 3-repetition test **PASSED 3/3** (`+90.58°, +90.95°, +90.84°` IMU; `90.0°, 90.0°, 92.0°` Physical; Mean Err `+0.79°`, Span `0.37°`, `0` stalls).
+     - **`05:11 PDT` (`turn_ccw_90deg_1791979851.json`)**: 90° CCW 3-repetition test **PASSED 3/3** (`-90.65°, -90.85°, -90.81°` IMU; `-90.5°, -91.0°, -92.0°` Physical; Mean Err `-0.77°`, Span `0.20°`, `0` stalls).
+     - **`05:15:13 PDT` (Hardware Event)**: First ESP32 `POWERON_RESET (0x1)` (`SPI_FAST_FLASH_BOOT`) observed in `journalctl` around battery swap / after 6 consecutive 90° spin trials.
+     - **`05:15:52 PDT` (`turn_cw_180deg_1791980120.json`)**: 180° CW @ `0.80 rad/s` aborted at `t = 1.5s` (`-1420` ticks, `~51°`) due to ESP32 `POWERON_RESET` (`275ms` IMU gap).
+     - **`05:21:47 PDT` (`turn_cw_180deg_1791980504.json`)**: 180° CW @ `0.40 rad/s` aborted at `-1846` ticks (`~66°`) due to ESP32 `POWERON_RESET` (`251ms` IMU gap).
+     - **`05:23:28 PDT` (`turn_cw_180deg_1791980606.json`)**: 180° CW Step 1 **PASSED** (`+181.16°` IMU, `180.0°` Physical, `+1.16°` err, `-5042` ticks), then Step 2 at `05:23:45` aborted at `-2566` ticks (`~91°`) due to ESP32 `POWERON_RESET`.
+     - **`05:30:31 PDT` (`turn_cw_90deg_1791981026.json`)**: Re-test of the previously passing 90° CW test aborted at `t = 1.1s` (`-1110` ticks, `~40°`) due to ESP32 `POWERON_RESET` (`254ms` IMU gap).
+     - **Forensic Telemetry Comparison (`05:06` Passing vs `05:30` Failing at `t ≈ 0.77s`)**: At identical `±4.19 rad/s` wheel targets, all 4 wheels at `05:30` spun **8%–18% slower** (`-4.06, +4.76, -3.61, +2.86 rad/s` vs `-4.32, +5.10, -4.38, +3.17 rad/s`) while PID `|PWM|` sum rose from `410` to `434`, and RPi5 `EXT5V_V` measured `4.85V` at idle before the rover was powered off for cooldown at `~05:40 PDT`.
+- **Next Planned Action (After 12-Hour Rest / Cooldown)**:
+  - Rover 1 powered off at `~05:40 PDT` (`2026-10-14`) for a **12-hour rest/cooldown** (until after `17:40 PDT` on `2026-10-14`).
+  - Re-run the **90° CW** and **180° CW** tests when cold to isolate whether the `POWERON_RESET` and wheel slowdown were caused by component heating (motor driver ICs / 5V regulator / polyfuse) vs. the swapped battery pack.
+
+---
+
+### 2026-10-13 (Tuesday)
+- **Active Firmware**: `1.3.3-cand-r41c` (`source: rev41-floor-c`)
+- **Accomplishments**:
+  1. Completed **Phase 1: Reverse Crawl Calibration (`Case 13`, `Reverse_Crawl_0.015mps`)**.
+  2. Verified 3 consecutive diagnostic runs inside the `24.0–30.0 mm` encoder target window:
+     - **17:41 PDT (`floor_char_Reverse_Crawl_0.015mps_20261013_174144.json`)**: `29.0 mm` encoder (`107.4%`), `26.0 mm` physical — **`SUCCESS` (PASS)**.
+     - **18:16 PDT (`floor_char_Reverse_Crawl_0.015mps_20261013_181641.json`)**: `26.8 mm` encoder (`99.3%`), `33.0 mm` physical (mark offset) — **`SUCCESS` (PASS)**.
+     - **18:18 PDT (`floor_char_Reverse_Crawl_0.015mps_20261013_181839.json`)**: `29.7 mm` encoder (`110.0%`), `30.0 mm` physical — **`SUCCESS` (PASS)**.
+  3. Locked in firmware `1.3.3-cand-r41c` (`41.0 PWM` piecewise reverse crawl floor) as the verified baseline.

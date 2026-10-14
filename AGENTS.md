@@ -1,6 +1,6 @@
 # Project Rules, Repository Reference & Motion Contract
 
-- **Master Project Status & Test Ledger**: Always consult and maintain [`PROJECT_STATUS.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/PROJECT_STATUS.md) in the repository root for active firmware build version, roadmap steps, the reusable test catalog, and the chronological test results ledger.
+- **Master Project Status, Test Ledger & Daily Log**: Always consult and maintain [`PROJECT_STATUS.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/PROJECT_STATUS.md) in the repository root for active firmware build version, roadmap steps, the reusable test catalog, the chronological test results ledger, and the **Daily Engineering & Activity Log (Section 6)** recording what was done each day with exact timestamps.
 - **Git Checkpoint Rule (Commit Before Changes)**:
   - **ALWAYS** commit the current working baseline (`git commit`) **before** making any firmware, controller, or configuration changes, so that any change that degrades performance can be cleanly reverted (`git revert` / `git checkout`).
   - Record the active git commit hash and firmware version in [`PROJECT_STATUS.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/PROJECT_STATUS.md) whenever physical tests are executed.
