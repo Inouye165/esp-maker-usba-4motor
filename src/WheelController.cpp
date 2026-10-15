@@ -237,35 +237,39 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
             }
             return lastPwm;
         } else {
-            // For PURE-SPIN maneuver:
-            // Controlled by WheelController rear-pair sustained motion guard or hard 200 ms timeout
-            boostTicksCount++;
-            if (boostTicksCount >= SPIN_BREAKOUT_MAX_CYCLES) {
+            // Smooth-turn candidate (r42): Exit pure-spin boost immediately once wheel moves >= 3 ticks
+            // (just like straight driving), or after SPIN_BREAKOUT_MAX_CYCLES timeout.
+            if (deltaTicks >= 3) {
                 stictionState = STICTION_KINETIC;
-                // Transition directly into kinetic PID calculation below
             } else {
-                int boostMag = SPIN_STICTION_BOOST_PWM; // Empirically validated 102 PWM breakout boost
-                int boostPwm = (targetVel > 0.0f) ? boostMag : -boostMag;
-                
-                if (((lastPwm > 0 && boostPwm < 0) || (lastPwm < 0 && boostPwm > 0)) && lastPwm != 0 && boostPwm != 0) {
-                    reversalDeadtimeTicks = 5;
+                boostTicksCount++;
+                if (boostTicksCount >= SPIN_BREAKOUT_MAX_CYCLES) {
+                    stictionState = STICTION_KINETIC;
+                    // Transition directly into kinetic PID calculation below
+                } else {
+                    int boostMag = SPIN_STICTION_BOOST_PWM; // Smooth-turn candidate: 64 PWM
+                    int boostPwm = (targetVel > 0.0f) ? boostMag : -boostMag;
+                    
+                    if (((lastPwm > 0 && boostPwm < 0) || (lastPwm < 0 && boostPwm > 0)) && lastPwm != 0 && boostPwm != 0) {
+                        reversalDeadtimeTicks = 5;
+                    }
+                    lastPwm = boostPwm;
+                    
+                    diag.targetVel = targetVel;
+                    diag.measuredVel = measuredRadps;
+                    diag.feedforward = (float)boostPwm;
+                    diag.pTerm = 0.0f;
+                    diag.iTerm = 0.0f;
+                    diag.dTerm = 0.0f;
+                    diag.finalPwm = (int16_t)boostPwm;
+                    diag.stictionState = STICTION_BOOST;
+                    
+                    if (reversalDeadtimeTicks > 0) {
+                        reversalDeadtimeTicks--;
+                        return 0;
+                    }
+                    return lastPwm;
                 }
-                lastPwm = boostPwm;
-                
-                diag.targetVel = targetVel;
-                diag.measuredVel = measuredRadps;
-                diag.feedforward = (float)boostPwm;
-                diag.pTerm = 0.0f;
-                diag.iTerm = 0.0f;
-                diag.dTerm = 0.0f;
-                diag.finalPwm = (int16_t)boostPwm;
-                diag.stictionState = STICTION_BOOST;
-                
-                if (reversalDeadtimeTicks > 0) {
-                    reversalDeadtimeTicks--;
-                    return 0;
-                }
-                return lastPwm;
             }
         }
     }
@@ -387,19 +391,11 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
             }
         }
     } else {
-        // Non-straight maneuvers (pure spin, opposing arcs, turning arcs) or legacy comparison mode:
-        // Isolate straight recovery assist completely (must remain 0)
+        // Smooth-turn candidate (r42): Use smooth proportional/integral gains without artificial stall error inflation
         recoveryAssist = 0.0f;
 
-        // Original instantaneous stall detection and gains strictly preserved:
         if (isStalledCondition) {
             activeKi = ANTI_STALL_KI;
-            const float minStallError = 1.60f;
-            if (error > 0.0f && effectiveError < minStallError) {
-                effectiveError = minStallError;
-            } else if (error < 0.0f && effectiveError > -minStallError) {
-                effectiveError = -minStallError;
-            }
         } else if (!isSpinManeuver && !isOpposingManeuver && !isTurningArc &&
                    stictionState == STICTION_KINETIC &&
                    abs(targetVel) >= 0.01f && abs(targetVel) <= 2.0f && abs(error) >= 0.40f) {
@@ -427,8 +423,9 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
         }
     }
 
-    // Integral state anti-windup: clamp the integral contribution to [-150, 150]
-    integralTerm = constrain(integralTerm, -150.0f, 150.0f);
+    // Integral state anti-windup: clamp to [-50, 50] during turns to prevent scrub stall windup, [-150, 150] straight
+    const float maxIntegral = isStraightKinetic ? 150.0f : 50.0f;
+    integralTerm = constrain(integralTerm, -maxIntegral, maxIntegral);
     
     // Derivative term
     float derivative = (error - lastError) / dt;

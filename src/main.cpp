@@ -239,17 +239,17 @@ void runMotionControlLoop() {
       }
   }
 
-  // 4b. Run Coordinated Chassis Stalled-KINETIC Recovery Supervisor
-  updateChassisStallSupervisor(activeCmd, commandManager.isNormalDriveArmed(), now, wheelController, encoderManager, imuManager);
+  // 4b. Smooth-turn candidate (r42): Disable 200ms Stalled-KINETIC re-breakout hammer
+  // and 350ms -3.50 rad/s opposite-direction SPIN_RECOVERY_TWITCH_PULSE slam.
+  if (!commandManager.isNormalDriveArmed()) {
+      g_chassisSupervisorState.reset();
+  }
 
   // 5. Update Motion Limiter (S-curve acceleration profile)
   motionLimiter.update(activeCmd.linearVelocity, activeCmd.angularVelocity, dt);
   
   float targetLinear = motionLimiter.getLinearVelocity();
   float targetAngular = motionLimiter.getAngularVelocity();
-  
-  // Apply Candidate A Characterization Test Harness overrides
-  updateSpinRecoveryHarness(activeCmd, targetLinear, targetAngular, now, dt, wheelController, encoderManager, imuManager);
   
   // 6. Kinematic Translation: target (v, w) to individual left/right targets (rad/s)
   float leftTargetRadps = 0.0f;
