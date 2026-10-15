@@ -138,6 +138,7 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
 | **2026-10-15 04:51** | **`1.3.3-cand-r41c`** | **`d5b78f8`** | **Turn 180° CW (`rover-test turn`, Step 1/3 @ `0.80 rad/s`)** | Mid-turn stop | Aborted after `1.1s` | **`ABORTED` (ESP32 `POWERON_RESET`)** | `turn_cw_180deg_1792065104.json` |
 | **2026-10-15 04:54** | **`1.3.3-cand-r41c`** | **`d5b78f8`** | **Turn 180° CW (`rover-test turn`, 3/3 Steps @ `0.30 rad/s`)** | **Step 3 `~180°` (slight overshoot)** | **`+180.84°, +180.84°, +181.12°` (Mean Err `+0.93°`, Span `0.28°`)** | **`SUCCESS` (3/3 PASS)** | `turn_cw_180deg_1792065144.json` |
 | **2026-10-15 05:06** | **`1.3.3-cand-r41c`** | **`edce0ff`** | **Turn 180° CW (`rover-test turn`, Step 1 PASS / Step 2 Abort @ `0.30 rad/s`)** | **Step 1: `180.0°` (`+170 mm` fwd walk)** | **Step 1: `+179.89°` (`-0.11°` err)** / Step 2: `2.17s` abort | **Step 1 `SUCCESS` / Step 2 `ABORTED` (ESP32 `POWERON_RESET`)** | `turn_cw_180deg_1792065888.json` |
+| **2026-10-15 05:14** | **`1.3.3-cand-r41c`** | **`20a63c4`** | **Turn 180° CW (`rover-test turn`, `--enable-balancing` @ `0.30 rad/s`)** | **Step 1: `180.0°`** / Step 2: `~100°` | **Step 1: `+180.07°` (`+0.07°` err)** / Step 2: `5.26s` abort | **Step 1 `SUCCESS` / Step 2 `ABORTED` (ESP32 `POWERON_RESET` @ M4 PWM 125)** | `turn_cw_180deg_1792066438.json` |
 
 *\*Note on 2026-10-13 18:16 (A2): Wheel encoders turned `-259` ticks (`26.8 mm` @ 65mm / `27.6 mm` @ 66.95mm max tire travel), confirming nominal motor travel (`99.3%`) with a ~5 mm mark placement offset.*
 *\*Note on 2026-10-14 04:42 (Turn 90° CW): Step 1 passed (`+90.95°` IMU, `90.0°` physical, `0` wheel stalls). Step 2 aborted before motion because `complete_zero_handshake` in `tools/rover_tests/transport.py` did not refresh `autonomyState.lastCmdTime` after reaching `READY_DISARMED`; fixed in `transport.py` and `server.js` (`d59c58f` / `43e828d`).*
@@ -162,7 +163,9 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
   7. **Verified `0.70°` Stopping Advance (`+179.89°`, `-0.11°` err) & Diagnosed `170 mm` Forward Walk (`05:06 PDT`, `turn_cw_180deg_1792065888.json`)**:
      - Step 1 stopped at `179.30°` and settled at **`179.89°` (`-0.11°` error)**!
      - However, during the 180° spin without `--enable-balancing`, **`M2 (RF)` rotated `+6577` ticks (`701.2 mm`) forward while `M1 (LF)` rotated `-4910` ticks (`-523.5 mm`) backward — an excess of `+1667` ticks = `+177.7 mm` (`~170 mm` measured by Ron)**!
-     - Reason: When `wheel_balancing_enabled` is `false`, `WheelController.cpp` line 807 clamps `M2` at `MIN_USABLE_SPIN_PWM = 68` (`2.06–2.66 rad/s` actual vs `1.57 rad/s` target) instead of throttling `M2` down to `MIN_USABLE_SPIN_PWM_FASTER = 48` via `spinSyncTrim`. Enabling `--enable-balancing` activates same-side sync trim and unlocks the `48 PWM` floor for the fast-spinning front wheel.
+  8. **Tested 180° CW with `--enable-balancing` (`05:14 PDT`, `turn_cw_180deg_1792066438.json`)**:
+     - Step 1 **PASSED** with **`+180.07°` IMU (`+0.07°` error!)**, reducing `M2` ticks from `6577` down to `5729` and matching rear wheels (`M3 = -4273`, `M4 = +4332`).
+     - Step 2 aborted at `t = 5.26s` with ESP32 `POWERON_RESET` right as `M4 (RR)` reached `finalPwm = 125` (`basePwm 115 + spinSyncTrim 10`), matching the exact `M4 PWM 123–125` reset threshold seen in `1791980120` (`M4=123`) and `1791981026` (`M4=124`).
 
 ---
 
