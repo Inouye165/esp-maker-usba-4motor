@@ -144,6 +144,7 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
 | **2026-10-15 07:33** | **`1.3.4-cand-r42c`** | **`5a93afd`** | **Turn 90° CW (`rover-test turn`, `--no-braking` Step 1/3 @ `0.80 rad/s`)** | Spun `1.86s` (`-792/+850/-562/+143` ticks, `~30°`) then stopped | All 4 wheels broke out at `t=0.13–0.26s` (`∑|PWM|=344`); `0.80 rad/s` target drove all 4 to `92` cap (`∑|PWM|=368`) & `M4` stalled at `92` cap | **`ABORTED` (ESP32 `POWERON_RESET` at `t=1.86s` after `0.6s` of `M4` stalled @ `92 PWM`)** | `turn_cw_90deg_1792074798.json` |
 | **2026-10-15 08:09** | **`1.3.4-cand-r42d`** | **`cdf5af4`** | **Turn 90° CW (`rover-test turn`, `--no-braking` Step 1/3 @ `0.30 rad/s`)** | Too slow to break stiction (`M3` stalled `-59` ticks over `4.27s`) | `pwm=[-90, 82, -90, 104]` (`∑|PWM|=366`); `M3` never broke stiction (`vel=0`) at `-90` cap | **`ABORTED` (`M3` stalled + ESP32 `POWERON_RESET` at `t=4.27s`)** | `turn_cw_90deg_1792076939.json` |
 | **2026-10-15 08:21** | **`1.3.3-cand-r41c`** | **`e2a884c`** | **Turn 90° CW (`rover-test turn`, Step 1/3 @ `0.80 rad/s`)** | Broke stiction cleanly (`-900/+1021/-695/+572` ticks in `0.91s`), stopped mid-turn | `102 PWM` boost broke all 4 wheels out (`vel=[-3.8, 4.3, -3.0, 2.7]`), then `0.80 rad/s` drove `∑|PWM|=462` | **`ABORTED` (ESP32 `POWERON_RESET` at `t=0.91s` @ `∑|PWM|=462`)** | `turn_cw_90deg_1792077682.json` |
+| **2026-10-15 08:25** | **`1.3.3-cand-r41c`** | **`e2a884c`** | **Turn 90° CW (`rover-test turn`, 3/3 Steps @ `0.45 rad/s`)** | **Completed 3/3 cleanly (`0` resets, `0` stalls)** | **`+90.35°, +90.44°, +90.36°` (Mean Err `+0.38°`, Span `0.09°`)** | **`SUCCESS` (3/3 PASS)** | `turn_cw_90deg_1792077902.json` |
 
 *\*Note on 2026-10-13 18:16 (A2): Wheel encoders turned `-259` ticks (`26.8 mm` @ 65mm / `27.6 mm` @ 66.95mm max tire travel), confirming nominal motor travel (`99.3%`) with a ~5 mm mark placement offset.*
 *\*Note on 2026-10-14 04:42 (Turn 90° CW): Step 1 passed (`+90.95°` IMU, `90.0°` physical, `0` wheel stalls). Step 2 aborted before motion because `complete_zero_handshake` in `tools/rover_tests/transport.py` did not refresh `autonomyState.lastCmdTime` after reaching `READY_DISARMED`; fixed in `transport.py` and `server.js` (`d59c58f` / `43e828d`).*
@@ -205,6 +206,10 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
   19. **Restored Verified `1.3.3-cand-r41c` Baseline (`08:17 PDT`) & Tested 90° CW @ `0.80 rad/s` (`08:21 PDT`, `turn_cw_90deg_1792077682.json`)**:
       - Reverted `src/` back to `4d44c31` (`1.3.3-cand-r41c`) per Rule 5 (*Revert on Regression*).
       - In `1792077682.json`, `102 PWM` stiction boost broke all 4 wheels out immediately (`vel = [-3.84, +4.32, -3.03, +2.71 rad/s]`, `0` stalls), but holding `0.80 rad/s` (`targetRadps = ±4.19`) pushed `pwm = [-108, 99, -124, 131]` (`∑|PWM| = 462`), triggering an ESP32 `POWERON_RESET` at `t = 0.91 s`.
+  20. **90° CW 3-Repetition Test on `1.3.3-cand-r41c` @ `--max-angular-speed 0.45` (`08:25 PDT`, `turn_cw_90deg_1792077902.json`)**:
+      - **PASSED 3/3 (`SUCCESS`)** with **zero ESP32 resets (`bootCount: 1 -> 1`)** and **zero wheel stalls**!
+      - `102 PWM` boost broke stiction in `0.10 s`, and `0.45 rad/s` (`targetRadps = ±2.35 rad/s`) kept all 4 wheels spinning at `1.7–2.7 rad/s` while keeping `∑|PWM| = 405–413` (down from `462` at `0.80 rad/s`).
+      - Settled IMU headings with `--stopping-advance-deg 0.7`: **`+90.35°, +90.44°, +90.36°` (Mean Err `+0.38°`, Repeatability Span `0.09°`)**.
 
 ---
 
