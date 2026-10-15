@@ -247,7 +247,9 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
                     stictionState = STICTION_KINETIC;
                     // Transition directly into kinetic PID calculation below
                 } else {
-                    int boostMag = SPIN_STICTION_BOOST_PWM; // Smooth-turn candidate: 64 PWM
+                    // Smooth 60ms ramp from 48 PWM up to SPIN_STICTION_BOOST_PWM (84 PWM) to avoid 4-motor inrush current spike
+                    int rampMag = 48 + (int)boostTicksCount * 6;
+                    int boostMag = (rampMag < SPIN_STICTION_BOOST_PWM) ? rampMag : SPIN_STICTION_BOOST_PWM;
                     int boostPwm = (targetVel > 0.0f) ? boostMag : -boostMag;
                     
                     if (((lastPwm > 0 && boostPwm < 0) || (lastPwm < 0 && boostPwm > 0)) && lastPwm != 0 && boostPwm != 0) {
@@ -391,7 +393,7 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
             }
         }
     } else {
-        // Smooth-turn candidate (r42): Use smooth proportional/integral gains without artificial stall error inflation
+        // Smooth-turn candidate (r42b): Use smooth proportional/integral gains without artificial stall error inflation
         recoveryAssist = 0.0f;
 
         if (isStalledCondition) {
@@ -423,8 +425,8 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
         }
     }
 
-    // Integral state anti-windup: clamp to [-50, 50] during turns to prevent scrub stall windup, [-150, 150] straight
-    const float maxIntegral = isStraightKinetic ? 150.0f : 50.0f;
+    // Integral state anti-windup: clamp to [-35, 35] during turns to prevent scrub stall windup, [-150, 150] straight
+    const float maxIntegral = isStraightKinetic ? 150.0f : 35.0f;
     integralTerm = constrain(integralTerm, -maxIntegral, maxIntegral);
     
     // Derivative term

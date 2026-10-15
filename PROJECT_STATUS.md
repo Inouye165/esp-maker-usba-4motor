@@ -12,7 +12,7 @@ This root document is the single source of truth for **Rover 1** build/repositor
 | **Firmware Repo (This Repo)** | `esp-maker-usba-4motor` (`c:\Users\Ron\electronic_projects\esp\esp-maker-usba-4motor`) | Embedded C++ (PlatformIO) for NULLLAB Maker-ESP32-Pro |
 | **Host / Cockpit Repo** | `yahboom-encoder` (`c:\Users\Ron\electronic_projects\yahboom-encoder`) | Legacy repo name; runs Cockpit Server + ROS 2 Jazzy on RPi5 |
 | **Raspberry Pi 5 Host** | `ron@10.0.0.246` (`/home/ron/yahboom-encoder`) | Cockpit API: `:3000`, Nav Bridge: `:3010` |
-| **Active Firmware Build** | **`1.3.4-cand-r42`** (`source: rev42-smooth-tn`) | Smooth-turn candidate: disables 5 turn-only current/reversal overrides; preserves straight crawl (`r41c`) |
+| **Active Firmware Build** | **`1.3.4-cand-r42b`** (`source: rev42b-smooth`) | Smooth-turn candidate B: `80/92 PWM` spin floor + `60 ms` startup ramp; no twitch/hammer/brake-short |
 | **Effective Wheel Diameter** | `0.06695 m` (radius `0.033475 m`) | Firmware nominal `0.065 m`; `1974.1667` ticks/rev |
 | **Effective Track Width** | `0.3408575433 m` | Calibrated differential track width |
 | **IMU Sensor & Mode** | BNO08x — `SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC` (`0x08`) | Non-magnetic yaw only (magnetic orientation forbidden indoors) |
@@ -185,6 +185,9 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
      - Preserved 100% of straight-line forward/reverse control (`r41c`) while disabling the 5 turn-only overrides (`SPIN_STICTION_BOOST_PWM: 102 -> 64`, `MIN_SPIN_KINETIC_FF_FLOOR: 80/94 -> 56`, `SPIN_PID_KP: 10.0 -> 2.2`, `ANTI_STALL_KI: 25.0 -> 3.6`, turn integral clamp `±50 PWM`, immediate `>=3` tick spin breakout exit, `updateChassisStallSupervisor` / `updateSpinRecoveryHarness` disabled, and `DYNAMIC_BRAKE_ENABLED = false` on boot).
   14. **Manual Drive & Turn Verification on `1.3.4-cand-r42` (`06:53:35–06:54:23 PDT`)**:
      - Operator drove and turned manually on hardwood floor (`armed: true, mode: 3`) with **zero ESP32 resets** during the test window (`06:53:35–06:54:23`) and confirmed turn behavior felt smooth/normal again like before.
+  15. **Closed-Loop 90° CW Test on `1.3.4-cand-r42` (`07:05 PDT`, `turn_cw_90deg_1792073146.json`) & Deployment of `1.3.4-cand-r42b` (`07:14 PDT`)**:
+     - `1792073146.json` completed with **zero ESP32 resets** (`bootCount: 1 -> 1`) and proved that on the $L > W$ hardwood floor, `M1, M2, M3` break out at `79–80 PWM` (`t = 1.15s`) while `M4 (RR)` requires `90–92 PWM` (`t = 1.75s`, tripping the runner's `1.50s` stall timer when starting from `56 PWM`).
+     - Deployed `1.3.4-cand-r42b` (`rev42b-smooth`, pre-change checkpoint `c856b6b`), setting `MIN_SPIN_KINETIC_FF_FLOOR = 80.0f` and `SPIN_FORWARD_REAR_KINETIC_FLOOR = 92.0f` with a `60 ms` startup ramp (`48 -> 84 PWM`), gentle `SPIN_PID_KP = 3.0f`, `ANTI_STALL_KI = 10.0f`, turn integral clamp `±35 PWM`, and keeping twitch/re-breakout/brake-short disabled.
 
 ---
 
