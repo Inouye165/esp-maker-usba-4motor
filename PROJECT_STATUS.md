@@ -165,7 +165,21 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
      - However, during the 180° spin without `--enable-balancing`, **`M2 (RF)` rotated `+6577` ticks (`701.2 mm`) forward while `M1 (LF)` rotated `-4910` ticks (`-523.5 mm`) backward — an excess of `+1667` ticks = `+177.7 mm` (`~170 mm` measured by Ron)**!
   8. **Tested 180° CW with `--enable-balancing` (`05:14 PDT`, `turn_cw_180deg_1792066438.json`)**:
      - Step 1 **PASSED** with **`+180.07°` IMU (`+0.07°` error!)**, reducing `M2` ticks from `6577` down to `5729` and matching rear wheels (`M3 = -4273`, `M4 = +4332`).
-     - Step 2 aborted at `t = 5.26s` with ESP32 `POWERON_RESET` right as `M4 (RR)` reached `finalPwm = 125` (`basePwm 115 + spinSyncTrim 10`), matching the exact `M4 PWM 123–125` reset threshold seen in `1791980120` (`M4=123`) and `1791981026` (`M4=124`).
+     - Step 2 aborted at `t = 5.26s` with ESP32 `POWERON_RESET` right as `M4 (RR)` reached `finalPwm = 125` (`basePwm 115 + spinSyncTrim 10`).
+  9. **Forensic Audit & System-Wide Serial Port Check (`05:20–05:45 PDT`)**:
+     - Disproved the earlier hypothesis that `M4 = 125 PWM` alone caused the reset (Trial 1 had reached `M4 = 124 PWM` and `∑|finalPwm| = 408` without resetting, and an idle reset occurred at `05:20:59 PDT` with `PWM = 0`).
+     - Verified why `esp_boot_count_start` remains `1` on `POWERON_RESET` (`RTC_DATA_ATTR` is cleared by ESP-IDF startup on `0x1 POWERON_RESET`) and why `tools/rover_tests/reporting.py` falls back to `esp_reset_reason_start` when `esp_reset_reason_end` is `None`.
+     - Confirmed via `lsof`, `fuser`, `dmesg -T`, and `journalctl` that only `rover-server` (`node[894]`) holds `/dev/ttyUSB0` open (`FD 18`) and zero USB disconnects occurred.
+  10. **Live Physical Reset-Isolation Matrix (`05:45–06:12 PDT`, Disarmed `mode=0, PWM=0`, Controller Off-Chassis)**:
+     - **Steps 1–4 (Tap/touch ESP32 board, move USB connector at ESP32 & RPi5 ends, touch power connector/switch)**: **PASS (`0` resets over 43 minutes)**.
+     - **Step 5 (Chassis flex)**: Skipped (controller board is off the chassis).
+     - **Steps 6A & 6B (Manually roll/pivot rover on hardwood floor while disarmed, `PWM=0`)**: **CONFIRMED ESP32 `POWERON_RESET` (`2/2 = 100%` repeatable at `06:04:11` and `06:06:13 PDT`)**.
+     - **Air Spin Tests A & B (Spin all 4 wheels individually and front/rear pairs simultaneously in the air off the floor)**: **PASS (`0` resets)**.
+  11. **Manual Driving Comparison (`06:15–06:20 PDT`) & $L > W$ Skid-Steer Analysis**:
+     - **Straight Forward & Reverse Driving (Slow and Fast)**: Drove continuously for `1m 43.4s` (`2.67 m` odometry) on the hardwood floor with **zero resets**.
+     - **Manual Turns (Slow and Fast)**: Triggered ESP32 `POWERON_RESET` (`SPI_FAST_FLASH_BOOT`) at `06:15:45`, `06:16:11`, `06:18:07`, and `06:18:34 PDT`, resetting the board into `mode 0 (DISARMED)` and stopping the rover.
+  12. **Firmware Audit for Turn-Only Contributors (`06:25–06:32 PDT`)**:
+     - Identified 5 turn-only firmware overrides added after the earlier "room-to-room" baseline: (1) `SPIN_RECOVERY_TWITCH_PULSE` (`-3.50 rad/s` opposite-direction full-power slam after `350 ms` in `ChassisSupervisor.h`), (2) `SPIN_STICTION_BOOST_PWM = 102` & `80–94 PWM` minimum spin kinetic floors, (3) `SPIN_PID_KP = 10.0` (vs `2.2` straight) & `ANTI_STALL_KI = 25.0` (ramping scrubbing wheels to `225+ PWM`), (4) `200 ms` `Stalled-KINETIC` `102 PWM` re-breakout reset in `ChassisSupervisor.h`, and (5) `DYNAMIC_BRAKE_ENABLED` (`brakeAll()` `IN1=255, IN2=255` short-circuit pulse on stop).
 
 ---
 
