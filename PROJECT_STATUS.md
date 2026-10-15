@@ -12,7 +12,7 @@ This root document is the single source of truth for **Rover 1** build/repositor
 | **Firmware Repo (This Repo)** | `esp-maker-usba-4motor` (`c:\Users\Ron\electronic_projects\esp\esp-maker-usba-4motor`) | Embedded C++ (PlatformIO) for NULLLAB Maker-ESP32-Pro |
 | **Host / Cockpit Repo** | `yahboom-encoder` (`c:\Users\Ron\electronic_projects\yahboom-encoder`) | Legacy repo name; runs Cockpit Server + ROS 2 Jazzy on RPi5 |
 | **Raspberry Pi 5 Host** | `ron@10.0.0.246` (`/home/ron/yahboom-encoder`) | Cockpit API: `:3000`, Nav Bridge: `:3010` |
-| **Active Firmware Build** | **`1.3.4-cand-r42c`** (`source: rev42c-capped`) | Smooth-turn candidate C: `76/84 PWM` spin floor + `lastError` seed + hard `±92 PWM` turn cap (`∑|PWM| <= 368`) |
+| **Active Firmware Build** | **`1.3.4-cand-r42d`** (`source: rev42d-capped`) | Smooth-turn candidate D: `76/88 PWM` spin floor + `Kd=0` on spin + `90/106 PWM` per-wheel turn cap |
 | **Effective Wheel Diameter** | `0.06695 m` (radius `0.033475 m`) | Firmware nominal `0.065 m`; `1974.1667` ticks/rev |
 | **Effective Track Width** | `0.3408575433 m` | Calibrated differential track width |
 | **IMU Sensor & Mode** | BNO08x — `SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC` (`0x08`) | Non-magnetic yaw only (magnetic orientation forbidden indoors) |
@@ -152,7 +152,7 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
 ## 6. Daily Engineering & Activity Log
 
 ### 2026-10-15 (Thursday)
-- **Active Firmware**: `1.3.4-cand-r42c` (`source: rev42c-capped`)
+- **Active Firmware**: `1.3.4-cand-r42d` (`source: rev42d-capped`)
 - **Accomplishments & Observations**:
   1. **Cold Start Check (`04:36 PDT`)**: Powered on Rover 1 after 22+ hours of rest (`temp=37.8°C`, `EXT5V_V=4.85V`).
   2. **First Cold 90° CW Run (`04:38 PDT`, `turn_cw_90deg_1792064274.json`)**: Aborted at `0.5s` (`-616` ticks, `~22°`) with ESP32 `POWERON_RESET`.
@@ -193,10 +193,11 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
   16. **Closed-Loop 90° CW Test on `1.3.4-cand-r42b` (`07:20 PDT`, `turn_cw_90deg_1792074038.json`) & Deployment of `1.3.4-cand-r42c` (`07:28 PDT`)**:
       - In `1792074038.json`, setting `SPIN_KINETIC_KS_PWM = 65.0f` caused `rawFfMagnitude = 65 + 6.0 * 4.19 = 90.1 PWM` at `0.80 rad/s`, and `lastError = 0` on exiting `STICTION_BOOST` added a `+17.6 PWM` `dTerm` spike, slamming all 4 motors to `-116, +110, -111, +118 PWM` (`∑|PWM| = 455` peak, `404` sustained) and triggering an ESP32 `POWERON_RESET` at `t = 0.52 s`.
       - Deployed `1.3.4-cand-r42c` (`rev42c-capped`, pre-change checkpoint `735bc55`): restored `SPIN_KINETIC_KS_PWM = 22.0f` and `SPIN_PID_KP = 2.2f` from `r42`, set `MIN_SPIN_KINETIC_FF_FLOOR = 76.0f` (`76 FF + ~8 P = ~84 PWM`), `SPIN_FORWARD_REAR_KINETIC_FLOOR = 84.0f` (`84 FF + ~8 P = ~92 PWM`), seeded `lastError` on exiting `STICTION_BOOST` (zero `dTerm` spike), and hard-capped turn `targetPwm` to `±92 PWM` (`∑|PWM| <= 368`).
-  17. **Closed-Loop 90° CW Test on `1.3.4-cand-r42c` (`07:33 PDT`, `turn_cw_90deg_1792074798.json`)**:
+  17. **Closed-Loop 90° CW Test on `1.3.4-cand-r42c` (`07:33 PDT`, `turn_cw_90deg_1792074798.json`) & Deployment of `1.3.4-cand-r42d` (`07:48 PDT`)**:
       - Spun for `1.86 s` (`M1=-792, M2=+850, M3=-562, M4=+143` ticks, `~30°`), `3.6x` longer than `r42b` (`0.52 s`).
       - At `t = 0.26 s`, all 4 wheels were spinning (`vel = [-1.20, +1.84, -0.98, +0.98 rad/s]`) at `pwm = [-84, 83, -85, 92]` (`∑|PWM| = 344`).
       - However, because the default turn cruise speed is `0.80 rad/s` (`targetRadps = ±4.19 rad/s`), `error = 4.19 - 1.84 = +2.35 rad/s` remained positive on all 4 wheels, ramping `M1, M2, M3` up to the `92 PWM` cap (`[-92, 92, -92, 92]`, `∑|PWM| = 368`), while `M4 (RR)` stalled (`vel = 0`) at `t = 0.76 s` because `92 PWM` was slightly below `M4`'s `101–108 PWM` kinetic rolling floor (observed in `1792065144.json`), triggering a reset at `t = 1.86 s` after `1.1 s` of `M4` locked-rotor stall at `92 PWM`.
+      - Deployed `1.3.4-cand-r42d` (`rev42d-capped`, pre-change checkpoint `7aa01fd`): set `activeKd = 0.0f` during pure spin (`isSpinManeuver`), `SPIN_FORWARD_REAR_KINETIC_FLOOR = 88.0f`, and per-wheel turn cap to `106 PWM` for `isForwardRearWheel` (`90 PWM` for the other 3 wheels).
 
 ---
 

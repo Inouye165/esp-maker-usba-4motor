@@ -492,14 +492,16 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
     
     float feedforward = (targetVel > 0.0f ? 1.0f : -1.0f) * ffMagnitude;
     
-    // PID Correction
+    // PID Correction (zero Kd during pure spin to prevent dTerm step kicks on angular setpoint changes)
     float activeKp = isSpinManeuver ? SPIN_PID_KP : Kp;
-    float pidCorrection = (activeKp * error) + integralTerm + (Kd * derivative);
+    float activeKd = isSpinManeuver ? 0.0f : Kd;
+    float pidCorrection = (activeKp * error) + integralTerm + (activeKd * derivative);
     
     // Combine PID correction, Feedforward, and Separate Recovery Assist
     float totalPwm = feedforward + pidCorrection + recoveryAssist;
-    // Hard-cap turn PWM to ±92 PWM (∑|PWM| <= 368) to stay below the 4-motor rail reset threshold
-    const int maxAllowedPwm = isStraightKinetic ? 255 : 92;
+    // Per-wheel turn cap: allow up to 106 PWM on forward-driving rear wheel (M4 CW / M3 CCW) so it never stalls,
+    // and cap the other 3 wheels to 90 PWM (∑|PWM| ~ 350 nominal, <= 376 max)
+    const int maxAllowedPwm = isStraightKinetic ? 255 : (isForwardRearWheel ? 106 : 90);
     int targetPwm = constrain((int)round(totalPwm), -maxAllowedPwm, maxAllowedPwm);
     
     // Populate diagnostic telemetry (read-only, non-interfering)
@@ -508,7 +510,7 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
     diag.feedforward = feedforward;
     diag.pTerm = activeKp * error;
     diag.iTerm = integralTerm;
-    diag.dTerm = Kd * derivative;
+    diag.dTerm = activeKd * derivative;
     diag.recoveryAssist = recoveryAssist;
 
     diag.finalPwm = (int16_t)targetPwm;

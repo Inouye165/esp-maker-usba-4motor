@@ -116,8 +116,8 @@ const float SPIN_KS_PWM = 22.0f;                   // Smooth-turn r42c: match ro
 const float SPIN_KINETIC_KS_PWM = 22.0f;           // Smooth-turn r42c: match rolling breakaway 22 PWM (prevents 65 + 6*4.19 = 90.1 FF jump)
 const float MIN_SPIN_KINETIC_FF_FLOOR = 76.0f;     // Smooth-turn r42c: 76 FF + ~8 P = ~84 PWM operating point
 
-const float SPIN_FORWARD_REAR_KINETIC_FLOOR = 84.0f; // Smooth-turn r42c: 84 FF + ~8 P = ~92 PWM operating point for M4/M3
-const float SPIN_REVERSE_REAR_KINETIC_FLOOR = 76.0f; // Smooth-turn r42c: 76 PWM floor
+const float SPIN_FORWARD_REAR_KINETIC_FLOOR = 88.0f; // Smooth-turn r42d: 88 FF + P/I up to 106 PWM cap keeps M4/M3 rolling without stall
+const float SPIN_REVERSE_REAR_KINETIC_FLOOR = 76.0f; // Smooth-turn r42d: 76 PWM floor
 const float SPIN_MANEUVER_EPSILON = 0.005f;        // Linear velocity threshold for pure spin classification (m/s)
 
 // Watchdog communication timeout
