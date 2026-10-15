@@ -180,7 +180,6 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
         // For non-spin (straight/rolling): breakout confirmation strictly >= 3 ticks displacement (0.31 mm)
         if (!isSpinManeuver && deltaTicks >= 3) {
             stictionState = STICTION_KINETIC;
-            lastError = targetVel - measuredRadps;
             // Transition directly into kinetic PID calculation below
         } else if (!isSpinManeuver) {
             boostTicksCount++;
@@ -199,8 +198,8 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
                 return 0;
             }
             
-            // While in boost: opposing wheel tight arc uses SPIN_STICTION_BOOST_PWM
-            // Commanded turning arc with lateral floor scrub uses MIN_USABLE_SPIN_PWM
+            // While in boost: opposing wheel tight arc uses SPIN_STICTION_BOOST_PWM (102 PWM)
+            // Commanded turning arc with lateral floor scrub uses MIN_USABLE_SPIN_PWM (68 PWM)
             // Low-speed turning arc retains STICTION_BOOST_PWM (48 PWM)
             // Ordinary straight forward/reverse startup uses STRAIGHT_STICTION_BOOST_PWM (64 PWM)
             int boostMag = STICTION_BOOST_PWM;
@@ -238,43 +237,35 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
             }
             return lastPwm;
         } else {
-            // Smooth-turn candidate (r42c): Exit pure-spin boost immediately once wheel moves >= 3 ticks
-            // (just like straight driving), or after SPIN_BREAKOUT_MAX_CYCLES timeout.
-            if (deltaTicks >= 3) {
+            // For PURE-SPIN maneuver:
+            // Controlled by WheelController rear-pair sustained motion guard or hard 200 ms timeout
+            boostTicksCount++;
+            if (boostTicksCount >= SPIN_BREAKOUT_MAX_CYCLES) {
                 stictionState = STICTION_KINETIC;
-                lastError = targetVel - measuredRadps;
+                // Transition directly into kinetic PID calculation below
             } else {
-                boostTicksCount++;
-                if (boostTicksCount >= SPIN_BREAKOUT_MAX_CYCLES) {
-                    stictionState = STICTION_KINETIC;
-                    lastError = targetVel - measuredRadps;
-                    // Transition directly into kinetic PID calculation below
-                } else {
-                    // Smooth 60ms ramp from 48 PWM up to SPIN_STICTION_BOOST_PWM (78 PWM) to avoid 4-motor inrush current spike
-                    int rampMag = 48 + (int)boostTicksCount * 6;
-                    int boostMag = (rampMag < SPIN_STICTION_BOOST_PWM) ? rampMag : SPIN_STICTION_BOOST_PWM;
-                    int boostPwm = (targetVel > 0.0f) ? boostMag : -boostMag;
-                    
-                    if (((lastPwm > 0 && boostPwm < 0) || (lastPwm < 0 && boostPwm > 0)) && lastPwm != 0 && boostPwm != 0) {
-                        reversalDeadtimeTicks = 5;
-                    }
-                    lastPwm = boostPwm;
-                    
-                    diag.targetVel = targetVel;
-                    diag.measuredVel = measuredRadps;
-                    diag.feedforward = (float)boostPwm;
-                    diag.pTerm = 0.0f;
-                    diag.iTerm = 0.0f;
-                    diag.dTerm = 0.0f;
-                    diag.finalPwm = (int16_t)boostPwm;
-                    diag.stictionState = STICTION_BOOST;
-                    
-                    if (reversalDeadtimeTicks > 0) {
-                        reversalDeadtimeTicks--;
-                        return 0;
-                    }
-                    return lastPwm;
+                int boostMag = SPIN_STICTION_BOOST_PWM; // Empirically validated 102 PWM breakout boost
+                int boostPwm = (targetVel > 0.0f) ? boostMag : -boostMag;
+                
+                if (((lastPwm > 0 && boostPwm < 0) || (lastPwm < 0 && boostPwm > 0)) && lastPwm != 0 && boostPwm != 0) {
+                    reversalDeadtimeTicks = 5;
                 }
+                lastPwm = boostPwm;
+                
+                diag.targetVel = targetVel;
+                diag.measuredVel = measuredRadps;
+                diag.feedforward = (float)boostPwm;
+                diag.pTerm = 0.0f;
+                diag.iTerm = 0.0f;
+                diag.dTerm = 0.0f;
+                diag.finalPwm = (int16_t)boostPwm;
+                diag.stictionState = STICTION_BOOST;
+                
+                if (reversalDeadtimeTicks > 0) {
+                    reversalDeadtimeTicks--;
+                    return 0;
+                }
+                return lastPwm;
             }
         }
     }
@@ -396,11 +387,19 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
             }
         }
     } else {
-        // Smooth-turn candidate (r42c): Use smooth proportional/integral gains without artificial stall error inflation
+        // Non-straight maneuvers (pure spin, opposing arcs, turning arcs) or legacy comparison mode:
+        // Isolate straight recovery assist completely (must remain 0)
         recoveryAssist = 0.0f;
 
+        // Original instantaneous stall detection and gains strictly preserved:
         if (isStalledCondition) {
             activeKi = ANTI_STALL_KI;
+            const float minStallError = 1.60f;
+            if (error > 0.0f && effectiveError < minStallError) {
+                effectiveError = minStallError;
+            } else if (error < 0.0f && effectiveError > -minStallError) {
+                effectiveError = -minStallError;
+            }
         } else if (!isSpinManeuver && !isOpposingManeuver && !isTurningArc &&
                    stictionState == STICTION_KINETIC &&
                    abs(targetVel) >= 0.01f && abs(targetVel) <= 2.0f && abs(error) >= 0.40f) {
@@ -428,9 +427,8 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
         }
     }
 
-    // Integral state anti-windup: clamp to [-20, 20] during turns to prevent scrub stall windup, [-150, 150] straight
-    const float maxIntegral = isStraightKinetic ? 150.0f : 20.0f;
-    integralTerm = constrain(integralTerm, -maxIntegral, maxIntegral);
+    // Integral state anti-windup: clamp the integral contribution to [-150, 150]
+    integralTerm = constrain(integralTerm, -150.0f, 150.0f);
     
     // Derivative term
     float derivative = (error - lastError) / dt;
@@ -439,7 +437,7 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
     // Breakaway friction and velocity feedforward magnitude
     float breakaway;
     if (isSpinManeuver) {
-        // Dedicated pure-spin kinetic feedforward base (22.0 PWM in r42c)
+        // Dedicated pure-spin kinetic feedforward base (75.0 PWM)
         breakaway = SPIN_KINETIC_KS_PWM;
     } else {
         // In rolling kinetic motion, dynamic friction is ~55% of static breakaway (~22 PWM)
@@ -454,7 +452,7 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
     if (stictionState == STICTION_KINETIC && abs(targetVel) >= 0.01f) {
         float minFfFloor;
         if (isSpinManeuver) {
-            // Forward-driving rear wheel receives 84 PWM floor; others receive 76 PWM floor
+            // Forward-driving rear wheel receives 94 PWM floor; others receive 80 PWM floor
             minFfFloor = isForwardRearWheel ? SPIN_FORWARD_REAR_KINETIC_FLOOR : MIN_SPIN_KINETIC_FF_FLOOR;
         } else if (isOpposingManeuver || isTurningArc) {
             // Turning arcs and opposing tight maneuvers retain baseline kinetic floor (22.0 PWM)
@@ -492,17 +490,14 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
     
     float feedforward = (targetVel > 0.0f ? 1.0f : -1.0f) * ffMagnitude;
     
-    // PID Correction (zero Kd during pure spin to prevent dTerm step kicks on angular setpoint changes)
+    // PID Correction (pure spin selects SPIN_PID_KP = 6.0, normal driving retains Kp = 2.2)
+    // Full un-deadbanded integral authority: provides immediate closed-loop torque response to tracking error
     float activeKp = isSpinManeuver ? SPIN_PID_KP : Kp;
-    float activeKd = isSpinManeuver ? 0.0f : Kd;
-    float pidCorrection = (activeKp * error) + integralTerm + (activeKd * derivative);
+    float pidCorrection = (activeKp * error) + integralTerm + (Kd * derivative);
     
     // Combine PID correction, Feedforward, and Separate Recovery Assist
     float totalPwm = feedforward + pidCorrection + recoveryAssist;
-    // Per-wheel turn cap: allow up to 106 PWM on forward-driving rear wheel (M4 CW / M3 CCW) so it never stalls,
-    // and cap the other 3 wheels to 90 PWM (∑|PWM| ~ 350 nominal, <= 376 max)
-    const int maxAllowedPwm = isStraightKinetic ? 255 : (isForwardRearWheel ? 106 : 90);
-    int targetPwm = constrain((int)round(totalPwm), -maxAllowedPwm, maxAllowedPwm);
+    int targetPwm = constrain((int)round(totalPwm), -255, 255);
     
     // Populate diagnostic telemetry (read-only, non-interfering)
     diag.targetVel = targetVel;
@@ -510,7 +505,7 @@ int SingleWheelController::update(float measuredRadps, int32_t currentTicks, flo
     diag.feedforward = feedforward;
     diag.pTerm = activeKp * error;
     diag.iTerm = integralTerm;
-    diag.dTerm = activeKd * derivative;
+    diag.dTerm = Kd * derivative;
     diag.recoveryAssist = recoveryAssist;
 
     diag.finalPwm = (int16_t)targetPwm;

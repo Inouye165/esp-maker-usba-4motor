@@ -12,7 +12,7 @@ This root document is the single source of truth for **Rover 1** build/repositor
 | **Firmware Repo (This Repo)** | `esp-maker-usba-4motor` (`c:\Users\Ron\electronic_projects\esp\esp-maker-usba-4motor`) | Embedded C++ (PlatformIO) for NULLLAB Maker-ESP32-Pro |
 | **Host / Cockpit Repo** | `yahboom-encoder` (`c:\Users\Ron\electronic_projects\yahboom-encoder`) | Legacy repo name; runs Cockpit Server + ROS 2 Jazzy on RPi5 |
 | **Raspberry Pi 5 Host** | `ron@10.0.0.246` (`/home/ron/yahboom-encoder`) | Cockpit API: `:3000`, Nav Bridge: `:3010` |
-| **Active Firmware Build** | **`1.3.4-cand-r42d`** (`source: rev42d-capped`) | Smooth-turn candidate D: `76/88 PWM` spin floor + `Kd=0` on spin + `90/106 PWM` per-wheel turn cap |
+| **Active Firmware Build** | **`1.3.3-cand-r41c`** (`source: rev41-floor-c`) | Verified baseline restored: `102 PWM` spin breakout + `41.0 PWM` reverse crawl floor |
 | **Effective Wheel Diameter** | `0.06695 m` (radius `0.033475 m`) | Firmware nominal `0.065 m`; `1974.1667` ticks/rev |
 | **Effective Track Width** | `0.3408575433 m` | Calibrated differential track width |
 | **IMU Sensor & Mode** | BNO08x — `SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC` (`0x08`) | Non-magnetic yaw only (magnetic orientation forbidden indoors) |
@@ -153,7 +153,7 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
 ## 6. Daily Engineering & Activity Log
 
 ### 2026-10-15 (Thursday)
-- **Active Firmware**: `1.3.4-cand-r42d` (`source: rev42d-capped`)
+- **Active Firmware**: `1.3.3-cand-r41c` (`source: rev41-floor-c`)
 - **Accomplishments & Observations**:
   1. **Cold Start Check (`04:36 PDT`)**: Powered on Rover 1 after 22+ hours of rest (`temp=37.8°C`, `EXT5V_V=4.85V`).
   2. **First Cold 90° CW Run (`04:38 PDT`, `turn_cw_90deg_1792064274.json`)**: Aborted at `0.5s` (`-616` ticks, `~22°`) with ESP32 `POWERON_RESET`.
@@ -201,6 +201,8 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
       - Deployed `1.3.4-cand-r42d` (`rev42d-capped`, pre-change checkpoint `7aa01fd`): set `activeKd = 0.0f` during pure spin (`isSpinManeuver`), `SPIN_FORWARD_REAR_KINETIC_FLOOR = 88.0f`, and per-wheel turn cap to `106 PWM` for `isForwardRearWheel` (`90 PWM` for the other 3 wheels).
   18. **Closed-Loop 90° CW Test on `1.3.4-cand-r42d` @ `0.30 rad/s` (`08:09 PDT`, `turn_cw_90deg_1792076939.json`)**:
       - Confirmed operator observation that `0.30 rad/s` with `78 PWM` boost and `90 PWM` cap is too slow/weak to break stiction on the left side (`M3` stayed stalled at `vel = 0`, `-59` ticks total over `4.27 s` while `M2` spun `+1716` ticks and `M4` spun `+973` ticks), culminating in an ESP32 `POWERON_RESET` at `t = 4.27 s`.
+  19. **Restored Verified `1.3.3-cand-r41c` Baseline (`08:17 PDT`)**:
+      - Reverted `src/` back to `4d44c31` (`1.3.3-cand-r41c`) per Rule 5 (*Revert on Regression*) so full `102 PWM` stiction breakout and fast spin breakaway are restored.
 
 ---
 

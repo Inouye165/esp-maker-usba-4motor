@@ -65,11 +65,11 @@ const float MAX_ANGULAR_JERK_RADPS3 = 200.0f;     // Snappy angular jerk respons
 const float KP_SPEED = 2.2f;
 const float KI_SPEED = 1.2f;
 const float KD_SPEED = 0.05f;
-const float SPIN_PID_KP = 2.2f;  // Smooth-turn r42c: match straight KP_SPEED (2.2f)
-const float SPIN_PID_KI = 1.2f;  // Smooth-turn r42c: match straight KI_SPEED (1.2f)
-const float ANTI_STALL_KI = 6.0f;                // Smooth-turn r42c: gentle stall assist (6.0f)
+const float SPIN_PID_KP = 10.0f; // Pure-spin proportional gain (increased from 6.0 to 10.0 for closed-loop response)
+const float SPIN_PID_KI = 4.0f;  // Pure-spin integral gain (active during pure-spin maneuvers to eliminate steady-state offset)
+const float ANTI_STALL_KI = 25.0f;               // Accelerated integral gain when commanded wheel is stalled (breaks static friction within ~500ms)
 const float ANTI_STALL_SPEED_THRESHOLD = 0.15f;  // Speed threshold below which a commanded wheel is considered stalled
-const float LAGGING_KI = 3.6f;                   // Smooth-turn r42c: bounded 3x Ki (3.6f)
+const float LAGGING_KI = 12.0f;                  // Responsive tracking integral gain when wheel has significant speed deficit
 const float SAME_SIDE_SYNC_TRIM_GAIN = 20.0f; // Equalization gain (PWM per rad/s delta)
 const int SAME_SIDE_SYNC_TRIM_MAX = 24;       // Maximum same-side sync trim authority (PWM)
 const int SAME_SIDE_SYNC_SLEW_LIMIT = 3;     // Slew rate limit per 100Hz tick (PWM/tick)
@@ -79,7 +79,7 @@ const int MIN_USABLE_SPIN_PWM_FASTER = 48;   // Lower floor allowing fast spinni
 
 const float SPIN_SYNC_TRIM_GAIN = SAME_SIDE_SYNC_TRIM_GAIN; // Backwards-compatible alias
 const int SPIN_SYNC_TRIM_MAX = SAME_SIDE_SYNC_TRIM_MAX;       // Backwards-compatible alias
-const int MIN_USABLE_SPIN_PWM = 56;      // Safe baseline floor for turning arcs
+const int MIN_USABLE_SPIN_PWM = 68;      // Safe baseline floor preventing tire-scrub stall on loaded wheels
 
 
 // Breakaway and Static Friction Compensation Limits (Feedforward Constants)
@@ -107,17 +107,17 @@ const float ULTRA_LOW_SPEED_REVERSE_CRAWL_FLOOR_PWM = 41.0f; // Piecewise flat r
 const float ULTRA_LOW_SPEED_REVERSE_ANCHOR_RADPS = 0.461538f; // Reverse Case 13 setpoint boundary (v_x = -0.015 m/s, r = 0.0325 m)
 // Backward compatibility alias for legacy test runners referencing the previous single forward floor:
 const float ULTRA_LOW_SPEED_MIN_FF_FLOOR = ULTRA_LOW_SPEED_MIN_FF_FLOOR_FWD;
-const int SPIN_STICTION_BOOST_PWM = 78;            // Smooth-turn r42c: 78 PWM boost (ramps from 48 -> 78 PWM)
+const int SPIN_STICTION_BOOST_PWM = 102;           // Empirically validated pure-spin startup breakout PWM (102 PWM)
 const uint16_t SPIN_BREAKOUT_MIN_CYCLES = 10;      // Minimum breakout dwell duration: 100 ms @ 100 Hz (10 control cycles)
 const uint16_t SPIN_BREAKOUT_MAX_CYCLES = 20;      // Hard max breakout boost duration: 200 ms @ 100 Hz (20 control cycles)
 const uint16_t SPIN_BREAKOUT_SUSTAINED_CYCLES = 3; // Consecutive control cycles of sustained velocity required for early exit
 const float SPIN_BREAKOUT_VELOCITY_THRESHOLD = 0.10f; // Velocity threshold (rad/s) to qualify sustained rear-wheel motion
-const float SPIN_KS_PWM = 22.0f;                   // Smooth-turn r42c: match rolling breakaway 22 PWM
-const float SPIN_KINETIC_KS_PWM = 22.0f;           // Smooth-turn r42c: match rolling breakaway 22 PWM (prevents 65 + 6*4.19 = 90.1 FF jump)
-const float MIN_SPIN_KINETIC_FF_FLOOR = 76.0f;     // Smooth-turn r42c: 76 FF + ~8 P = ~84 PWM operating point
+const float SPIN_KS_PWM = 58.0f;                   // Empirical pure-spin lateral scrub breakaway base
+const float SPIN_KINETIC_KS_PWM = 75.0f;           // Dedicated pure-spin kinetic feedforward base/intercept (75 PWM)
+const float MIN_SPIN_KINETIC_FF_FLOOR = 80.0f;     // Pure-spin kinetic feedforward floor baseline for non-forward-rear wheels
 
-const float SPIN_FORWARD_REAR_KINETIC_FLOOR = 88.0f; // Smooth-turn r42d: 88 FF + P/I up to 106 PWM cap keeps M4/M3 rolling without stall
-const float SPIN_REVERSE_REAR_KINETIC_FLOOR = 76.0f; // Smooth-turn r42d: 76 PWM floor
+const float SPIN_FORWARD_REAR_KINETIC_FLOOR = 94.0f; // Empirically validated kinetic floor for forward-driving rear wheel (94 PWM)
+const float SPIN_REVERSE_REAR_KINETIC_FLOOR = 80.0f; // Kinetic floor for reverse-driving rear wheel (80 PWM)
 const float SPIN_MANEUVER_EPSILON = 0.005f;        // Linear velocity threshold for pure spin classification (m/s)
 
 // Watchdog communication timeout

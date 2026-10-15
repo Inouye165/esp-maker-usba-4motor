@@ -16,9 +16,9 @@ float LEFT_TRIM_REV = 1.00f;
 float RIGHT_TRIM_REV = 1.00f;
 bool USE_UNIFORM_BREAKAWAY = true;
 
-// Runtime feature toggles (safe defaults: false to preserve baseline and avoid brakeAll H-bridge short transient)
+// Runtime feature toggles (safe defaults: false to preserve baseline)
 bool WHEEL_BALANCE_ENABLED = false;
-bool DYNAMIC_BRAKE_ENABLED = false;
+bool DYNAMIC_BRAKE_ENABLED = true;
 uint16_t DYNAMIC_BRAKE_DURATION_MS = 100; // 100 ms bounded brake pulse
 float DYNAMIC_BRAKE_MAX_TRIGGER_MPS = 0.35f;   // Linear speed trigger threshold (m/s)
 float DYNAMIC_BRAKE_MAX_TRIGGER_RADPS = 0.80f; // Angular speed trigger threshold (rad/s)
@@ -115,8 +115,8 @@ void loadCalibrations() {
     bool trimFwdNvs = preferences.isKey("left_trim");
     bool trimRevNvs = preferences.isKey("left_trim_rev");
 
-    DYNAMIC_BRAKE_ENABLED = false;
-    bool brakeNvs = false;
+    DYNAMIC_BRAKE_ENABLED = preferences.getBool("dyn_brake", true);
+    bool brakeNvs = preferences.isKey("dyn_brake");
 
     LOG_SERIAL_PRINTF("[Config] Loaded physical dimensions: diameter=%.4f m (%s), separation=%.4f m (%s)\n", 
                   WHEEL_DIAMETER_M, diaNvs ? "NVS" : "DEFAULT", WHEEL_SEPARATION_M, sepNvs ? "NVS" : "DEFAULT");
