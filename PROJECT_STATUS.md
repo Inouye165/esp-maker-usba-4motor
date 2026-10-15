@@ -180,8 +180,10 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
      - **Manual Turns (Slow and Fast)**: Triggered ESP32 `POWERON_RESET` (`SPI_FAST_FLASH_BOOT`) at `06:15:45`, `06:16:11`, `06:18:07`, and `06:18:34 PDT`, resetting the board into `mode 0 (DISARMED)` and stopping the rover.
   12. **Firmware Audit for Turn-Only Contributors (`06:25–06:32 PDT`)**:
      - Identified 5 turn-only firmware overrides added after the earlier "room-to-room" baseline: (1) `SPIN_RECOVERY_TWITCH_PULSE` (`-3.50 rad/s` opposite-direction full-power slam after `350 ms` in `ChassisSupervisor.h`), (2) `SPIN_STICTION_BOOST_PWM = 102` & `80–94 PWM` minimum spin kinetic floors, (3) `SPIN_PID_KP = 10.0` (vs `2.2` straight) & `ANTI_STALL_KI = 25.0` (ramping scrubbing wheels to `225+ PWM`), (4) `200 ms` `Stalled-KINETIC` `102 PWM` re-breakout reset in `ChassisSupervisor.h`, and (5) `DYNAMIC_BRAKE_ENABLED` (`brakeAll()` `IN1=255, IN2=255` short-circuit pulse on stop).
-  13. **Deployed Smooth-Turn Firmware Candidate `1.3.4-cand-r42` (`06:42 PDT`, Pre-Change Checkpoint `4d44c31`)**:
+  13. **Deployed Smooth-Turn Firmware Candidate `1.3.4-cand-r42` (`06:42 PDT`, Pre-Change Checkpoint `4d44c31`, Commit `ba69f82`)**:
      - Preserved 100% of straight-line forward/reverse control (`r41c`) while disabling the 5 turn-only overrides (`SPIN_STICTION_BOOST_PWM: 102 -> 64`, `MIN_SPIN_KINETIC_FF_FLOOR: 80/94 -> 56`, `SPIN_PID_KP: 10.0 -> 2.2`, `ANTI_STALL_KI: 25.0 -> 3.6`, turn integral clamp `±50 PWM`, immediate `>=3` tick spin breakout exit, `updateChassisStallSupervisor` / `updateSpinRecoveryHarness` disabled, and `DYNAMIC_BRAKE_ENABLED = false` on boot).
+  14. **Manual Drive & Turn Verification on `1.3.4-cand-r42` (`06:53:35–06:54:23 PDT`)**:
+     - Operator drove and turned manually on hardwood floor (`armed: true, mode: 3`) with **zero ESP32 resets** during the test window (`06:53:35–06:54:23`) and confirmed turn behavior felt smooth/normal again like before.
 
 ---
 
