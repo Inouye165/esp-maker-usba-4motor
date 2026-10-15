@@ -12,7 +12,7 @@ This root document is the single source of truth for **Rover 1** build/repositor
 | **Firmware Repo (This Repo)** | `esp-maker-usba-4motor` (`c:\Users\Ron\electronic_projects\esp\esp-maker-usba-4motor`) | Embedded C++ (PlatformIO) for NULLLAB Maker-ESP32-Pro |
 | **Host / Cockpit Repo** | `yahboom-encoder` (`c:\Users\Ron\electronic_projects\yahboom-encoder`) | Legacy repo name; runs Cockpit Server + ROS 2 Jazzy on RPi5 |
 | **Raspberry Pi 5 Host** | `ron@10.0.0.246` (`/home/ron/yahboom-encoder`) | Cockpit API: `:3000`, Nav Bridge: `:3010` |
-| **Active Firmware Build** | **`1.3.4-cand-r42b`** (`source: rev42b-smooth`) | Smooth-turn candidate B: `80/92 PWM` spin floor + `60 ms` startup ramp; no twitch/hammer/brake-short |
+| **Active Firmware Build** | **`1.3.4-cand-r42c`** (`source: rev42c-capped`) | Smooth-turn candidate C: `76/84 PWM` spin floor + `lastError` seed + hard `±92 PWM` turn cap (`∑|PWM| <= 368`) |
 | **Effective Wheel Diameter** | `0.06695 m` (radius `0.033475 m`) | Firmware nominal `0.065 m`; `1974.1667` ticks/rev |
 | **Effective Track Width** | `0.3408575433 m` | Calibrated differential track width |
 | **IMU Sensor & Mode** | BNO08x — `SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC` (`0x08`) | Non-magnetic yaw only (magnetic orientation forbidden indoors) |
@@ -151,7 +151,7 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
 ## 6. Daily Engineering & Activity Log
 
 ### 2026-10-15 (Thursday)
-- **Active Firmware**: `1.3.3-cand-r41c` (`source: rev41-floor-c`)
+- **Active Firmware**: `1.3.4-cand-r42c` (`source: rev42c-capped`)
 - **Accomplishments & Observations**:
   1. **Cold Start Check (`04:36 PDT`)**: Powered on Rover 1 after 22+ hours of rest (`temp=37.8°C`, `EXT5V_V=4.85V`).
   2. **First Cold 90° CW Run (`04:38 PDT`, `turn_cw_90deg_1792064274.json`)**: Aborted at `0.5s` (`-616` ticks, `~22°`) with ESP32 `POWERON_RESET`.
@@ -173,22 +173,25 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
      - Verified why `esp_boot_count_start` remains `1` on `POWERON_RESET` (`RTC_DATA_ATTR` is cleared by ESP-IDF startup on `0x1 POWERON_RESET`) and why `tools/rover_tests/reporting.py` falls back to `esp_reset_reason_start` when `esp_reset_reason_end` is `None`.
      - Confirmed via `lsof`, `fuser`, `dmesg -T`, and `journalctl` that only `rover-server` (`node[894]`) holds `/dev/ttyUSB0` open (`FD 18`) and zero USB disconnects occurred.
   10. **Live Physical Reset-Isolation Matrix (`05:45–06:12 PDT`, Disarmed `mode=0, PWM=0`, Controller Off-Chassis)**:
-     - **Steps 1–4 (Tap/touch ESP32 board, move USB connector at ESP32 & RPi5 ends, touch power connector/switch)**: **PASS (`0` resets over 43 minutes)**.
-     - **Step 5 (Chassis flex)**: Skipped (controller board is off the chassis).
-     - **Steps 6A & 6B (Manually roll/pivot rover on hardwood floor while disarmed, `PWM=0`)**: **CONFIRMED ESP32 `POWERON_RESET` (`2/2 = 100%` repeatable at `06:04:11` and `06:06:13 PDT`)**.
-     - **Air Spin Tests A & B (Spin all 4 wheels individually and front/rear pairs simultaneously in the air off the floor)**: **PASS (`0` resets)**.
+      - **Steps 1–4 (Tap/touch ESP32 board, move USB connector at ESP32 & RPi5 ends, touch power connector/switch)**: **PASS (`0` resets over 43 minutes)**.
+      - **Step 5 (Chassis flex)**: Skipped (controller board is off the chassis).
+      - **Steps 6A & 6B (Manually roll/pivot rover on hardwood floor while disarmed, `PWM=0`)**: **CONFIRMED ESP32 `POWERON_RESET` (`2/2 = 100%` repeatable at `06:04:11` and `06:06:13 PDT`)**.
+      - **Air Spin Tests A & B (Spin all 4 wheels individually and front/rear pairs simultaneously in the air off the floor)**: **PASS (`0` resets)**.
   11. **Manual Driving Comparison (`06:15–06:20 PDT`) & $L > W$ Skid-Steer Analysis**:
-     - **Straight Forward & Reverse Driving (Slow and Fast)**: Drove continuously for `1m 43.4s` (`2.67 m` odometry) on the hardwood floor with **zero resets**.
-     - **Manual Turns (Slow and Fast)**: Triggered ESP32 `POWERON_RESET` (`SPI_FAST_FLASH_BOOT`) at `06:15:45`, `06:16:11`, `06:18:07`, and `06:18:34 PDT`, resetting the board into `mode 0 (DISARMED)` and stopping the rover.
+      - **Straight Forward & Reverse Driving (Slow and Fast)**: Drove continuously for `1m 43.4s` (`2.67 m` odometry) on the hardwood floor with **zero resets**.
+      - **Manual Turns (Slow and Fast)**: Triggered ESP32 `POWERON_RESET` (`SPI_FAST_FLASH_BOOT`) at `06:15:45`, `06:16:11`, `06:18:07`, and `06:18:34 PDT`, resetting the board into `mode 0 (DISARMED)` and stopping the rover.
   12. **Firmware Audit for Turn-Only Contributors (`06:25–06:32 PDT`)**:
-     - Identified 5 turn-only firmware overrides added after the earlier "room-to-room" baseline: (1) `SPIN_RECOVERY_TWITCH_PULSE` (`-3.50 rad/s` opposite-direction full-power slam after `350 ms` in `ChassisSupervisor.h`), (2) `SPIN_STICTION_BOOST_PWM = 102` & `80–94 PWM` minimum spin kinetic floors, (3) `SPIN_PID_KP = 10.0` (vs `2.2` straight) & `ANTI_STALL_KI = 25.0` (ramping scrubbing wheels to `225+ PWM`), (4) `200 ms` `Stalled-KINETIC` `102 PWM` re-breakout reset in `ChassisSupervisor.h`, and (5) `DYNAMIC_BRAKE_ENABLED` (`brakeAll()` `IN1=255, IN2=255` short-circuit pulse on stop).
+      - Identified 5 turn-only firmware overrides added after the earlier "room-to-room" baseline: (1) `SPIN_RECOVERY_TWITCH_PULSE` (`-3.50 rad/s` opposite-direction full-power slam after `350 ms` in `ChassisSupervisor.h`), (2) `SPIN_STICTION_BOOST_PWM = 102` & `80–94 PWM` minimum spin kinetic floors, (3) `SPIN_PID_KP = 10.0` (vs `2.2` straight) & `ANTI_STALL_KI = 25.0` (ramping scrubbing wheels to `225+ PWM`), (4) `200 ms` `Stalled-KINETIC` `102 PWM` re-breakout reset in `ChassisSupervisor.h`, and (5) `DYNAMIC_BRAKE_ENABLED` (`brakeAll()` `IN1=255, IN2=255` short-circuit pulse on stop).
   13. **Deployed Smooth-Turn Firmware Candidate `1.3.4-cand-r42` (`06:42 PDT`, Pre-Change Checkpoint `4d44c31`, Commit `ba69f82`)**:
-     - Preserved 100% of straight-line forward/reverse control (`r41c`) while disabling the 5 turn-only overrides (`SPIN_STICTION_BOOST_PWM: 102 -> 64`, `MIN_SPIN_KINETIC_FF_FLOOR: 80/94 -> 56`, `SPIN_PID_KP: 10.0 -> 2.2`, `ANTI_STALL_KI: 25.0 -> 3.6`, turn integral clamp `±50 PWM`, immediate `>=3` tick spin breakout exit, `updateChassisStallSupervisor` / `updateSpinRecoveryHarness` disabled, and `DYNAMIC_BRAKE_ENABLED = false` on boot).
+      - Preserved 100% of straight-line forward/reverse control (`r41c`) while disabling the 5 turn-only overrides (`SPIN_STICTION_BOOST_PWM: 102 -> 64`, `MIN_SPIN_KINETIC_FF_FLOOR: 80/94 -> 56`, `SPIN_PID_KP: 10.0 -> 2.2`, `ANTI_STALL_KI: 25.0 -> 3.6`, turn integral clamp `±50 PWM`, immediate `>=3` tick spin breakout exit, `updateChassisStallSupervisor` / `updateSpinRecoveryHarness` disabled, and `DYNAMIC_BRAKE_ENABLED = false` on boot).
   14. **Manual Drive & Turn Verification on `1.3.4-cand-r42` (`06:53:35–06:54:23 PDT`)**:
-     - Operator drove and turned manually on hardwood floor (`armed: true, mode: 3`) with **zero ESP32 resets** during the test window (`06:53:35–06:54:23`) and confirmed turn behavior felt smooth/normal again like before.
+      - Operator drove and turned manually on hardwood floor (`armed: true, mode: 3`) with **zero ESP32 resets** during the test window (`06:53:35–06:54:23`) and confirmed turn behavior felt smooth/normal again like before.
   15. **Closed-Loop 90° CW Test on `1.3.4-cand-r42` (`07:05 PDT`, `turn_cw_90deg_1792073146.json`) & Deployment of `1.3.4-cand-r42b` (`07:14 PDT`)**:
-     - `1792073146.json` completed with **zero ESP32 resets** (`bootCount: 1 -> 1`) and proved that on the $L > W$ hardwood floor, `M1, M2, M3` break out at `79–80 PWM` (`t = 1.15s`) while `M4 (RR)` requires `90–92 PWM` (`t = 1.75s`, tripping the runner's `1.50s` stall timer when starting from `56 PWM`).
-     - Deployed `1.3.4-cand-r42b` (`rev42b-smooth`, pre-change checkpoint `c856b6b`), setting `MIN_SPIN_KINETIC_FF_FLOOR = 80.0f` and `SPIN_FORWARD_REAR_KINETIC_FLOOR = 92.0f` with a `60 ms` startup ramp (`48 -> 84 PWM`), gentle `SPIN_PID_KP = 3.0f`, `ANTI_STALL_KI = 10.0f`, turn integral clamp `±35 PWM`, and keeping twitch/re-breakout/brake-short disabled.
+      - `1792073146.json` completed with **zero ESP32 resets** (`bootCount: 1 -> 1`) and proved that on the $L > W$ hardwood floor, `M1, M2, M3` break out at `79–80 PWM` (`t = 1.15s`) while `M4 (RR)` requires `90–92 PWM` (`t = 1.75s`, tripping the runner's `1.50s` stall timer when starting from `56 PWM`).
+      - Deployed `1.3.4-cand-r42b` (`rev42b-smooth`, pre-change checkpoint `c856b6b`), setting `MIN_SPIN_KINETIC_FF_FLOOR = 80.0f` and `SPIN_FORWARD_REAR_KINETIC_FLOOR = 92.0f` with a `60 ms` startup ramp (`48 -> 84 PWM`), gentle `SPIN_PID_KP = 3.0f`, `ANTI_STALL_KI = 10.0f`, turn integral clamp `±35 PWM`, and keeping twitch/re-breakout/brake-short disabled.
+  16. **Closed-Loop 90° CW Test on `1.3.4-cand-r42b` (`07:20 PDT`, `turn_cw_90deg_1792074038.json`) & Deployment of `1.3.4-cand-r42c` (`07:28 PDT`)**:
+      - In `1792074038.json`, setting `SPIN_KINETIC_KS_PWM = 65.0f` caused `rawFfMagnitude = 65 + 6.0 * 4.19 = 90.1 PWM` at `0.80 rad/s`, and `lastError = 0` on exiting `STICTION_BOOST` added a `+17.6 PWM` `dTerm` spike, slamming all 4 motors to `-116, +110, -111, +118 PWM` (`∑|PWM| = 455` peak, `404` sustained) and triggering an ESP32 `POWERON_RESET` at `t = 0.52 s`.
+      - Deployed `1.3.4-cand-r42c` (`rev42c-capped`, pre-change checkpoint `735bc55`): restored `SPIN_KINETIC_KS_PWM = 22.0f` and `SPIN_PID_KP = 2.2f` from `r42`, set `MIN_SPIN_KINETIC_FF_FLOOR = 76.0f` (`76 FF + ~8 P = ~84 PWM`), `SPIN_FORWARD_REAR_KINETIC_FLOOR = 84.0f` (`84 FF + ~8 P = ~92 PWM`), seeded `lastError` on exiting `STICTION_BOOST` (zero `dTerm` spike), and hard-capped turn `targetPwm` to `±92 PWM` (`∑|PWM| <= 368`).
 
 ---
 
