@@ -1765,7 +1765,7 @@ class PhysicalTestRunner:
             print("[OK] Pre-motion invariants verified: armed=True, autonomyState=READY_ARMED, valid cmdSource, fresh IMU & encoders.")
 
         # Step 9: Immediately send first command (no dwell/sleep while armed)
-        stopping_advance = self.params.stopping_advance_deg if self.params.enable_braking else 0.0
+        stopping_advance = trial_report.stopping_advance_deg
         controller = AngularApproachController(
             cruise_wz_radps=self.params.max_angular_speed,
             creep_wz_radps=self.params.creep_angular_speed,
