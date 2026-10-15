@@ -133,6 +133,8 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
 | **2026-10-14 05:21** | **`1.3.3-cand-r41c`** | **`fb4615f`** | **Turn 180° CW (`rover-test turn`, Step 1/3 @ `0.40 rad/s`)** | `~66°` (mid-turn stop) | Aborted (`-1846` ticks) | **`ABORTED` (ESP32 `POWERON_RESET` / 251ms IMU gap)** | `turn_cw_180deg_1791980504.json` |
 | **2026-10-14 05:23** | **`1.3.3-cand-r41c`** | **`fb4615f`** | **Turn 180° CW (`rover-test turn`, Step 1 PASS / Step 2 Abort)** | **Step 1: `180.0°`** / Step 2: `~91°` | **Step 1: `+181.16°` (`+1.16°` err)** / Step 2: `-2566` ticks | **Step 1 `SUCCESS` / Step 2 `ABORTED` (ESP32 `POWERON_RESET`)** | `turn_cw_180deg_1791980606.json` |
 | **2026-10-14 05:30** | **`1.3.3-cand-r41c`** | **`ce957ef`** | **Turn 90° CW (`rover-test turn`, Step 1/3 Re-test)** | `~40°` (mid-turn stop) | Aborted after `1.1s` (`-1110` ticks) | **`ABORTED` (ESP32 `POWERON_RESET` / 254ms IMU gap)** | `turn_cw_90deg_1791981026.json` |
+| **2026-10-15 04:38** | **`1.3.3-cand-r41c`** | **`c5b9d41`** | **Turn 90° CW (`rover-test turn`, Cold Start Step 1/3)** | `~22°` (mid-turn stop) | Aborted after `0.5s` (`-616` ticks) | **`ABORTED` (ESP32 `POWERON_RESET` / 264ms IMU gap)** | `turn_cw_90deg_1792064274.json` |
+| **2026-10-15 04:45** | **`1.3.3-cand-r41c`** | **`c5b9d41`** | **Turn 90° CW (`rover-test turn`, 3/3 Steps post-manual)** | **`90.0°, 90.0°, 90.0°`** | **`+90.54°, +90.58°, +90.62°` (Mean Err `+0.58°`, Span `0.07°`)** | **`SUCCESS` (3/3 PASS)** | `turn_cw_90deg_1792064709.json` |
 
 *\*Note on 2026-10-13 18:16 (A2): Wheel encoders turned `-259` ticks (`26.8 mm` @ 65mm / `27.6 mm` @ 66.95mm max tire travel), confirming nominal motor travel (`99.3%`) with a ~5 mm mark placement offset.*
 *\*Note on 2026-10-14 04:42 (Turn 90° CW): Step 1 passed (`+90.95°` IMU, `90.0°` physical, `0` wheel stalls). Step 2 aborted before motion because `complete_zero_handshake` in `tools/rover_tests/transport.py` did not refresh `autonomyState.lastCmdTime` after reaching `READY_DISARMED`; fixed in `transport.py` and `server.js` (`d59c58f` / `43e828d`).*
@@ -141,6 +143,17 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
 ---
 
 ## 6. Daily Engineering & Activity Log
+
+### 2026-10-15 (Thursday)
+- **Active Firmware**: `1.3.3-cand-r41c` (`source: rev41-floor-c`)
+- **Accomplishments & Observations**:
+  1. **Cold Start Check (`04:36 PDT`)**: Powered on Rover 1 after 22+ hours of rest (`temp=37.8°C`, `EXT5V_V=4.85V`).
+  2. **First Cold 90° CW Run (`04:38 PDT`, `turn_cw_90deg_1792064274.json`)**: Aborted at `0.5s` (`-616` ticks, `~22°`) with ESP32 `POWERON_RESET`.
+  3. **Manual Drive Exercise (`04:42–04:44 PDT`)**: Operator exercised Rover 1 in Manual Drive (experienced two ESP32 resets at `04:42:26` and `04:42:59` on initial breakaway, then spun smoothly for multiple rotations at `04:43:13`).
+  4. **90° CW 3-Repetition Test (`04:45 PDT`, `turn_cw_90deg_1792064709.json`)**: **PASSED 3/3** with `+90.54°, +90.58°, +90.62°` IMU (`90.0°, 90.0°, 90.0°` Physical; Mean Err **`+0.58°`**, Repeatability Span **`0.07°`**, `0` stalls).
+  5. **Root Cause of 90° vs. 180° Behavior**: Both tests use the identical `AngularApproachController` (`tools/rover_tests/controllers.py`), which steps down from `0.80 rad/s` cruise to `0.20 rad/s` creep when `remaining_deg <= 30.0°`. In a **90° turn**, cruise (`0.80 rad/s`) only lasts **60° (`1.41s`)** before dropping to low-current creep (`0.20 rad/s`). In a **180° turn**, cruise (`0.80 rad/s`) lasts **150° (`3.37s`)** — and the ESP32 `POWERON_RESET` events in 180° turns occur right at **`1.5s–2.0s` (`50°–90°`)** when sustained `0.80 rad/s` cruise current continues past the `1.4s` mark.
+
+---
 
 ### 2026-10-14 (Wednesday)
 - **Active Firmware**: `1.3.3-cand-r41c` (`source: rev41-floor-c`)
