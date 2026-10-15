@@ -145,6 +145,7 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
 | **2026-10-15 08:09** | **`1.3.4-cand-r42d`** | **`cdf5af4`** | **Turn 90° CW (`rover-test turn`, `--no-braking` Step 1/3 @ `0.30 rad/s`)** | Too slow to break stiction (`M3` stalled `-59` ticks over `4.27s`) | `pwm=[-90, 82, -90, 104]` (`∑|PWM|=366`); `M3` never broke stiction (`vel=0`) at `-90` cap | **`ABORTED` (`M3` stalled + ESP32 `POWERON_RESET` at `t=4.27s`)** | `turn_cw_90deg_1792076939.json` |
 | **2026-10-15 08:21** | **`1.3.3-cand-r41c`** | **`e2a884c`** | **Turn 90° CW (`rover-test turn`, Step 1/3 @ `0.80 rad/s`)** | Broke stiction cleanly (`-900/+1021/-695/+572` ticks in `0.91s`), stopped mid-turn | `102 PWM` boost broke all 4 wheels out (`vel=[-3.8, 4.3, -3.0, 2.7]`), then `0.80 rad/s` drove `∑|PWM|=462` | **`ABORTED` (ESP32 `POWERON_RESET` at `t=0.91s` @ `∑|PWM|=462`)** | `turn_cw_90deg_1792077682.json` |
 | **2026-10-15 08:25** | **`1.3.3-cand-r41c`** | **`e2a884c`** | **Turn 90° CW (`rover-test turn`, 3/3 Steps @ `0.45 rad/s`)** | **Completed 3/3 cleanly (`0` resets, `0` stalls)** | **`+90.35°, +90.44°, +90.36°` (Mean Err `+0.38°`, Span `0.09°`)** | **`SUCCESS` (3/3 PASS)** | `turn_cw_90deg_1792077902.json` |
+| **2026-10-15 08:33** | **`1.3.3-cand-r41c`** | **`b1402b7`** | **Turn 180° CW (`rover-test turn`, Step 1/3 @ `0.45 rad/s`)** | Spun `~2.8s` (`-1875/+2370/-1472/+1236` ticks, `~75°`) then stopped | Broke stiction cleanly on all 4 wheels, then ESP32 reset after `2.8s` of continuous 4-motor spin | **`ABORTED` (ESP32 `POWERON_RESET` / 254ms IMU gap)** | `turn_cw_180deg_1792078433.json` |
 
 *\*Note on 2026-10-13 18:16 (A2): Wheel encoders turned `-259` ticks (`26.8 mm` @ 65mm / `27.6 mm` @ 66.95mm max tire travel), confirming nominal motor travel (`99.3%`) with a ~5 mm mark placement offset.*
 *\*Note on 2026-10-14 04:42 (Turn 90° CW): Step 1 passed (`+90.95°` IMU, `90.0°` physical, `0` wheel stalls). Step 2 aborted before motion because `complete_zero_handshake` in `tools/rover_tests/transport.py` did not refresh `autonomyState.lastCmdTime` after reaching `READY_DISARMED`; fixed in `transport.py` and `server.js` (`d59c58f` / `43e828d`).*
@@ -163,7 +164,7 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
   4. **90° CW 3-Repetition Test (`04:45 PDT`, `turn_cw_90deg_1792064709.json`)**: **PASSED 3/3** with `+90.54°, +90.58°, +90.62°` IMU (`90.0°, 90.0°, 90.0°` Physical; Mean Err **`+0.58°`**, Repeatability Span **`0.07°`**, `0` stalls).
   5. **Root Cause of 90° vs. 180° Behavior Confirmed (`04:51` & `04:54 PDT`)**:
      - At `04:51 PDT` (`turn_cw_180deg_1792065104.json`), 180° CW at `0.80 rad/s` aborted after `1.1s` with ESP32 `POWERON_RESET`.
-     - At `04:54 PDT` (`turn_cw_180deg_1792065144.json`), 180° CW at `0.30 rad/s` **PASSED 3/3** (`+180.84°, +180.84°, +181.12°` IMU; Mean Err **`+0.93°`**, Repeatability Span **`0.28°`**, `0` stalls, 32s total spin time without a single reset).
+     - At `04:54 PDT` (`turn_cw_180deg_1792065144.json`), 180° CW at `0.30 rad/s` **PASSED 3/3** (`+180.84°, +180.84°, +181.12°` IMU; Mean Err **`+0.93°`, Repeatability Span **`0.28°`**, `0` stalls, 32s total spin time without a single reset).
   6. **Found & Fixed `stopping_advance_deg` Bug Causing `+0.8°` to `+1.1°` Turn Overshoot**:
      - In [`tools/rover_tests/runner.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/tools/rover_tests/runner.py#L1768), `stopping_advance = self.params.stopping_advance_deg if self.params.enable_braking else 0.0` evaluated to `0.0` whenever `--enable-braking` was omitted on the CLI (`self.params.enable_braking is None`), even though braking was enabled by default (`trial_report.stopping_advance_deg = 0.7`). Fixed in `edce0ff`.
   7. **Verified `0.70°` Stopping Advance (`+179.89°`, `-0.11°` err) & Diagnosed `170 mm` Forward Walk (`05:06 PDT`, `turn_cw_180deg_1792065888.json`)**:
@@ -210,6 +211,12 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
       - **PASSED 3/3 (`SUCCESS`)** with **zero ESP32 resets (`bootCount: 1 -> 1`)** and **zero wheel stalls**!
       - `102 PWM` boost broke stiction in `0.10 s`, and `0.45 rad/s` (`targetRadps = ±2.35 rad/s`) kept all 4 wheels spinning at `1.7–2.7 rad/s` while keeping `∑|PWM| = 405–413` (down from `462` at `0.80 rad/s`).
       - Settled IMU headings with `--stopping-advance-deg 0.7`: **`+90.35°, +90.44°, +90.36°` (Mean Err `+0.38°`, Repeatability Span `0.09°`)**.
+  21. **180° CW Test on `1.3.3-cand-r41c` @ `--max-angular-speed 0.45` (`08:33 PDT`, `turn_cw_180deg_1792078433.json`) & Hardware Redesign Decision**:
+      - Broke stiction cleanly on all 4 wheels (`M1=-1875, M2=+2370, M3=-1472, M4=+1236` ticks) and spun for `~2.8 s` (`~75°`), then aborted with ESP32 `POWERON_RESET`.
+      - **Engineering Conclusion & Next Hardware Step**: Software/firmware tuning has been exhaustively bracketed across `r41c`, `r42`, `r42b`, `r42c`, and `r42d`. On the current `L > W` chassis with shared 3S LiPo power, the torque required to break and sustain 4-wheel lateral tire scrub (`~100–125 PWM` per wheel) overlaps the electrical reset threshold of the shared power rail after `~2.5–3.0 s` of continuous turning.
+      - Operator is pausing software tests to perform two permanent hardware upgrades:
+        1. **Wheelbase Redesign ($L \le W$)**: Shorten longitudinal wheelbase relative to track width to eliminate severe lateral scrub torque during in-place turns.
+        2. **Power Rail Isolation (Geekworm X1206 UPS)**: Power the RPi5 (and USB-powered ESP32 logic) from the Geekworm X1206 UPS while powering the 4 motors exclusively from the 3S LiPo.
 
 ---
 
