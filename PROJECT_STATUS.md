@@ -265,6 +265,29 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
 
 ---
 
+### 2026-10-18 (Sunday)
+- **Active Firmware**: `1.3.3-cand-r41c` (`source: rev41-floor-c`)
+- **Active Cockpit Commit**: `e6a6e2c` (`feat(cockpit): add Geekworm X1206 UPS battery level and percentage to cockpit`)
+- **Accomplishments & Code Changes**:
+  1. **Geekworm X1206 UPS Hardware Integration**:
+     - Operator installed Geekworm X1206 UPS (4x 21700 lithium cells in parallel, 1S4P) beneath the Raspberry Pi 5 to isolate host RPi5 / ESP32 logic power from the motor 3S LiPo rail.
+  2. **I2C Fuel Gauge Reader Daemon (`geekworm_battery.py`)**:
+     - Developed robust reader for onboard MAX17043 fuel gauge IC at I2C address `0x36`.
+     - Reads `VCELL` register `0x02` (`swapped * 78.125 / 1,000,000` V) and `SOC` register `0x04` (`swapped / 256.0` %).
+     - Supports `smbus2` / `smbus`, pure Python Linux `fcntl.ioctl` (`I2C_RDWR` with repeated start), and `i2cget` CLI fallback.
+  3. **Cockpit Backend Telemetry Stream & Protocol Protection (`server.js`)**:
+     - Added background monitor process streaming battery telemetry every 3 seconds.
+     - Protected real Geekworm telemetry against ESP32 dummy zero-filled `0x0A` packets.
+     - Added initial battery packet delivery on WebSocket client connection and updated `/api/battery` to expose both `voltage` and `percentage`.
+  4. **Cockpit UI & Style Updates (`public/app.js`, `public/style.css`)**:
+     - Updated header battery meter to display State-of-Charge percentage alongside voltage (`XX% (X.XXV)`).
+     - Added color gradient transitions (Green >=50%, Yellow >=20%, Red <20%) and hover tooltip.
+     - Updated Drive tab status card with live battery status.
+  5. **Automated Verification**:
+     - Created unit test suite `test/test_geekworm_battery.js` validating register math, UI formatting, and packet shielding. All tests PASS.
+
+---
+
 ### 2026-10-14 (Wednesday)
 - **Active Firmware**: `1.3.3-cand-r41c` (`source: rev41-floor-c`)
 - **Accomplishments & Code Changes**:
