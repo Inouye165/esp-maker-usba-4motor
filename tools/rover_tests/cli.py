@@ -139,7 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
     linear_parser.add_argument("--dry-run", action="store_true", help="Simulate execution without sending motor power or arming (safe stationary verification)")
     linear_parser.add_argument("--enable-balancing", action=argparse.BooleanOptionalAction, default=None, help="Enable improved wheel-balancing controls and sync trim")
     linear_parser.add_argument("--enable-braking", "--braking", action=argparse.BooleanOptionalAction, default=None, help="Enable shared low-speed dynamic braking pulse")
-    linear_parser.add_argument("--stopping-advance-m", type=float, default=None, help="Pre-target stopping distance advance in meters (default: 0.045m calibrated dynamic brake coast)")
+    linear_parser.add_argument("--stopping-advance-m", type=float, default=None, help="Pre-target stopping distance advance in meters (default: 0.0135m calibrated two-phase creep stopping advance)")
     linear_parser.add_argument("--clear-faults", action="store_true", help="Clear latched firmware safety faults if rover is confirmed stationary, zero-commanded, and disarmed (operator-authorized)")
     linear_parser.add_argument("--report-directory", type=str, default="reports", help="Directory where JSON and Markdown test reports are saved (default: reports)")
     linear_parser.add_argument("--host", type=str, default=get_default_host(), help="Rover Raspberry Pi 5 IP or hostname (default: auto-detected)")

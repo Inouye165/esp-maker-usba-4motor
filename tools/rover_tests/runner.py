@@ -800,7 +800,7 @@ class PhysicalTestRunner:
         effective_advance = (
             self.params.stopping_advance_m
             if getattr(self.params, "stopping_advance_m", None) is not None
-            else (0.045 if (self.params.enable_braking if self.params.enable_braking is not None else True) else 0.0)
+            else (0.0135 if (self.params.enable_braking if self.params.enable_braking is not None else True) else 0.0)
         )
         controller = LinearApproachController(
             cruise_speed_mps=self.params.max_linear_speed,
