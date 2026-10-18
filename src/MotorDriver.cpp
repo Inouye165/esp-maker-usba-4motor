@@ -14,14 +14,17 @@ MotorDriver::MotorDriver()
     : currentMode(MotorOutputMode::LOCKED)
     , authorizedMotorIndex(-1)
     , actuationState(DrivetrainActuationState::COAST) {
-    // M1: Left Front
-    motors[0] = {M1_IN1, M1_IN2, 0, 1, false};
-    // M2: Right Front
-    motors[1] = {M2_IN1, M2_IN2, 2, 3, true};
-    // M3: Left Rear
-    motors[2] = {M3_IN1, M3_IN2, 4, 5, false};
-    // M4: Right Rear
-    motors[3] = {M4_IN1, M4_IN2, 6, 7, false};
+    // Chassis rebuild 2026-10-18: front/rear motor pairs are physically plugged into
+    // swapped board ports. Logical index (LF, RF, LR, RR) is remapped to the port each
+    // wheel is actually on; each port's polarity correction stays with its port.
+    // Logical 0 (Left Front)  -> board port M3
+    motors[0] = {M3_IN1, M3_IN2, 4, 5, false};
+    // Logical 1 (Right Front) -> board port M4
+    motors[1] = {M4_IN1, M4_IN2, 6, 7, false};
+    // Logical 2 (Left Rear)   -> board port M1
+    motors[2] = {M1_IN1, M1_IN2, 0, 1, false};
+    // Logical 3 (Right Rear)  -> board port M2 (inverted H-bridge wiring on this port)
+    motors[3] = {M2_IN1, M2_IN2, 2, 3, true};
 }
 
 void MotorDriver::begin() {
