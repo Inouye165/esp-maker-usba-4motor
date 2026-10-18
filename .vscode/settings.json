@@ -1,5 +1,16 @@
 {
     "clangd.arguments": [
         "--query-driver=C:/Users/Ron/.platformio/packages/toolchain-xtensa-esp-elf/bin/xtensa-esp-elf-*,C:/Users/Ron/.platformio/packages/toolchain-xtensa-esp32/bin/xtensa-esp32-elf-*"
-    ]
+    ],
+    "cmake.sourceDirectory": "C:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/dwb_auditor",
+    "workbench.colorCustomizations": {
+        "window.activeBorder": "#0078D4",
+        "window.inactiveBorder": "#004578",
+        "titleBar.border": "#0078D4",
+        "activityBar.border": "#0078D4",
+        "sideBar.border": "#0078D4",
+        "statusBar.border": "#0078D4",
+        "panel.border": "#0078D4",
+        "editorGroup.border": "#0078D4"
+    }
 }
