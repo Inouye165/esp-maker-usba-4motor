@@ -169,6 +169,8 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
 | **2026-10-18 07:56–07:59** | **`1.3.4-remap-r01`** | **`b85d56d`** | **Single-Motor Port Check, raised (Suite D, PWM 60, camera = front, viewed from right)** | M1→RR bwd, M2→LR bwd, M3→RF bwd, M4→LF bwd | `+3659 / +2958 / +3857 / +3194` ticks | **`FAIL`** — established physical truth: port1=RF, port2=LF, port3=RR, port4=LR, all motors mirrored | — |
 | **2026-10-18 08:12–08:14** | **`1.3.4-remap-r02`** | **`512331e`** | **Single-Motor Port Check, raised (Suite D, PWM 60)** | M1→LR fwd, M2→LF fwd, M3→RF fwd, M4→RR fwd | `+3203 / +2960 / +3475 / +3441` ticks | **`PARTIAL`** — all directions correct; 3 corners mis-assigned (derivation error in r02 table) | — |
 | **2026-10-18 08:25–08:27** | **`1.3.4-remap-r03`** | **`a2e3d43`** | **Single-Motor Port Check, raised (Suite D, PWM 60)** | **M1→LF fwd, M2→RF fwd, M3→LR fwd, M4→RR fwd** | **`+2979 / +3596 / +3264 / +3546` ticks, all isolated** | **`SUCCESS` (4/4 PASS)** | — |
+| **2026-10-18 14:01** | **`1.3.4-remap-r03`** | **`2f4be4c`** | **Case 2 (`Straight_Crawl_0.015mps`, Rebuilt Chassis)** | **`40.0 mm`** | **`+67.5 mm` (250.0%)** | **`EXCESSIVE_TRAVEL` (Over-speed on new chassis: avg `0.037 m/s` vs `0.015 m/s`; 2.0 mm overrun)** | `floor_char_Straight_Crawl_0.015mps_20261018_140145.json` |
+| **2026-10-18 14:02** | **`1.3.4-remap-r03`** | **`2f4be4c`** | **Case 13 (`Reverse_Crawl_0.015mps`, Rebuilt Chassis)** | **`10.0 mm`** | **`-33.7 mm` (124.8%)** | **`EXCESSIVE_TRAVEL` (Near nominal `-27 mm`; 1.1 mm overrun)** | `floor_char_Reverse_Crawl_0.015mps_20261018_140245.json` |
 
 *\*Note on 2026-10-13 18:16 (A2): Wheel encoders turned `-259` ticks (`26.8 mm` @ 65mm / `27.6 mm` @ 66.95mm max tire travel), confirming nominal motor travel (`99.3%`) with a ~5 mm mark placement offset.*
 *\*Note on 2026-10-14 04:42 (Turn 90° CW): Step 1 passed (`+90.95°` IMU, `90.0°` physical, `0` wheel stalls). Step 2 aborted before motion because `complete_zero_handshake` in `tools/rover_tests/transport.py` did not refresh `autonomyState.lastCmdTime` after reaching `READY_DISARMED`; fixed in `transport.py` and `server.js` (`d59c58f` / `43e828d`).*
@@ -302,6 +304,11 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
      - Automated test suites: `test/test_hud_cockpit.js` (19 checks) and `test/test_manual_drive_watchdog.js` (14 checks) all PASS.
      - Regression test suites: `test_geekworm_battery.js`, `test_cockpit_terminal_disarm.js`, `test_dispatch_nav_readiness.js` all PASS.
      - Visual inspection: Verified live via browser subagent at `http://10.0.0.246:3000/` with full telemetry rendering, zero motion, and healthy disarmed state.
+  9. **Floor Crawl Calibration on Rebuilt Chassis (`scripts/characterize_floor_speeds.py`)**:
+     - **Preflight & E-STOP Clearance**: Drivetrain initially latched in Mode 4 (`EMERGENCY_STOP`) following reboot. Cleared faults via `/api/drive/clear-faults` using operator token, restoring Mode 0 (`LOCKED`).
+     - **Initial Attempt & Hardware State**: Case 2 initially aborted with `STICTION_BLOCKED` after 500 ms at 64 PWM because the Maker control board motor power switch (VMOT) was OFF (while logic ran from Geekworm X1206 UPS).
+     - **Case 2 Forward Crawl (+0.015 m/s for 1.8s)**: With motor switch ON, rover executed forward translation smoothly with zero resets and stopped immediately (`2.0 mm` overrun). Encoder travel: `+67.5 mm` (250.0% of nominal 27 mm); physical ruler travel: `40.0 mm`. Proves rolling friction on the rebuilt chassis is lower than the original chassis baseline (sustaining ~1.0–1.5 rad/s wheel speed at 36–47 PWM).
+     - **Case 13 Reverse Crawl (-0.015 m/s for 1.8s)**: Rover executed reverse translation smoothly with zero resets and stopped immediately (`1.1 mm` overrun). Encoder travel: `-33.7 mm` (124.8% of nominal -27 mm); physical ruler travel: `10.0 mm`. All four wheels reversed symmetrically (`m1..m4` ~ -40 PWM).
 
 ---
 
