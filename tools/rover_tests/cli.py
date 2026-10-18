@@ -157,6 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
     oab_parser.add_argument("--settle-seconds", type=float, default=2.0, help="Settling duration between legs in seconds (default: 2.0)")
     oab_parser.add_argument("--dry-run", action="store_true", help="Simulate execution without sending motor power or arming")
     oab_parser.add_argument("--clear-faults", action="store_true", help="Clear latched firmware safety faults if rover is disarmed")
+    oab_parser.add_argument("--final-turn", action="store_true", help="Perform a final 180° turnaround at the origin to face initial outbound heading (4-leg complete cycle)")
     oab_parser.add_argument("--report-directory", type=str, default="reports", help="Directory where JSON and Markdown test reports are saved (default: reports)")
     oab_parser.add_argument("--host", type=str, default=get_default_host(), help="Rover Raspberry Pi 5 IP or hostname (default: auto-detected)")
     oab_parser.add_argument("--port", type=int, default=3000, help="Cockpit server port (default: 3000)")
@@ -430,14 +431,49 @@ def main(argv: Optional[List[str]] = None, prompt_fn=input, is_interactive: Opti
             print("\n[COMPOUND ABORTED] Leg 3 (Return) failed or was aborted.", file=sys.stderr)
             return 1
 
+        report4 = None
+        if args.final_turn:
+            time.sleep(1.0)
+            print("\n" + "=" * 80)
+            print(f">>> COMPOUND STEP 4/4: FINAL RECIPROCAL {args.turn_degrees:.1f}° {args.turn_direction.upper()} IN-PLACE TURN (FACE ORIGIN) <<<")
+            print("=" * 80)
+            leg4_params = TurnParameters(
+                degrees=args.turn_degrees,
+                direction=args.turn_direction,
+                trials=1,
+                repetitions=1,
+                stopping_advance_deg=args.stopping_advance_deg,
+                settle_seconds=args.settle_seconds,
+                dry_run=args.dry_run,
+                report_directory=args.report_directory,
+                host=args.host,
+                port=args.port
+            )
+            try:
+                leg4_params.validate()
+            except TurnConfigurationException as e:
+                print(f"[CONFIGURATION ERROR] {e}", file=sys.stderr)
+                return 2
+
+            runner4 = PhysicalTestRunner(leg4_params)
+            report4 = runner4.execute_suite()
+            if report4.aborted_trials > 0:
+                print("\n[COMPOUND ABORTED] Leg 4 (Final Turn) failed or was aborted.", file=sys.stderr)
+                return 1
+
         print("\n" + "=" * 80)
         print(">>> COMPOUND OUT-AND-BACK SEQUENCE COMPLETED SUCCESSFULLY <<<")
         turn_t = report2.trials[0]
         turn_ang = turn_t.final_settled_gyro_angle_deg if turn_t.final_settled_gyro_angle_deg is not None else 0.0
         turn_err = turn_t.settled_heading_error_deg if turn_t.settled_heading_error_deg is not None else 0.0
-        print(f"Leg 1 (Forward): {report1.trials[0].measured_distance_m:.4f}m (Err: {report1.trials[0].settled_distance_error_m*1000:+.1f}mm)")
-        print(f"Leg 2 (Turn):    {turn_ang:.2f}° (Err: {turn_err:+.2f}°)")
-        print(f"Leg 3 (Return):  {report3.trials[0].measured_distance_m:.4f}m (Err: {report3.trials[0].settled_distance_error_m*1000:+.1f}mm)")
+        print(f"Leg 1 (Forward):   {report1.trials[0].measured_distance_m:.4f}m (Err: {report1.trials[0].settled_distance_error_m*1000:+.1f}mm)")
+        print(f"Leg 2 (Turn):      {turn_ang:.2f}° (Err: {turn_err:+.2f}°)")
+        print(f"Leg 3 (Return):    {report3.trials[0].measured_distance_m:.4f}m (Err: {report3.trials[0].settled_distance_error_m*1000:+.1f}mm)")
+        if report4 is not None:
+            t4 = report4.trials[0]
+            a4 = t4.final_settled_gyro_angle_deg if t4.final_settled_gyro_angle_deg is not None else 0.0
+            e4 = t4.settled_heading_error_deg if t4.settled_heading_error_deg is not None else 0.0
+            print(f"Leg 4 (Face Fwd):  {a4:.2f}° (Err: {e4:+.2f}°)")
         print("=" * 80)
         return 0
 
