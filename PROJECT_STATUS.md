@@ -266,8 +266,8 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
 ---
 
 ### 2026-10-18 (Sunday)
-- **Active Firmware**: `1.3.3-cand-r41c` (`source: rev41-floor-c`)
-- **Active Cockpit Commit**: `e6a6e2c` (`feat(cockpit): add Geekworm X1206 UPS battery level and percentage to cockpit`)
+- **Active Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`)
+- **Active Cockpit Commit**: `64534c2` (`feat(cockpit): port Rover 2 Ground Control HUD and safety watchdog to Rover 1`)
 - **Accomplishments & Code Changes**:
   1. **Geekworm X1206 UPS Hardware Integration**:
      - Operator installed Geekworm X1206 UPS (4x 21700 lithium cells in parallel, 1S4P) beneath the Raspberry Pi 5 to isolate host RPi5 / ESP32 logic power from the motor 3S LiPo rail.
@@ -283,8 +283,25 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
      - Updated header battery meter to display State-of-Charge percentage alongside voltage (`XX% (X.XXV)`).
      - Added color gradient transitions (Green >=50%, Yellow >=20%, Red <20%) and hover tooltip.
      - Updated Drive tab status card with live battery status.
-  5. **Automated Verification**:
+  5. **Automated Verification (`test/test_geekworm_battery.js`)**:
      - Created unit test suite `test/test_geekworm_battery.js` validating register math, UI formatting, and packet shielding. All tests PASS.
+  6. **Rover 2 Cockpit Replication ("ROVER GROUND CONTROL" HUD)**:
+     - Complete port and adaptation of Rover 2's high-contrast tactical HUD (`public/hud.html`, `public/hud.css`, `public/hud-core.js`, `public/hud-desktop.js`, `public/hud-mobile.html`, `public/hud-mobile.js`).
+     - **Top Header & Telemetry Badges**: Live WebSocket connection badge, RPi5 CPU temperature indicator, EXT5V rail voltage, AC/battery charging badge with Geekworm SOC %, Maker ESP32 4WD motor status, Gamepad indicator, View switchers (FPV Drive, Tactical Map, Split View), and direct links to Mobile Touch UI and Legacy Engineering Cockpit.
+     - **Left Column**: 360° LiDAR radar (RPLiDAR C1 canvas), Geekworm X1206 UPS Health card (voltage, percentage, charging/discharging slope, runtime estimate), and BNO08x IMU Attitude & Heading card.
+     - **Center Stage**: FPV video stream (`/api/camera` MJPEG) with 180° orientation flip & PiP mini-map; interactive 2D map canvas with Nav2 path preview & goal aiming.
+     - **Right Column**: Autonomy & Mission card (quick presets, plan preview, GO with confirmation), Maker ESP32 4WD Drivetrain card, Drive Controls card (ARM, E-STOP, deadman/turbo indicators, throttle slider, token input), Hardware Bus Checklist.
+     - **Mobile Touch UI (`public/hud-mobile.html`)**: Dual virtual touch joysticks (drive + steering), ARM toggle, E-STOP, speed slider, and route presets drawer for smartphones/tablets.
+  7. **Backend Safety Watchdog & Battery Trend Engine (`server.js`, `battery_trend.js`, `manual_drive_watchdog.js`)**:
+     - **`ManualDriveWatchdog`**: Auto-zeroes manual drive targets if the controlling WebSocket disconnects or if a streaming client's keepalive heartbeats (`keepalive: true`) go stale (>600 ms).
+     - **`BatteryTrendEstimator`**: Computes SOC slope using least-squares linear regression over a rolling 20-minute window, providing charging/discharging state and runtime remaining estimates.
+     - **`/api/system` Endpoint**: Exposes live host CPU temperature (`/sys/class/thermal/thermal_zone0/temp`), vcgencmd throttling flags, EXT5V rail, uptime, load average, and watchdog metrics.
+     - **Security**: Replaced hardcoded operator token fallbacks with browser `localStorage` credential isolation.
+     - **Routing & Backward Compatibility**: Served new HUD at root `/` with backward-compatible fallback to legacy engineering cockpit at `/index.html` (and configurable via `COCKPIT_DEFAULT_UI=legacy`).
+  8. **Comprehensive Testing & Live Browser Verification**:
+     - Automated test suites: `test/test_hud_cockpit.js` (19 checks) and `test/test_manual_drive_watchdog.js` (14 checks) all PASS.
+     - Regression test suites: `test_geekworm_battery.js`, `test_cockpit_terminal_disarm.js`, `test_dispatch_nav_readiness.js` all PASS.
+     - Visual inspection: Verified live via browser subagent at `http://10.0.0.246:3000/` with full telemetry rendering, zero motion, and healthy disarmed state.
 
 ---
 
