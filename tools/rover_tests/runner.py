@@ -988,7 +988,7 @@ class PhysicalTestRunner:
                 breakout_start_time = None
                 breakout_count = 0
                 total_breakout_dwell_ms = 0.0
-                cur_ticks = dict(last_enc_ticks)
+                cur_ticks = dict(start_ticks)
 
                 steady_wheel_samples: Dict[str, Dict[str, List[float]]] = {
                     w: {"targets": [], "measured": [], "pwms": []} for w in ["m1", "m2", "m3", "m4"]
