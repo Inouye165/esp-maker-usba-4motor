@@ -17,6 +17,7 @@ This root document is the single source of truth for **Rover 1** build/repositor
 | **Effective Wheel Diameter** | `0.06695 m` (radius `0.033475 m`) | Firmware nominal `0.065 m`; `1974.1667` ticks/rev |
 | **Effective Track Width** | `0.3408575433 m` | Calibrated differential track width |
 | **IMU Sensor & Mode** | BNO08x — `SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC` (`0x08`) | Non-magnetic yaw only (magnetic orientation forbidden indoors) |
+| **Latest Calibration Handoff** | [`docs/HANDOFF_REBUILT_CHASSIS_CALIBRATION_20261018.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/docs/HANDOFF_REBUILT_CHASSIS_CALIBRATION_20261018.md) | Complete calibration & compound out-and-back handoff for Antigravity 2.0 |
 
 ### Standard Build & Deployment Commands
 * **Run Native Firmware Unit Tests (Before Flashing)**:
