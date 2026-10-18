@@ -8,6 +8,8 @@ Usage:
 
 import os
 import sys
+import json
+import time
 import argparse
 import traceback
 from typing import List, Optional
@@ -144,6 +146,20 @@ def build_parser() -> argparse.ArgumentParser:
     linear_parser.add_argument("--report-directory", type=str, default="reports", help="Directory where JSON and Markdown test reports are saved (default: reports)")
     linear_parser.add_argument("--host", type=str, default=get_default_host(), help="Rover Raspberry Pi 5 IP or hostname (default: auto-detected)")
     linear_parser.add_argument("--port", type=int, default=3000, help="Cockpit server port (default: 3000)")
+
+    # out-and-back subcommand
+    oab_parser = subparsers.add_parser("out-and-back", help="Execute compound out-and-back test: forward -> 180° turn -> forward return")
+    oab_parser.add_argument("--distance", type=float, default=1.0, help="Outbound / return target distance in meters (default: 1.0)")
+    oab_parser.add_argument("--turn-direction", type=str, choices=["cw", "ccw"], default="cw", help="Turn direction for reciprocal heading (default: cw)")
+    oab_parser.add_argument("--turn-degrees", type=float, default=180.0, help="Turn angle in degrees (default: 180.0)")
+    oab_parser.add_argument("--stopping-advance-m", type=float, default=0.0135, help="Calibrated linear stopping advance in meters (default: 0.0135)")
+    oab_parser.add_argument("--stopping-advance-deg", type=float, default=0.7, help="Calibrated angular stopping advance in degrees (default: 0.7)")
+    oab_parser.add_argument("--settle-seconds", type=float, default=2.0, help="Settling duration between legs in seconds (default: 2.0)")
+    oab_parser.add_argument("--dry-run", action="store_true", help="Simulate execution without sending motor power or arming")
+    oab_parser.add_argument("--clear-faults", action="store_true", help="Clear latched firmware safety faults if rover is disarmed")
+    oab_parser.add_argument("--report-directory", type=str, default="reports", help="Directory where JSON and Markdown test reports are saved (default: reports)")
+    oab_parser.add_argument("--host", type=str, default=get_default_host(), help="Rover Raspberry Pi 5 IP or hostname (default: auto-detected)")
+    oab_parser.add_argument("--port", type=int, default=3000, help="Cockpit server port (default: 3000)")
 
     return parser
 
@@ -302,6 +318,128 @@ def main(argv: Optional[List[str]] = None, prompt_fn=input, is_interactive: Opti
             for line in tb_str.strip().splitlines():
                 print(f"  {line}", file=sys.stderr)
             return 4
+
+    elif args.subcommand == "out-and-back":
+        print("=" * 80)
+        print("ROVER ONE REUSABLE PHYSICAL TEST FRAMEWORK: COMPOUND OUT-AND-BACK")
+        print(f"Leg 1: {args.distance:.3f}m Forward | Leg 2: {args.turn_degrees:.1f}° {args.turn_direction.upper()} Turn | Leg 3: {args.distance:.3f}m Return Forward")
+        print(f"Stopping Advance: Linear {args.stopping_advance_m*1000:.1f}mm | Angular {args.stopping_advance_deg:.2f}°")
+        print(f"Mode: {'DRY RUN (STATIONARY - NO MOTOR POWER)' if args.dry_run else 'PHYSICAL MOTION EXECUTION'}")
+        print("-" * 80)
+        print("1. TEST GOAL:")
+        print("   Validate continuous compound out-and-back autonomous motion:")
+        print("   forward distance, in-place 180° rotation, and return translation to origin.")
+        print("2. WHAT TO MONITOR & MEASURE (OPERATOR):")
+        print("   • Ensure >= 1.5 m clear floor space in front of Rover 1.")
+        print("   • Watch Rover 1 drive forward 1.0m, pivot 180° in place at the 1m mark,")
+        print("     and drive forward 1.0m back to the starting line.")
+        print("   • Measure final return landing displacement relative to origin reference mark.")
+        print("3. EXPECTED RESULT (PASS CRITERIA):")
+        print("   • Final return displacement <= ±50 mm from origin line.")
+        print("   • Zero ESP32 power-sag resets (bootCount invariant).")
+        print("   • Finished safely stopped, disarmed, and locked in Mode 0.")
+        print("=" * 80)
+
+        # Step 1: Forward Translation
+        print("\n" + "=" * 80)
+        print(">>> COMPOUND STEP 1/3: FORWARD TRANSLATION <<<")
+        print("=" * 80)
+        leg1_params = LinearParameters(
+            distance_m=args.distance,
+            direction="forward",
+            trials=1,
+            repetitions=1,
+            stopping_advance_m=args.stopping_advance_m,
+            settle_seconds=args.settle_seconds,
+            dry_run=args.dry_run,
+            clear_faults=args.clear_faults,
+            report_directory=args.report_directory,
+            host=args.host,
+            port=args.port
+        )
+        try:
+            leg1_params.validate()
+        except LinearConfigurationException as e:
+            print(f"[CONFIGURATION ERROR] {e}", file=sys.stderr)
+            return 2
+
+        runner1 = PhysicalTestRunner(leg1_params)
+        report1 = runner1.execute_suite()
+        if report1.aborted_trials > 0:
+            print("\n[COMPOUND ABORTED] Leg 1 (Forward) failed or was aborted.", file=sys.stderr)
+            return 1
+
+        # Pause between legs for mechanical and electrical settling
+        time.sleep(1.0)
+
+        # Step 2: Reciprocal 180° Turn
+        print("\n" + "=" * 80)
+        print(f">>> COMPOUND STEP 2/3: RECIPROCAL {args.turn_degrees:.1f}° {args.turn_direction.upper()} IN-PLACE TURN <<<")
+        print("=" * 80)
+        leg2_params = TurnParameters(
+            degrees=args.turn_degrees,
+            direction=args.turn_direction,
+            trials=1,
+            repetitions=1,
+            stopping_advance_deg=args.stopping_advance_deg,
+            settle_seconds=args.settle_seconds,
+            dry_run=args.dry_run,
+            report_directory=args.report_directory,
+            host=args.host,
+            port=args.port
+        )
+        try:
+            leg2_params.validate()
+        except TurnConfigurationException as e:
+            print(f"[CONFIGURATION ERROR] {e}", file=sys.stderr)
+            return 2
+
+        runner2 = PhysicalTestRunner(leg2_params)
+        report2 = runner2.execute_suite()
+        if report2.aborted_trials > 0:
+            print("\n[COMPOUND ABORTED] Leg 2 (Turn) failed or was aborted.", file=sys.stderr)
+            return 1
+
+        time.sleep(1.0)
+
+        # Step 3: Return Forward Translation
+        print("\n" + "=" * 80)
+        print(">>> COMPOUND STEP 3/3: RETURN TRANSLATION <<<")
+        print("=" * 80)
+        leg3_params = LinearParameters(
+            distance_m=args.distance,
+            direction="forward",
+            trials=1,
+            repetitions=1,
+            stopping_advance_m=args.stopping_advance_m,
+            settle_seconds=args.settle_seconds,
+            dry_run=args.dry_run,
+            report_directory=args.report_directory,
+            host=args.host,
+            port=args.port
+        )
+        try:
+            leg3_params.validate()
+        except LinearConfigurationException as e:
+            print(f"[CONFIGURATION ERROR] {e}", file=sys.stderr)
+            return 2
+
+        runner3 = PhysicalTestRunner(leg3_params)
+        report3 = runner3.execute_suite()
+        if report3.aborted_trials > 0:
+            print("\n[COMPOUND ABORTED] Leg 3 (Return) failed or was aborted.", file=sys.stderr)
+            return 1
+
+        print("\n" + "=" * 80)
+        print(">>> COMPOUND OUT-AND-BACK SEQUENCE COMPLETED SUCCESSFULLY <<<")
+        turn_t = report2.trials[0]
+        turn_ang = turn_t.final_settled_gyro_angle_deg if turn_t.final_settled_gyro_angle_deg is not None else 0.0
+        turn_err = turn_t.settled_heading_error_deg if turn_t.settled_heading_error_deg is not None else 0.0
+        print(f"Leg 1 (Forward): {report1.trials[0].measured_distance_m:.4f}m (Err: {report1.trials[0].settled_distance_error_m*1000:+.1f}mm)")
+        print(f"Leg 2 (Turn):    {turn_ang:.2f}° (Err: {turn_err:+.2f}°)")
+        print(f"Leg 3 (Return):  {report3.trials[0].measured_distance_m:.4f}m (Err: {report3.trials[0].settled_distance_error_m*1000:+.1f}mm)")
+        print("=" * 80)
+        return 0
 
     return 0
 
