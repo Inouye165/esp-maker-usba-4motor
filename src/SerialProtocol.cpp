@@ -820,9 +820,9 @@ void SerialProtocol::sendFirmwareInfo() {
     memset(data, 0, sizeof(data));
     
     strncpy((char*)&data[0],  "Maker-ESP32-Unified-Rover", 32);
-    strncpy((char*)&data[32], "1.3.4-remap-r02", 16);
+    strncpy((char*)&data[32], "1.3.4-remap-r03", 16);
     strncpy((char*)&data[48], "v1.1", 8);
-    strncpy((char*)&data[56], "rev42-remap-b", 16);
+    strncpy((char*)&data[56], "rev42-remap-c", 16);
     strncpy((char*)&data[72], __DATE__ " " __TIME__, 24);
     strncpy((char*)&data[96], "Maker-ESP32-Pro", 16);
     

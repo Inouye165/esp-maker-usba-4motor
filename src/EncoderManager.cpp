@@ -16,18 +16,18 @@ void EncoderManager::begin() {
 
     // Attach hardware pins to quadrature decoders.
     // Chassis rebuild 2026-10-18: logical index -> board port follows MotorDriver
-    // (LF->port 4, RF->port 2, LR->port 1, RR->port 3). Count-direction corrections
+    // (LF->port 2, RF->port 1, LR->port 4, RR->port 3). Count-direction corrections
     // are applied in update() per verified raised-wheel tests.
-    // Logical 0 (Left Front)  -> encoder port E4 (swapped pins per original board layout)
-    encoders[0].attachFullQuad(E4_B, E4_A);
+    // Logical 0 (Left Front)  -> encoder port E2
+    encoders[0].attachFullQuad(E2_A, E2_B);
     encoders[0].setFilter(1023); // Noise glitch filter (max 1023)
 
-    // Logical 1 (Right Front) -> encoder port E2
-    encoders[1].attachFullQuad(E2_A, E2_B);
+    // Logical 1 (Right Front) -> encoder port E1
+    encoders[1].attachFullQuad(E1_A, E1_B);
     encoders[1].setFilter(1023);
 
-    // Logical 2 (Left Rear)   -> encoder port E1
-    encoders[2].attachFullQuad(E1_A, E1_B);
+    // Logical 2 (Left Rear)   -> encoder port E4 (swapped pins per original board layout)
+    encoders[2].attachFullQuad(E4_B, E4_A);
     encoders[2].setFilter(1023);
 
     // Logical 3 (Right Rear)  -> encoder port E3
@@ -44,9 +44,9 @@ void EncoderManager::update(float dt) {
     // Read raw counts from hardware counters
     // Mirrored motor mounting: every port's count direction is flipped relative to
     // the original chassis (port 2 was already inverted, so it is now non-inverted).
-    int32_t raw0 = -(int32_t)encoders[0].getCount();  // LF on port E4
-    int32_t raw1 = (int32_t)encoders[1].getCount();   // RF on port E2
-    int32_t raw2 = -(int32_t)encoders[2].getCount();  // LR on port E1
+    int32_t raw0 = (int32_t)encoders[0].getCount();   // LF on port E2
+    int32_t raw1 = -(int32_t)encoders[1].getCount();  // RF on port E1
+    int32_t raw2 = -(int32_t)encoders[2].getCount();  // LR on port E4
     int32_t raw3 = -(int32_t)encoders[3].getCount();  // RR on port E3
     
     currentTicks[0] = raw0;

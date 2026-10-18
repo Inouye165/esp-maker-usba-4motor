@@ -18,12 +18,12 @@ MotorDriver::MotorDriver()
     // the original chassis and every motor is mounted mirrored (spins backward on a
     // positive command). Logical index (LF, RF, LR, RR) is remapped to the port each
     // wheel is actually on, with per-port polarity verified by raised-wheel tests.
-    // Logical 0 (Left Front)  -> board port M4
-    motors[0] = {M4_IN1, M4_IN2, 6, 7, true};
-    // Logical 1 (Right Front) -> board port M2
-    motors[1] = {M2_IN1, M2_IN2, 2, 3, false};
-    // Logical 2 (Left Rear)   -> board port M1
-    motors[2] = {M1_IN1, M1_IN2, 0, 1, true};
+    // Logical 0 (Left Front)  -> board port M2
+    motors[0] = {M2_IN1, M2_IN2, 2, 3, false};
+    // Logical 1 (Right Front) -> board port M1
+    motors[1] = {M1_IN1, M1_IN2, 0, 1, true};
+    // Logical 2 (Left Rear)   -> board port M4
+    motors[2] = {M4_IN1, M4_IN2, 6, 7, true};
     // Logical 3 (Right Rear)  -> board port M3
     motors[3] = {M3_IN1, M3_IN2, 4, 5, true};
 }
