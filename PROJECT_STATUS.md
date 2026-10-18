@@ -12,7 +12,8 @@ This root document is the single source of truth for **Rover 1** build/repositor
 | **Firmware Repo (This Repo)** | `esp-maker-usba-4motor` (`c:\Users\Ron\electronic_projects\esp\esp-maker-usba-4motor`) | Embedded C++ (PlatformIO) for NULLLAB Maker-ESP32-Pro |
 | **Host / Cockpit Repo** | `yahboom-encoder` (`c:\Users\Ron\electronic_projects\yahboom-encoder`) | Legacy repo name; runs Cockpit Server + ROS 2 Jazzy on RPi5 |
 | **Raspberry Pi 5 Host** | `ron@10.0.0.246` (`/home/ron/yahboom-encoder`) | Cockpit API: `:3000`, Nav Bridge: `:3010` |
-| **Active Firmware Build** | **`1.3.3-cand-r41c`** (`source: rev41-floor-c`) | Verified baseline restored: `102 PWM` spin breakout + `41.0 PWM` reverse crawl floor |
+| **Active Firmware Build** | **`1.3.4-remap-r03`** (`source: rev42-remap-c`, commit `a2e3d43`) | Rebuilt chassis port remap on top of verified `1.3.3-cand-r41c` control tuning (`102 PWM` spin breakout + `41.0 PWM` reverse crawl floor) |
+| **Motor Port Map (Rebuilt Chassis, 2026-10-18)** | LF→port 2 (M2/E2), RF→port 1 (M1/E1), LR→port 4 (M4/E4), RR→port 3 (M3/E3) | All motors mirrored vs. original chassis: motor invert + encoder sign flipped on every port in `MotorDriver.cpp` / `EncoderManager.cpp`. **Wiring intentionally left as-built.** |
 | **Effective Wheel Diameter** | `0.06695 m` (radius `0.033475 m`) | Firmware nominal `0.065 m`; `1974.1667` ticks/rev |
 | **Effective Track Width** | `0.3408575433 m` | Calibrated differential track width |
 | **IMU Sensor & Mode** | BNO08x — `SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC` (`0x08`) | Non-magnetic yaw only (magnetic orientation forbidden indoors) |
@@ -115,6 +116,22 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
 
 ---
 
+### D. Raised-Wheel Single-Motor Port / Polarity Check (`/api/maintenance/run_test`)
+*Rover must be raised with all four wheels clear. Firmware maintenance mode powers exactly one motor open-loop (PWM capped at 60, 500 ms deadman, ≤3 s, other three motors held at 0) and returns the driver to `LOCKED`. Run on the Pi (or via SSH) once per motor index `0..3`, with the operator identifying the wheel and direction after each run (camera end = front):*
+```bash
+curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type: application/json' \
+  -d '{"safetyAck":true,"motorIndex":<0-3>,"direction":"forward","output":60,"durationSec":2.0}'
+```
+
+| Motor Index | Expected Wheel | Pass Criterion |
+| :---: | :--- | :--- |
+| `0` (M1) | Left Front | Spins **forward**, `encoder_delta` positive (`~3000–4000` @ 60 PWM / 2 s), `isolation_verified: true` |
+| `1` (M2) | Right Front | Same |
+| `2` (M3) | Left Rear | Same |
+| `3` (M4) | Right Rear | Same |
+
+---
+
 ## 5. Historical Test Results Ledger
 
 | Date / Time | Firmware | Git Commit | Test Case | Physical Result | Encoder / IMU Result | Status / Verdict | Report JSON (in `reports/`) |
@@ -146,6 +163,12 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
 | **2026-10-15 08:21** | **`1.3.3-cand-r41c`** | **`e2a884c`** | **Turn 90° CW (`rover-test turn`, Step 1/3 @ `0.80 rad/s`)** | Broke stiction cleanly (`-900/+1021/-695/+572` ticks in `0.91s`), stopped mid-turn | `102 PWM` boost broke all 4 wheels out (`vel=[-3.8, 4.3, -3.0, 2.7]`), then `0.80 rad/s` drove `∑|PWM|=462` | **`ABORTED` (ESP32 `POWERON_RESET` at `t=0.91s` @ `∑|PWM|=462`)** | `turn_cw_90deg_1792077682.json` |
 | **2026-10-15 08:25** | **`1.3.3-cand-r41c`** | **`e2a884c`** | **Turn 90° CW (`rover-test turn`, 3/3 Steps @ `0.45 rad/s`)** | **Completed 3/3 cleanly (`0` resets, `0` stalls)** | **`+90.35°, +90.44°, +90.36°` (Mean Err `+0.38°`, Span `0.09°`)** | **`SUCCESS` (3/3 PASS)** | `turn_cw_90deg_1792077902.json` |
 | **2026-10-15 08:33** | **`1.3.3-cand-r41c`** | **`b1402b7`** | **Turn 180° CW (`rover-test turn`, Step 1/3 @ `0.45 rad/s`)** | Spun `~2.8s` (`-1875/+2370/-1472/+1236` ticks, `~75°`) then stopped | Broke stiction cleanly on all 4 wheels, then ESP32 reset after `2.8s` of continuous 4-motor spin | **`ABORTED` (ESP32 `POWERON_RESET` / 254ms IMU gap)** | `turn_cw_180deg_1792078433.json` |
+| **2026-10-18 06:59** | **`1.3.3-cand-r41c`** | **`c2477d6`** | **Single-Motor Port Check, raised (Suite D, PWM 40)** | M1/M4 spun; M2/M3 did not break away | `+1152 / 0 / +3 / +823` ticks, all isolated | **`INCONCLUSIVE`** (M2/M3 stiction at 40 PWM) | — |
+| **2026-10-18 07:01–07:03** | **`1.3.3-cand-r41c`** | **`c2477d6`** | **Single-Motor Port Check, raised (Suite D, PWM 50)** | M1→LR, M2→none, M3→LF, M4→RF (fwd)* | `+2673 / +1 / +2268 / +2065` ticks | **`FAIL` (ports mis-mapped; M2 stiction)** | — |
+| **2026-10-18 07:08–07:11** | **`1.3.3-cand-r41c`** | **`c2477d6`** | **Single-Motor Port Check, raised (Suite D, PWM 60)** | M1→LR, M2→RR, M3→LF, M4→RF (fwd)* | `+3966 / +3094 / +3458 / +3163` ticks, all isolated | **`FAIL` (ports mis-mapped)** — *corner IDs later found unreliable | — |
+| **2026-10-18 07:56–07:59** | **`1.3.4-remap-r01`** | **`b85d56d`** | **Single-Motor Port Check, raised (Suite D, PWM 60, camera = front, viewed from right)** | M1→RR bwd, M2→LR bwd, M3→RF bwd, M4→LF bwd | `+3659 / +2958 / +3857 / +3194` ticks | **`FAIL`** — established physical truth: port1=RF, port2=LF, port3=RR, port4=LR, all motors mirrored | — |
+| **2026-10-18 08:12–08:14** | **`1.3.4-remap-r02`** | **`512331e`** | **Single-Motor Port Check, raised (Suite D, PWM 60)** | M1→LR fwd, M2→LF fwd, M3→RF fwd, M4→RR fwd | `+3203 / +2960 / +3475 / +3441` ticks | **`PARTIAL`** — all directions correct; 3 corners mis-assigned (derivation error in r02 table) | — |
+| **2026-10-18 08:25–08:27** | **`1.3.4-remap-r03`** | **`a2e3d43`** | **Single-Motor Port Check, raised (Suite D, PWM 60)** | **M1→LF fwd, M2→RF fwd, M3→LR fwd, M4→RR fwd** | **`+2979 / +3596 / +3264 / +3546` ticks, all isolated** | **`SUCCESS` (4/4 PASS)** | — |
 
 *\*Note on 2026-10-13 18:16 (A2): Wheel encoders turned `-259` ticks (`26.8 mm` @ 65mm / `27.6 mm` @ 66.95mm max tire travel), confirming nominal motor travel (`99.3%`) with a ~5 mm mark placement offset.*
 *\*Note on 2026-10-14 04:42 (Turn 90° CW): Step 1 passed (`+90.95°` IMU, `90.0°` physical, `0` wheel stalls). Step 2 aborted before motion because `complete_zero_handshake` in `tools/rover_tests/transport.py` did not refresh `autonomyState.lastCmdTime` after reaching `READY_DISARMED`; fixed in `transport.py` and `server.js` (`d59c58f` / `43e828d`).*
@@ -154,6 +177,28 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
 ---
 
 ## 6. Daily Engineering & Activity Log
+
+### 2026-10-18 (Saturday)
+- **Active Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — flashed `08:15 PDT`
+- **Context**: Ron completed the **new chassis build** and needed to verify motor-to-port wiring. Decision: **keep the as-built wiring and remap in firmware**.
+- **Accomplishments & Observations**:
+  1. **Reachability Check (`06:53 PDT`)**: RPi5 `10.0.0.246` ping ~2 ms; CH340 `1a86:7523` enumerated; `/dev/rover-esp32 → ttyUSB0`; cockpit `serialConnected: true`, `lastPacketAgeMs: 10`. Board was left `armed: true` from a prior session — disarmed at `06:59`.
+  2. **Introduced Reusable Suite D (Raised-Wheel Single-Motor Check)** using the existing firmware maintenance mode (`0x26/0x27/0x28`) via `/api/maintenance/run_test`. One motor at a time, open-loop, PWM-capped, deadman-protected, exits `LOCKED`. No ad-hoc motion scripts.
+  3. **Stiction Finding**: at PWM 40 only M1/M4 broke away; at PWM 50 M2 still did not move (`+1` tick); at **PWM 60 all four moved** (`~3000–4000` ticks / 2 s). Open-loop breakaway on the new chassis is between 50 and 60 PWM for the stiffest wheel (port 2 / Left Front).
+  4. **Observation Reliability**: the first corner-identification round (`07:01–07:11`) was taken while Ron had lost focus and proved wrong. From `07:56` onward every run used a fixed reference (**camera mount = front, operator standing on the right side**) and the form listed "nearest you / far side" to remove ambiguity. All later rounds were internally consistent and predictions held.
+  5. **Physical Truth Established (`07:56–07:59`, on `remap-r01`)**: board port 1 → **Right Front**, port 2 → **Left Front**, port 3 → **Right Rear**, port 4 → **Left Rear**; **every motor spins backward on a positive command while every encoder counts positive** → motors mounted mirrored, so motor invert *and* encoder sign flip together per port (closed loop stays self-consistent).
+  6. **Firmware Remap Iterations** (`src/MotorDriver.cpp`, `src/EncoderManager.cpp`, version strings in `src/SerialProtocol.cpp`, `test/test_open_loop_expiry.cpp`, manifest hash in `deploy_firmware.py`):
+     - `abbe3e2` checkpoint baseline (also reverted an accidental ` the rpi` line in `platformio.ini`).
+     - `d26c523`/`b85d56d` **remap-r01** — front↔rear swap based on the unreliable round; wrong.
+     - `512331e` **remap-r02** — correct per-port polarity flips, but corner table mis-derived (I read M-numbers as board ports on an already-remapped build). Verification round proved all four *directions* correct and pinned the corner error.
+     - `a2e3d43` **remap-r03** — LF→port 2 (no invert, E2 `+`), RF→port 1 (invert, E1 `−`), LR→port 4 (invert, E4 `(B,A)` `−`), RR→port 3 (invert, E3 `−`). **Verified 4/4 at `08:25–08:27`.**
+  7. **Native test** `test_open_loop_expiry` compiled and passed on the Pi (`g++`) for r01/r02/r03 (firmware identity packet NUL-termination verified for the new version/tag strings). Note: `scripts/run_native_suite.py` expects a Linux `test_patched_native` binary and does not run on Windows.
+  8. **Deploy Note**: `deploy_firmware.py` enforces a hard-coded `EXPECTED_FIRMWARE_SHA256`; it must be updated to the new `.pio/build/esp32dev/firmware.bin` hash for every approved build. Each flash takes ~8 min because the script backs up the full 4 MB flash at 115200 baud first.
+- **Open Items / Next Steps**:
+  - Floor characterization (Suite A cases 2/13/4/5) must be re-run on the new chassis before any exact-motion test — stiction, trims (`LEFT_TRIM*`/`RIGHT_TRIM*`), and spin floors were calibrated on the old chassis.
+  - Check the Left Front wheel (port 2) for mechanical drag — it needed ~60 PWM to break away where others moved at 40.
+  - The cockpit UI labels (`m1 (Left Front)` etc.) are correct again after the remap; no host-side changes were needed.
+- **Final State**: drivetrain stopped, **disarmed**, **LOCKED**.
 
 ### 2026-10-15 (Thursday)
 - **Active Firmware**: `1.3.3-cand-r41c` (`source: rev41-floor-c`)
