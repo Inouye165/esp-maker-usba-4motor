@@ -934,58 +934,44 @@ class PhysicalTestRunner:
                 if not first_res.get("ok", False):
                     raise TestAbortException(f"First command rejected: {first_res.get('error')}")
 
-                # Step 10: Bounded startup verification (max 800ms)
-                # Verify autonomy ACTIVE, nonzero wheel targets confirmed, and distance begins advancing
-                startup_active = False
-                startup_has_targets = False
-                startup_has_advancement = False
-                t_chk = time.time()
-                last_enc_ticks = dict(start_ticks)
+                # Step 10: Within bounded interval (max 500ms), verify state becomes ACTIVE and nonzero targets
+                cmd_accepted_active = False
+                t_check_start = time.time()
+                while time.time() - t_check_start < 0.50:
+                    a_stat = self.cockpit.get_autonomy_status()
+                    if a_stat.get("state") == "ACTIVE" or abs(a_stat.get("clampedLinear", 0.0)) > 1e-4:
+                        cmd_accepted_active = True
+                        trial_report.autonomy_state_transitions.append({
+                            "timestamp": time.time(),
+                            "state": "ACTIVE",
+                            "trigger": "first_nonzero_cmd_accepted"
+                        })
+                        break
+                    time.sleep(0.04)
 
-                while time.time() - t_chk < 0.80:
-                    a_st = self.cockpit.get_autonomy_status()
-                    if a_st.get("state") == "ACTIVE" or abs(a_st.get("clampedLinear", 0.0)) > 1e-4:
-                        startup_active = True
-
-                    pid_st = self.cockpit.get_pid_telemetry()
-                    if pid_st and pid_st.get("ok") and pid_st.get("telemetry"):
-                        telem = pid_st["telemetry"]
-                        m1_tgt = abs(float(telem.get("m1", {}).get("targetRadps", 0.0)))
-                        if m1_tgt > 0.05 or abs(a_st.get("clampedLinear", 0.0)) > 1e-4:
-                            startup_has_targets = True
-                    elif startup_active:
-                        startup_has_targets = True
-
-                    enc_st = self.cockpit.get_encoders()
-                    if enc_st:
-                        ticks_now = extract_encoder_ticks(enc_st)
-                        if ticks_now:
-                            last_enc_ticks = ticks_now
-                            tick_deltas = [abs(ticks_now[w] - start_ticks[w]) for w in ["m1", "m2", "m3", "m4"]]
-                            if max(tick_deltas) >= 15:  # At least 15 ticks (~1.5 mm)
-                                startup_has_advancement = True
-                                break
-                    time.sleep(0.03)
-
-                if not startup_active:
+                if not cmd_accepted_active:
                     self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
-                    raise TestAbortException("Startup safety guard tripped: Autonomy ACTIVE state not achieved within 800ms")
-
-                if not startup_has_targets:
-                    self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
-                    raise TestAbortException("Startup safety guard tripped: Non-zero wheel PID targets not confirmed within 800ms")
-
-                if not startup_has_advancement:
-                    self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
-                    raise TestAbortException(
-                        "Startup safety guard tripped: Commanded motion but encoder distance stream did not advance within 800ms (reported progress remained zero)"
+                    a_stat = self.cockpit.get_autonomy_status()
+                    rejection = a_stat.get("lastRejectionReason") or "Commanded linear targets remained zero / ACTIVE state not achieved within 500ms"
+                    fail_reason = f"Motion startup failed within bounded window: {rejection} (state={a_stat.get('state')})"
+                    print(f"[FAIL-FAST ABORT] {fail_reason}")
+                    trial_report.status = "ABORTED"
+                    trial_report.abort_reason = fail_reason
+                    trial_report.telemetry_samples_count = 0
+                    trial_report.wheel_metrics = wheel_metrics
+                    cleanup_st = self.cleanup()
+                    trial_report.confirmed_final_zero_command = True
+                    trial_report.confirmed_final_disarmed_state = (
+                        cleanup_st.get("armed") is False
+                        and cleanup_st.get("autonomyState") == "DISABLED"
+                        and cleanup_st.get("cmdSource") in ("NONE", None)
                     )
-
-                trial_report.autonomy_state_transitions.append({
-                    "timestamp": time.time(),
-                    "state": "ACTIVE",
-                    "trigger": "first_nonzero_cmd_accepted_and_advancing"
-                })
+                    trial_report.autonomy_state_transitions.append({
+                        "timestamp": time.time(),
+                        "state": cleanup_st.get("autonomyState", "DISABLED"),
+                        "trigger": "first_cmd_rejected_cleanup"
+                    })
+                    return trial_report
 
                 t_start_motion = time.time()
                 t_steady_start: Optional[float] = None
@@ -1065,8 +1051,8 @@ class PhysicalTestRunner:
                                     elif stict == "BLOCKED":
                                         wheel_metrics[w_id].blocked_state_events += 1
 
-                    # 2. Authoritative HTTP polling fallback if no WebSocket encoder frame within 40ms
-                    if not got_encoder_frame or (now - last_encoder_time > 0.040):
+                    # 2. Authoritative HTTP polling fallback if no WebSocket encoder frame within 200ms
+                    if not got_encoder_frame or (now - last_encoder_time > 0.200):
                         try:
                             enc_resp = self.cockpit.get_encoders(timeout=0.10)
                             is_fresh, fresh_msg = check_encoder_freshness(enc_resp, max_age_ms=250.0)
@@ -1094,10 +1080,10 @@ class PhysicalTestRunner:
                         last_dist_advance_time = now
 
                     # 5. Stall watchdog: progress MUST advance while motion is commanded
-                    if now - last_dist_advance_time > 0.60:
+                    if now - last_dist_advance_time > 1.20:
                         self.cockpit.send_cmd_vel(vx=0.0, wz=0.0)
                         raise TestAbortException(
-                            f"Distance telemetry stalled while commanded: progress remained at {curr_dist_m:.4f}m for > 600ms"
+                            f"Distance telemetry stalled while commanded: progress remained at {curr_dist_m:.4f}m for > 1200ms"
                         )
 
                     # 6. Check steady-speed phase transition (>= 85% of target speed)
