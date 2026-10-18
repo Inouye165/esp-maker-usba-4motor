@@ -728,9 +728,9 @@ void test7_FirmwareIdentity() {
     assert(strcmp(boardName, "Maker-ESP32-Unified-Rover") == 0);
 
     // 2. Version field (bytes 32-47):
-    // Must contain "1.3.4-remap-r01" and a NUL terminator strictly within bytes 32-47
+    // Must contain "1.3.4-remap-r02" and a NUL terminator strictly within bytes 32-47
     const char* fwVersion = (const char*)&payload[32];
-    assert(strcmp(fwVersion, "1.3.4-remap-r01") == 0);
+    assert(strcmp(fwVersion, "1.3.4-remap-r02") == 0);
     assert(strlen(fwVersion) == 15);
     bool versionHasNul = false;
     for (int i = 32; i < 48; i++) {
@@ -744,15 +744,15 @@ void test7_FirmwareIdentity() {
     assert(strcmp(hwVersion, "v1.1") == 0);
 
     // 4. Source field (bytes 56-71):
-    // Must contain "rev42-remap-a" and a NUL terminator strictly within bytes 56-71
+    // Must contain "rev42-remap-b" and a NUL terminator strictly within bytes 56-71
     const char* fwTag = (const char*)&payload[56];
     bool sourceHasNul = false;
     for (int i = 56; i < 72; i++) {
         if (payload[i] == '\0') { sourceHasNul = true; break; }
     }
     assert(sourceHasNul);
-    // Parsed source equals exactly "rev42-remap-a"
-    assert(strcmp(fwTag, "rev42-remap-a") == 0);
+    // Parsed source equals exactly "rev42-remap-b"
+    assert(strcmp(fwTag, "rev42-remap-b") == 0);
     assert(strlen(fwTag) == 13);
     // Verify bytes 69, 70, 71 are all NUL:
     assert(payload[56 + 13] == '\0');
@@ -765,7 +765,7 @@ void test7_FirmwareIdentity() {
     assert(strlen(buildDate) > 0);
     // Reading fwTag as a C-string terminates at byte 69 and contains NO date characters:
     assert(strstr(fwTag, buildDate) == nullptr);
-    assert(strcmp(fwTag, "rev42-remap-a") == 0);
+    assert(strcmp(fwTag, "rev42-remap-b") == 0);
 
     std::cout << "PASSED (Version=" << fwVersion << ", Source=" << fwTag 
               << ", NUL-terminated in-field, BuildDate starts at byte 72)" << std::endl;
