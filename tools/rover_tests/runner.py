@@ -433,6 +433,8 @@ class PhysicalTestRunner:
             cmd_parts.append("--enable-balancing")
         if self.params.enable_braking:
             cmd_parts.append("--enable-braking")
+        if getattr(self.params, "stopping_advance_m", None) is not None:
+            cmd_parts.append(f"--stopping-advance-m {self.params.stopping_advance_m}")
         cmd_str = " ".join(cmd_parts)
 
         suite_report = MultiTrialSuiteReport(
@@ -795,10 +797,16 @@ class PhysicalTestRunner:
                 return trial_report
 
         # Step 8: Setup LinearApproachController
+        effective_advance = (
+            self.params.stopping_advance_m
+            if getattr(self.params, "stopping_advance_m", None) is not None
+            else (0.045 if (self.params.enable_braking if self.params.enable_braking is not None else True) else 0.0)
+        )
         controller = LinearApproachController(
             cruise_speed_mps=self.params.max_linear_speed,
             creep_speed_mps=self.params.creep_linear_speed,
-            approach_zone_m=self.params.creep_threshold_m
+            approach_zone_m=self.params.creep_threshold_m,
+            stopping_advance_m=effective_advance
         )
         controller.reset(target=self.params.signed_target_m, start_time=time.time())
 

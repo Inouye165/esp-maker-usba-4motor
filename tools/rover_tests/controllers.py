@@ -173,12 +173,14 @@ class LinearApproachController(BaseApproachController):
     def __init__(
         self,
         cruise_speed_mps: float = 0.20,
-        approach_zone_m: float = 0.0,       # Unused in production measurement test
-        creep_speed_mps: Optional[float] = None  # Deprecated; defaults to cruise_speed_mps
+        approach_zone_m: float = 0.0,
+        creep_speed_mps: Optional[float] = None,
+        stopping_advance_m: float = 0.0
     ):
         self.cruise_speed_mps = abs(cruise_speed_mps)
-        self.approach_zone_m = 0.0  # No creep approach zone
-        self.creep_speed_mps = self.cruise_speed_mps  # No step-down creep
+        self.approach_zone_m = abs(approach_zone_m)
+        self.creep_speed_mps = abs(creep_speed_mps) if creep_speed_mps is not None else self.cruise_speed_mps
+        self.stopping_advance_m = abs(stopping_advance_m)
 
         self.target_dist_m = 0.0
         self.direction_sign = 1.0
@@ -226,8 +228,8 @@ class LinearApproachController(BaseApproachController):
 
     def update(self, current_progress: float, current_time: Optional[float] = None) -> float:
         """
-        Returns commanded constant linear velocity (m/s) until target distance is reached,
-        then commands 0.0 m/s. No test-side creep or trims.
+        Returns commanded linear velocity (m/s) until target distance minus stopping advance is reached,
+        then commands 0.0 m/s.
         """
         if current_time is None:
             current_time = time.time()
@@ -236,8 +238,8 @@ class LinearApproachController(BaseApproachController):
         signed_progress = current_progress * self.direction_sign
         remaining_m = target_mag - signed_progress
 
-        # 1. Target Reached or Exceeded -> ZERO phase (production motion limiter & braking take over)
-        if remaining_m <= 1e-4:
+        # 1. Target Reached or Exceeded (with calibrated stopping advance) -> ZERO phase
+        if remaining_m <= (self.stopping_advance_m + 1e-4):
             if self.phase not in (ApproachPhase.ZERO, ApproachPhase.SETTLED):
                 self._set_phase(ApproachPhase.ZERO, current_time, current_progress)
                 rel_t = current_time - self.start_time if self.start_time is not None else 0.0
@@ -248,7 +250,17 @@ class LinearApproachController(BaseApproachController):
                     self.zero_command_time = rel_t
             return 0.0
 
-        # 2. Measurement Travel -> Constant Cruise Velocity (no creep, no early stopping)
+        # 2. Inside Creep / Approach Zone -> CREEP phase
+        elif self.approach_zone_m > 0 and remaining_m <= (self.approach_zone_m + 1e-4):
+            if self.phase != ApproachPhase.CREEP:
+                self._set_phase(ApproachPhase.CREEP, current_time, current_progress)
+                rel_t = current_time - self.start_time if self.start_time is not None else 0.0
+                if self.creep_entry_time is None:
+                    self.creep_entry_time = rel_t
+                    self.creep_entry_dist_m = current_progress
+            return self.direction_sign * self.creep_speed_mps
+
+        # 3. Measurement Travel -> Constant Cruise Velocity
         if self.phase != ApproachPhase.CRUISE:
             self._set_phase(ApproachPhase.CRUISE, current_time, current_progress)
         return self.direction_sign * self.cruise_speed_mps

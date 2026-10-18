@@ -43,6 +43,7 @@ class LinearParameters:
     enable_balancing: Optional[bool] = None
     enable_braking: Optional[bool] = None
     clear_faults: bool = False
+    stopping_advance_m: Optional[float] = None
     report_directory: str = "reports"
     host: str = "127.0.0.1"
     port: int = 3000
@@ -57,6 +58,9 @@ class LinearParameters:
             self.max_linear_speed = self.speed_mps
         elif self.max_linear_speed != 0.20 and self.speed_mps == 0.20:
             self.speed_mps = self.max_linear_speed
+
+        if self.stopping_advance_m is None:
+            self.stopping_advance_m = 0.045 if (self.enable_braking is not False) else 0.0
 
     def validate(self):
         if self.distance is None or self.distance <= 0.0:
