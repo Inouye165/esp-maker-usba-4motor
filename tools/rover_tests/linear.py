@@ -60,7 +60,10 @@ class LinearParameters:
             self.speed_mps = self.max_linear_speed
 
         if self.stopping_advance_m is None:
-            self.stopping_advance_m = 0.045 if (self.enable_braking is not False) else 0.0
+            if self.creep_threshold_m > 0 and self.creep_linear_speed < self.max_linear_speed:
+                self.stopping_advance_m = 0.008 if (self.enable_braking is not False) else 0.0
+            else:
+                self.stopping_advance_m = 0.045 if (self.enable_braking is not False) else 0.0
 
     def validate(self):
         if self.distance is None or self.distance <= 0.0:

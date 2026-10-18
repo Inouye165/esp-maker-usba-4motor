@@ -190,6 +190,8 @@ class LinearApproachController(BaseApproachController):
         self.start_time: Optional[float] = None
         self.steady_entry_time: Optional[float] = None
         self.steady_entry_dist_m: Optional[float] = None
+        self.creep_entry_time: Optional[float] = None
+        self.creep_entry_dist_m: Optional[float] = None
         self.threshold_crossing_time: Optional[float] = None
         self.threshold_crossing_dist_m: Optional[float] = None
         self.zero_command_time: Optional[float] = None
@@ -206,6 +208,8 @@ class LinearApproachController(BaseApproachController):
         self.start_time = start_time if start_time is not None else time.time()
         self.steady_entry_time = None
         self.steady_entry_dist_m = None
+        self.creep_entry_time = None
+        self.creep_entry_dist_m = None
         self.threshold_crossing_time = None
         self.threshold_crossing_dist_m = None
         self.zero_command_time = None
@@ -277,7 +281,10 @@ class LinearApproachController(BaseApproachController):
     def get_telemetry_summary(self) -> Dict[str, Any]:
         return {
             "target_dist_m": self.target_dist_m,
+            "stopping_advance_m": self.stopping_advance_m,
             "current_phase": str(self.phase),
+            "creep_entry_time_s": self.creep_entry_time,
+            "creep_entry_dist_m": self.creep_entry_dist_m,
             "threshold_crossing_time_s": self.threshold_crossing_time,
             "threshold_crossing_dist_m": self.threshold_crossing_dist_m,
             "zero_command_time_s": self.zero_command_time,
