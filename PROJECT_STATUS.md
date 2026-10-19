@@ -356,6 +356,9 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
         - **Outbound vs Inbound Travel Parity**: Leg 1 outbound ($991.6\text{ mm}$) vs Leg 3 inbound ($993.6\text{ mm}$) matched within **`2.0 mm` (`0.2%` disparity)**!
         - **Power Integrity Proof**: The ESP32 maintained **`bootCount: 1` throughout all 3 consecutive compound legs** (~25 seconds of continuous actuation under heavy motor loading), conclusively proving complete power isolation by the Geekworm X1206 UPS. Drivetrain finished fully stopped, disarmed (`armed: false`), and locked in Mode 0.
         - **Physical Ground Truth & Alignment**: Operator physical inspection confirmed arrival alignment: **"good now lined up"** with the starting origin mark. Operator noted that the 3-leg sequence stopped upon return to origin without performing an extra turnaround pivot back to the initial starting heading.
+  7. **Hailo-8 AI Card Reseat & Verification (`17:46–17:55 PDT`)**:
+     - At `17:46 PDT`, `lspci` showed downstream Port #3 (`0001:02:03.0`) on the ASM1182e 2-Port PCIe switch with link down (`DLActive-`) and only the NVMe SSD active on the sibling port (`0001:02:07.0`).
+     - After reseating the Hailo-8 M.2 module and rebooting (`17:55 PDT`), both M.2 slots enumerated cleanly (`0001:03:00.0` WD_BLACK SN7100 NVMe SSD, `0001:04:00.0` Hailo-8 AI Processor `1e60:2864`), firmware `4.20.0` loaded in `181 ms`, `/dev/hailo0` is active, and `hailortcli fw-control identify` confirmed `HAILO-8 AI ACC M.2 M KEY MODULE EXT TEMP` (`SN: HLDDM2A234601386`).
 
 ---
 
