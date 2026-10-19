@@ -161,13 +161,10 @@ class AngularApproachController(BaseApproachController):
 
 class LinearApproachController(BaseApproachController):
     """
-    Production-measuring linear characterization controller:
-    - Commands constant requested linear velocity throughout measurement travel.
-    - Does NOT use test-layer creep, heading correction, wheel trims, stopping advance,
-      or exact-distance optimization.
-    - Relies entirely on production ESP32 motion limiter, wheel PID, synchronization,
-      anti-stall, and dynamic braking.
-    - Zero velocity is commanded immediately when requested distance is reached.
+    Canonical Linear Approach Controller governing exact distance translation:
+    - Cruise phase: Drive at cruise velocity (default 0.20 m/s).
+    - Creep phase: Step down to creep velocity (default 0.05 m/s) within approach zone (150 mm) when configured.
+    - Completion: Command zero linear velocity (0.0 m/s) at target distance minus calibrated stopping advance.
     - Preserves direction sign: positive for forward, negative for reverse.
     """
     def __init__(

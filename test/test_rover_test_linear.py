@@ -451,11 +451,11 @@ class TestLinearCliAndDryRun(unittest.TestCase):
         trial = runner.execute_single_linear_trial(1)
         elapsed = time.time() - t_start
 
-        # Must abort quickly (startup guard window ~800ms, not 9.5s or 25s timeout)
+        # Must abort quickly (stall guard window ~1200ms, not 9.5s or 25s timeout)
         self.assertEqual(trial.status, "ABORTED")
-        self.assertIn("Startup safety guard tripped", trial.abort_reason)
-        self.assertIn("did not advance within 800ms", trial.abort_reason)
-        self.assertLess(elapsed, 2.0, "Runner must fail-fast within ~1 second, not run to max duration")
+        self.assertIn("Distance telemetry stalled while commanded", trial.abort_reason)
+        self.assertIn("for > 1200ms", trial.abort_reason)
+        self.assertLess(elapsed, 2.5, "Runner must fail-fast within ~1.2 seconds, not run to max duration")
 
         # Must have sent emergency zero velocity command upon detecting stall
         cmd_vel_calls = [call.kwargs for call in mock_cockpit.send_cmd_vel.call_args_list]

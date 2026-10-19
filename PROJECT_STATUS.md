@@ -52,14 +52,14 @@ To ensure we never lose a working calibration or get stuck after a regression:
 ## 3. Master Roadmap to Autonomous Driving
 
 - [x] **Phase 1: Forward & Reverse Low-Speed Floor Calibration** (`COMPLETED`)
-  - Forward crawl (`0.015 m/s` to `0.050 m/s`) and reverse crawl (`-0.015 m/s`, Case 13) calibrated and verified under `1.3.3-cand-r41c`.
-- [ ] **Phase 2: Rotate-in-Place (In-Place Spin) Calibration & Verification** (`CURRENT FOCUS`)
-  - **Step 2A (Low-Speed & Nominal Spin Floor Check)**: Run reusable floor characterization Cases **4, 5, 6, 7** (`PureSpin_Slow_CCW`, `PureSpin_Slow_CW`, `PureSpin_Nominal_CCW`, `PureSpin_Nominal_CW`) to verify smooth breakaway, wheel symmetry, and no stall/overspeed during pure rotation.
-  - **Step 2B (Closed-Loop Exact Angle Turns)**: Run `rover-test turn` for **90° CW/CCW** and **180° CW/CCW** using `AngularApproachController` ($0.80\text{ rad/s} \to 0.20\text{ rad/s}$ creep at $30^\circ$) and verify physical angle matches IMU within $\le 2.0^\circ$. (90° CW verified: +90.58° IMU, physical "perfect 90", 0 resets).
+  - Forward crawl (`0.015 m/s` to `0.050 m/s`) and reverse crawl (`-0.015 m/s`, Case 13) calibrated and verified under `1.3.3-cand-r41c` / `1.3.4-remap-r03`.
+- [x] **Phase 2: Rotate-in-Place (In-Place Spin) Calibration & Verification** (`COMPLETED`)
+  - **Step 2A (Low-Speed & Nominal Spin Floor Check)**: Verified clean breakout on rebuilt chassis (`Case 4`, `0` resets).
+  - **Step 2B (Closed-Loop Exact Angle Turns)**: Verified **90° CW** (`+90.58°` IMU, "perfect 90"), **90° CCW** (`-90.46°` IMU, "another perfect 90"), and **180° CW** (`+180.26°` IMU, `0` resets) using `AngularApproachController` ($0.80\text{ rad/s} \to 0.20\text{ rad/s}$ creep at $30^\circ$, stopping advance $0.7^\circ$).
 - [ ] **Phase 3: Spin-to-Arc & Curved Transition Verification**
   - Run Case **8** (`Transition_PureSpin_To_Arc`) and Case **1** (`FailedArc_Baseline`) to confirm smooth handoff when Nav2 transitions from in-place rotation (`RotationShimController`) to DWB path following.
-- [ ] **Phase 4: Exact Linear Approach Verification**
-  - Run `rover-test linear` forward and reverse ($0.5\text{ m}$ and $1.0\text{ m}$) using `LinearApproachController` ($0.20\text{ m/s} \to 0.05\text{ m/s}$ creep at $0.15\text{ m}$).
+- [x] **Phase 4: Exact Linear Approach & Compound Out-and-Back Verification** (`COMPLETED`)
+  - Verified $1.0\text{ m}$ forward (`+0.9968 m` enc / `+10 mm` physical at `8 mm` advance), $1.010\text{ m}$ reverse (`-0.9977 m` enc / `-4.5 mm` physical at `18 mm` advance), locked in **`13.5 mm` (`0.0135 m`)** stopping advance, and passed 3-leg **Compound Out-and-Back** ($1.0\text{ m} \to 180^\circ\text{ CW} \to 1.0\text{ m}$ return within $2.0\text{ mm}$ outbound/inbound parity, `0` resets).
 - [ ] **Phase 5: Full Autonomous Navigation Acceptance (`gold_standard_home_test`)**
   - Execute the full ROS 2 / AMCL / Nav2 mission: drive $2.0\text{ ft}$ outbound, rotate $180^\circ$ CW in place, return to saved HOME pose within $\le 40\text{ mm}$ and $\le 3.0^\circ$.
 
@@ -101,8 +101,9 @@ cd /home/ron/yahboom-encoder && python3 scripts/characterize_floor_speeds.py --c
 | **Exact 90° CCW Turn** | `python -m tools.rover_tests.cli turn --degrees 90 --direction ccw --trials 1 --inter-trial-approval` | `AngularApproachController` | Settled error $\le 2.0^\circ$, clean disarm |
 | **Exact 180° CW Turn (3-Trial)** | `python -m tools.rover_tests.cli turn --degrees 180 --direction cw --trials 3 --inter-trial-approval` | `AngularApproachController` | Settled error $\le 2.0^\circ$ across 3 trials |
 | **Exact 180° CCW Turn (3-Trial)** | `python -m tools.rover_tests.cli turn --degrees 180 --direction ccw --trials 3 --inter-trial-approval` | `AngularApproachController` | Settled error $\le 2.0^\circ$ across 3 trials |
-| **Exact Linear Forward (0.5 m)** | `python -m tools.rover_tests.cli linear --distance 0.5 --direction forward --trials 1 --inter-trial-approval` | `LinearApproachController` | Settled error $\le 0.05\text{ m}$ ($50\text{ mm}$) |
-| **Exact Linear Reverse (0.5 m)** | `python -m tools.rover_tests.cli linear --distance 0.5 --direction reverse --trials 1 --inter-trial-approval` | `LinearApproachController` | Settled error $\le 0.05\text{ m}$ ($50\text{ mm}$) |
+| **Exact Linear Forward (1.0 m)** | `python -m tools.rover_tests.cli linear --distance 1.0 --direction forward --trials 1 --inter-trial-approval` | `LinearApproachController` | Settled error $\le 0.05\text{ m}$ ($50\text{ mm}$) |
+| **Exact Linear Reverse (1.0 m)** | `python -m tools.rover_tests.cli linear --distance 1.0 --direction reverse --trials 1 --inter-trial-approval` | `LinearApproachController` | Settled error $\le 0.05\text{ m}$ ($50\text{ mm}$) |
+| **Compound Out-and-Back (3-Leg / 4-Leg)** | `python -m tools.rover_tests.cli out-and-back --distance 1.0 [--final-turn]` | `LinearApproachController` + `AngularApproachController` | Outbound/Return $\le 50\text{ mm}$, Turn $\le 2.0^\circ$, `0` resets |
 
 ---
 
@@ -359,6 +360,11 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
   7. **Hailo-8 AI Card Reseat & Verification (`17:46–17:55 PDT`)**:
      - At `17:46 PDT`, `lspci` showed downstream Port #3 (`0001:02:03.0`) on the ASM1182e 2-Port PCIe switch with link down (`DLActive-`) and only the NVMe SSD active on the sibling port (`0001:02:07.0`).
      - After reseating the Hailo-8 M.2 module and rebooting (`17:55 PDT`), both M.2 slots enumerated cleanly (`0001:03:00.0` WD_BLACK SN7100 NVMe SSD, `0001:04:00.0` Hailo-8 AI Processor `1e60:2864`), firmware `4.20.0` loaded in `181 ms`, `/dev/hailo0` is active, and `hailortcli fw-control identify` confirmed `HAILO-8 AI ACC M.2 M KEY MODULE EXT TEMP` (`SN: HLDDM2A234601386`).
+  8. **Repository Audit & Test/Doc Alignment (`17:58–18:37 PDT`)**:
+     - Fixed [`LinearParameters.__post_init__`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/tools/rover_tests/linear.py#L61-L65) default `stopping_advance_m` from `0.008 m` (`8.0 mm`) to the calibrated `0.0135 m` (`13.5 mm`) and synced [`linear.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/tools/rover_tests/linear.py) and [`controllers.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/tools/rover_tests/controllers.py) to RPi5 (`/home/ron/yahboom-encoder/tools/rover_tests/`).
+     - Updated [`test/test_rover_test_linear.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/test/test_rover_test_linear.py#L454-L458) stall-guard assertion (`311/311` pytest unit tests passing).
+     - Updated [`scripts/run_native_suite.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/scripts/run_native_suite.py) to support Windows WSL execution for ELF binaries and run the 23 active canonical C++ regression tests (`1–17, 19–24`, all `23/23 PASS`).
+     - Updated [`AGENTS.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/AGENTS.md), [`.agents/AGENTS.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/.agents/AGENTS.md), [`.agents/skills/rover-exact-motion/SKILL.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/.agents/skills/rover-exact-motion/SKILL.md), and [`PROJECT_STATUS.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/PROJECT_STATUS.md) roadmap/catalog to match `1.3.4-remap-r03` and the `out-and-back` CLI command.
 
 ---
 

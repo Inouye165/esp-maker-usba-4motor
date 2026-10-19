@@ -32,10 +32,10 @@ class LinearParameters:
     direction: str = "forward"  # "forward" or "reverse"
     trials: int = 1
     repetitions: Optional[int] = None
-    speed_mps: float = 0.20              # Constant requested linear speed (m/s)
+    speed_mps: float = 0.20              # Cruise linear speed (m/s)
     max_linear_speed: float = 0.20       # Backward-compatible alias for speed_mps
-    creep_linear_speed: float = 0.05     # Legacy parameter (not used in constant-velocity characterization)
-    creep_threshold_m: float = 0.150     # Legacy parameter (not used in constant-velocity characterization)
+    creep_linear_speed: float = 0.05     # Creep approach linear speed (m/s per Exact Motion Contract)
+    creep_threshold_m: float = 0.150     # Approach zone threshold (m) where creep begins (150 mm)
     settle_seconds: float = 2.0          # s
     distance_tolerance_m: float = 0.05   # m (50 mm tolerance)
     inter_trial_approval: bool = False
@@ -61,7 +61,7 @@ class LinearParameters:
 
         if self.stopping_advance_m is None:
             if self.creep_threshold_m > 0 and self.creep_linear_speed < self.max_linear_speed:
-                self.stopping_advance_m = 0.008 if (self.enable_braking is not False) else 0.0
+                self.stopping_advance_m = 0.0135 if (self.enable_braking is not False) else 0.0
             else:
                 self.stopping_advance_m = 0.045 if (self.enable_braking is not False) else 0.0
 
