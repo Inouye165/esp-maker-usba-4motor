@@ -193,6 +193,17 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
 
 ## 6. Daily Engineering & Activity Log
 
+### 2026-10-24 (Saturday)
+- **Active Motor Controller Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — untouched
+- **Accomplishments & Observations**:
+  1. **Root `AGENTS.md` Documentation (`09:15–09:25 PDT`)**:
+     - Created comprehensive root [`AGENTS.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/AGENTS.md) covering Rover 1 identity, rebuilt-chassis hardware & power isolation architecture, branch discipline, build/verification commands, working style, and safety boundaries.
+  2. **Lonely Binary ESP32-S3 N16R8 Verification & Status LED Deployment (`09:21–09:50 PDT`)**:
+     - Verified auxiliary **Lonely Binary ESP32-S3 N16R8** (seated in its supplied terminal breakout board, connected via native **USB** port) on RPi5 `10.0.0.246`: USB VID:PID `303a:1001` (`Espressif USB JTAG/serial debug unit`), MAC `58:e6:c5:72:3f:fc`, `16MB` Quad Flash, `8MB` PSRAM, enumerating at `/dev/ttyACM0` (`/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:72:3F:FC-if00`), completely isolated from the Maker-ESP32-Pro (`1a86:7523`, `/dev/rover-esp32` → `/dev/ttyUSB0`).
+     - Created isolated PlatformIO subproject [`esp32s3_status_led/`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/platformio.ini) (`env:esp32-s3-devkitc-1`), firmware [`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp), RPi5 daemon [`esp32s3_status_led/rpi5_status_led_daemon.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/rpi5_status_led_daemon.py), and deployer [`esp32s3_status_led/deploy_esp32s3.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/deploy_esp32s3.py).
+     - Flashed ESP32-S3 and enabled `esp32s3-status-led.service` on RPi5 (`10.0.0.246`). Operator visually confirmed the onboard RGB LED is **solid green** when the RPi5 is on (stationary), with automatic switch to **solid blue** during rover motion (via `/api/pid-telemetry`) and **solid red** when the RPi5 is off/halted or heartbeats stop (`> 1.5 s`).
+     - Confirmed `rover-server.service` and Maker-ESP32-Pro remained untouched (`bootCount: 1`, `armed: false`, `mode: 0`).
+
 ### 2026-10-18 (Saturday)
 - **Active Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — flashed `08:15 PDT`
 - **Context**: Ron completed the **new chassis build** and needed to verify motor-to-port wiring. Decision: **keep the as-built wiring and remap in firmware**.

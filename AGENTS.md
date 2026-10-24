@@ -44,14 +44,14 @@ Authoritative operating instructions, hardware reference, workflow rules, and sa
 ### Additional Auxiliary Board — Lonely Binary ESP32-S3 N16R8
 - **Current Physical Installation**:
   - Seated in its supplied **terminal breakout board** (treat the breakout board as the current installation; replacing it is a future task).
-  - Connected to the Raspberry Pi 5 through the ESP32-S3 port labeled **USB** (native Espressif USB JTAG/serial debug unit, VID:PID `303a:1001`, enumerating as `/dev/ttyACM0` / `/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:72:3F:FC-if00`), **not** the port labeled `UART`.
-  - USB currently provides power to the board.
+  - Connected to the Raspberry Pi 5 through the ESP32-S3 port labeled **USB** (native Espressif USB JTAG/serial debug unit, VID:PID `303a:1001`, MAC `58:e6:c5:72:3f:fc`, `16MB` Quad Flash / `8MB` PSRAM, enumerating as `/dev/ttyACM0` / `/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:72:3F:FC-if00`), **not** the port labeled `UART`.
+  - USB currently provides power to the board (`POWER_OFF_ON_HALT=0` on RPi5 keeps 5V standby power on USB during OS halt while the Geekworm UPS switch is on).
 - **Critical Separation Rule**:
   - **Never confuse the Lonely Binary ESP32-S3 N16R8 (`/dev/ttyACM0`, `303a:1001`) with the Maker-ESP32-Pro motor controller (`/dev/rover-esp32` → `/dev/ttyUSB0`, `1a86:7523`).**
   - **Do not modify or flash the Maker-ESP32-Pro** when experimenting with the ESP32-S3.
-- **Unverified / Planned ESP32-S3 Items**:
-  - Initial experimental task: Drive the ESP32-S3 onboard RGB LED to show **solid green when the RPi5 is on** (stationary/idle), **solid blue when the rover is moving**, and **solid red when the RPi5 is off**.
-  - Still needing verification: Currently flashed firmware on the ESP32-S3, exact onboard NeoPixel/RGB LED GPIO pin on the Lonely Binary ESP32-S3 N16R8 (commonly `GPIO 48` or `GPIO 38`), dedicated PlatformIO environment/directory structure, persistent udev symlink rule, and long-term auxiliary role.
+- **Active ESP32-S3 Firmware & Host Service** (`esp32s3_status_led/`):
+  - Isolated PlatformIO project in [`esp32s3_status_led/`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/platformio.ini) (`env:esp32-s3-devkitc-1`), deployed via [`esp32s3_status_led/deploy_esp32s3.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/deploy_esp32s3.py) with RPi5 systemd service `esp32s3-status-led.service` ([`esp32s3_status_led/rpi5_status_led_daemon.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/rpi5_status_led_daemon.py)).
+  - Drives the onboard RGB LED (`NEO_GRB`, verified working on `2026-10-24`): **solid green** when the RPi5 is on (stationary/idle), **solid blue** when the rover is moving, and **solid red** when the RPi5 is off/halted or heartbeats stop (`> 1.5 s`).
 
 ---
 
