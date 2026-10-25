@@ -116,9 +116,47 @@ def is_rover_moving() -> bool:
     return False
 
 
+def run_oneshot_query(query_cmd: str) -> int:
+    """Send a one-shot query (e.g. MUX or STATUS) over the verified ESP32-S3 port and print the response."""
+    target_port = select_target_port()
+    if not target_port:
+        print("[esp32s3-led-daemon] ERROR: No verified ESP32-S3 serial port found.", file=sys.stderr)
+        return 1
+    print(f"[esp32s3-led-daemon] Querying '{query_cmd}' on verified port {target_port}...")
+    with serial.Serial(
+        port=target_port,
+        baudrate=115200,
+        timeout=0.5,
+        write_timeout=0.5,
+        dsrdtr=False,
+        rtscts=False,
+    ) as ser:
+        ser.reset_input_buffer()
+        # Ensure heartbeat is active so GPIO17 TX is driven before reading response
+        ser.write(b"G\n")
+        ser.flush()
+        time.sleep(0.05)
+        ser.reset_input_buffer()
+        ser.write(f"{query_cmd}\n".encode("ascii"))
+        ser.flush()
+        deadline = time.time() + 1.5
+        while time.time() < deadline:
+            line = ser.readline().decode("utf-8", errors="replace").strip()
+            if line:
+                print(line)
+                if "SUMMARY" in line or (query_cmd == "STATUS" and "STATUS=" in line):
+                    break
+    return 0
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("--scan-mux", "--status"):
+        cmd = "MUX" if sys.argv[1] == "--scan-mux" else "STATUS"
+        sys.exit(run_oneshot_query(cmd))
+
     ser = None
     last_state = None
+    did_initial_mux_log = False
     print("[esp32s3-led-daemon] Starting RPi5 -> ESP32-S3 status LED daemon...", flush=True)
 
     try:
@@ -132,13 +170,14 @@ def main():
                     ser = serial.Serial(
                         port=target_port,
                         baudrate=115200,
-                        timeout=0.1,
+                        timeout=0.05,
                         write_timeout=0.5,
                         dsrdtr=False,
                         rtscts=False,
                     )
                     print(f"[esp32s3-led-daemon] Connected to {target_port}", flush=True)
                     last_state = None
+                    did_initial_mux_log = False
                 except Exception as exc:
                     print(f"[esp32s3-led-daemon] Open failed on {target_port}: {exc}", flush=True)
                     time.sleep(1.0)
@@ -150,7 +189,14 @@ def main():
 
             try:
                 ser.write(cmd)
+                if not did_initial_mux_log:
+                    ser.write(b"MUX\nSTATUS\n")
+                    did_initial_mux_log = True
                 ser.flush()
+                while ser.in_waiting > 0:
+                    rx_line = ser.readline().decode("utf-8", errors="replace").strip()
+                    if rx_line:
+                        print(f"[esp32s3-uart] {rx_line}", flush=True)
                 if state_label != last_state:
                     print(f"[esp32s3-led-daemon] LED -> {state_label}", flush=True)
                     last_state = state_label

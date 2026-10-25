@@ -203,6 +203,12 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
      - Updated [`esp32s3_status_led/rpi5_status_led_daemon.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/rpi5_status_led_daemon.py) to use `/dev/ttyAMA0` as primary (with USB JTAG `303a:1001` as fallback) while continuing to strictly block `/dev/ttyUSB0` / `/dev/rover-esp32`.
      - Verified bidirectional communication over `/dev/ttyAMA0` (`[ESP32S3_LED] STATUS=GREEN HEARTBEAT=1 AGE_MS=70`) and confirmed `rover-server.service` / Maker-ESP32-Pro remained untouched (`bootCount: 1`, `armed: false`, `mode: 0`).
 
+  2. **ESP32-S3 8-Channel I2C Multiplexer (`0x70`) Wiring & Verification (`08:52–09:01 PDT`)**:
+     - Wired 8-channel I2C multiplexer (`TCA9548A` / `PCA9548A`) to the **Lonely Binary ESP32-S3 N16R8** terminal breakout board: `VIN -> 3V3`, `GND -> GND`, `SDA -> GPIO 8`, `SCL -> GPIO 9` (`RST` and `A0–A2` unconnected; no downstream sensors attached yet).
+     - Added non-blocking `100 kHz` I2C bus initialization (`Wire.begin(8, 9, 100000)`, `Wire.setTimeOut(50)`), `0x70` presence probe, per-channel selection + control-register readback verification (`CH 0..7`, masks `0x01..0x80`), downstream sensor address scan (`0x08..0x77`), and post-scan channel deselection (`0x00` write + readback verification) to [`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp), preserving all existing status LED, heartbeat, and GPIO UART0 backfeed-protection behavior.
+     - Verified over RPi5 GPIO UART0 (`/dev/ttyAMA0`): `MUX_ADDR=0x70 PRESENT=1`, all `8/8` channels selected and read back cleanly (`DEVICES=NONE`), post-scan deselect verified (`MASK=0x00 DESELECT_OK=1 READBACK=0x00`), and LED status reported `STATUS=GREEN HEARTBEAT=1 MUX_0x70=OK`.
+     - Confirmed `rover-server.service` and Maker-ESP32-Pro remained untouched (`bootCount: 1`, `armed: false`, `mode: 0`).
+
 ### 2026-10-24 (Saturday)
 - **Active Motor Controller Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — untouched
 - **Accomplishments & Observations**:

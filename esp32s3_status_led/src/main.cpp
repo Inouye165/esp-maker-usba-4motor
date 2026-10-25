@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Wire.h>
 #include <Adafruit_NeoPixel.h>
 
 // Lonely Binary ESP32-S3 N16R8 onboard WS2812 RGB LED pins across board revisions
@@ -11,6 +12,13 @@ static constexpr uint8_t LED_BRIGHTNESS = 64;
 static constexpr int UART_RX_PIN = 18;
 static constexpr int UART_TX_PIN = 17;
 static constexpr unsigned long UART_BAUD = 115200;
+
+// I2C Multiplexer (TCA9548A / PCA9548A) on ESP32-S3 default I2C pins
+static constexpr int I2C_SDA_PIN = 8;
+static constexpr int I2C_SCL_PIN = 9;
+static constexpr uint32_t I2C_FREQ_HZ = 100000;
+static constexpr uint8_t MUX_I2C_ADDR = 0x70;
+static constexpr uint8_t MUX_NUM_CHANNELS = 8;
 
 // Timeout without RPi5 heartbeat before reverting to Solid Red (RPi5 off/disconnected)
 static constexpr unsigned long HEARTBEAT_TIMEOUT_MS = 1500;
@@ -84,6 +92,80 @@ static void setState(LedState nextState) {
   }
 }
 
+static bool probeI2cAddress(uint8_t addr) {
+  Wire.beginTransmission(addr);
+  return (Wire.endTransmission() == 0);
+}
+
+static bool writeMuxMask(uint8_t mask, uint8_t* readbackOut = nullptr) {
+  Wire.beginTransmission(MUX_I2C_ADDR);
+  Wire.write(mask);
+  if (Wire.endTransmission() != 0) {
+    return false;
+  }
+  if (Wire.requestFrom(MUX_I2C_ADDR, (uint8_t)1) != 1) {
+    return false;
+  }
+  uint8_t rb = (uint8_t)Wire.read();
+  if (readbackOut != nullptr) {
+    *readbackOut = rb;
+  }
+  return (rb == mask);
+}
+
+static void runMuxScanReport(Stream& replyStream) {
+  bool muxPresent = probeI2cAddress(MUX_I2C_ADDR);
+  replyStream.printf("[ESP32S3_I2C] SDA=%d SCL=%d FREQ=%lu MUX_ADDR=0x%02X PRESENT=%d\n",
+                     I2C_SDA_PIN, I2C_SCL_PIN, (unsigned long)I2C_FREQ_HZ, MUX_I2C_ADDR, muxPresent ? 1 : 0);
+  if (!muxPresent) {
+    replyStream.printf("[ESP32S3_I2C] SUMMARY MUX_0x70=FAIL CHANNELS_OK=0/8 DESELECTED=0 TOTAL_SENSORS=0\n");
+    return;
+  }
+
+  int channelsOk = 0;
+  int totalSensors = 0;
+
+  for (uint8_t ch = 0; ch < MUX_NUM_CHANNELS; ++ch) {
+    uint8_t mask = (uint8_t)(1U << ch);
+    uint8_t readback = 0xFF;
+    bool selOk = writeMuxMask(mask, &readback);
+    if (selOk) {
+      channelsOk++;
+    }
+
+    String devList = "";
+    if (selOk) {
+      for (uint8_t addr = 0x08; addr <= 0x77; ++addr) {
+        if (addr == MUX_I2C_ADDR) {
+          continue;
+        }
+        if (probeI2cAddress(addr)) {
+          totalSensors++;
+          char buf[8];
+          snprintf(buf, sizeof(buf), "0x%02X", addr);
+          if (devList.length() > 0) {
+            devList += ",";
+          }
+          devList += buf;
+        }
+      }
+    }
+    if (devList.length() == 0) {
+      devList = "NONE";
+    }
+
+    replyStream.printf("[ESP32S3_I2C] CH=%u MASK=0x%02X SELECT_OK=%d READBACK=0x%02X DEVICES=%s\n",
+                       ch, mask, selOk ? 1 : 0, readback, devList.c_str());
+  }
+
+  uint8_t deselectReadback = 0xFF;
+  bool deselectOk = writeMuxMask(0x00, &deselectReadback);
+  replyStream.printf("[ESP32S3_I2C] DESELECT MASK=0x00 DESELECT_OK=%d READBACK=0x%02X\n",
+                     deselectOk ? 1 : 0, deselectReadback);
+  replyStream.printf("[ESP32S3_I2C] SUMMARY MUX_0x70=OK CHANNELS_OK=%d/8 DESELECTED=%d TOTAL_SENSORS=%d\n",
+                     channelsOk, deselectOk ? 1 : 0, totalSensors);
+}
+
 static void handleCommandLine(const String& rawLine, Stream& replyStream, bool isGpioUart) {
   String cmd = rawLine;
   cmd.trim();
@@ -113,12 +195,21 @@ static void handleCommandLine(const String& rawLine, Stream& replyStream, bool i
     setState(LedState::RPI_OFF_RED);
   } else if (cmd == "?" || cmd == "STATUS") {
     if (!isGpioUart || uartTxEnabled) {
-      replyStream.printf("[ESP32S3_LED] STATUS=%s HEARTBEAT=%d AGE_MS=%lu UPTIME_MS=%lu\n",
+      bool muxOk = probeI2cAddress(MUX_I2C_ADDR);
+      replyStream.printf("[ESP32S3_LED] STATUS=%s HEARTBEAT=%d AGE_MS=%lu MUX_0x70=%s UPTIME_MS=%lu\n",
                          stateName(currentState),
                          hasHeartbeat ? 1 : 0,
                          hasHeartbeat ? (now - lastHeartbeatMs) : 0UL,
+                         muxOk ? "OK" : "NONE",
                          now);
     }
+  } else if (cmd == "I2C" || cmd == "MUX" || cmd == "SCAN") {
+    lastHeartbeatMs = now;
+    hasHeartbeat = true;
+    if (isGpioUart) {
+      setUartTxDriven(true);
+    }
+    runMuxScanReport(replyStream);
   }
 }
 
@@ -131,6 +222,13 @@ void setup() {
   pinMode(UART_TX_PIN, INPUT);
   Serial1.begin(UART_BAUD, SERIAL_8N1, UART_RX_PIN, -1);
   uartTxEnabled = false;
+
+  // Initialize I2C bus on SDA=GPIO8, SCL=GPIO9 at 100 kHz and ensure all mux channels start deselected
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ_HZ);
+  Wire.setTimeOut(50);
+  if (probeI2cAddress(MUX_I2C_ADDR)) {
+    writeMuxMask(0x00);
+  }
 
   pixel48.begin();
   pixel48.setBrightness(LED_BRIGHTNESS);

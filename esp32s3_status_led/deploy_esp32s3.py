@@ -149,7 +149,12 @@ def main():
         _, uart_verify, _ = run_ssh(client, "ls -l /dev/ttyAMA0 && pinctrl get 14,15")
         print(uart_verify)
 
-        print("\n=== 6. Installing & Starting esp32s3-status-led.service on RPi5 ===")
+        print("\n=== 6. Verifying I2C Multiplexer (0x70) & Status over GPIO UART (/dev/ttyAMA0) ===")
+        time.sleep(1.5)
+        _, mux_scan_out, _ = run_ssh(client, f"python3 {daemon_remote} --scan-mux && python3 {daemon_remote} --status")
+        print(mux_scan_out)
+
+        print("\n=== 7. Installing & Starting esp32s3-status-led.service on RPi5 ===")
         service_unit = f"""[Unit]
 Description=Rover 1 ESP32-S3 Status LED Daemon (Green=RPi5 On, Blue=Moving, Red=Off)
 After=network.target rover-server.service
