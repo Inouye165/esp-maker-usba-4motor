@@ -48,8 +48,9 @@ Authoritative operating instructions, hardware reference, workflow rules, and sa
   - **Primary Data Connection (GPIO UART0)**: Wired between the RPi5 40-pin header and the ESP32-S3 breakout terminals at `115200` baud (`/dev/ttyAMA0` enabled via `dtoverlay=uart0-pi5`, serial login console disabled):
     - **RPi5 `GPIO 14 / TXD0` (Pin 8)** $\to$ **ESP32-S3 `GPIO 18 / RX`**
     - **RPi5 `GPIO 15 / RXD0` (Pin 10)** $\leftarrow$ **ESP32-S3 `GPIO 17 / TX`** *(kept in high-Z `INPUT` whenever RPi5 heartbeat is absent so the always-powered ESP32-S3 never backfeeds an unpowered RPi5)*.
-  - **I2C Multiplexer (`TCA9548A` / `PCA9548A`, addr `0x70`)**: Wired to the ESP32-S3 terminal breakout (`VIN -> 3V3`, `GND -> GND`, `SDA -> GPIO 8`, `SCL -> GPIO 9` at `100 kHz`; `RST` and `A0–A2` unconnected) for up to 8 downstream I2C sensors.
-  - **Optional Flashing/Debug Connection**: Native Espressif USB JTAG/serial debug port labeled **USB** (`303a:1001`, MAC `58:e6:c5:72:3f:fc`, `16MB` Quad Flash / `8MB` PSRAM, `/dev/ttyACM0`); can be unplugged during normal operation.
+  - **I2C Multiplexer (`TCA9548A` / `PCA9548A`, addr `0x70`)**: Wired to the ESP32-S3 terminal breakout (`VIN -> 3V3`, `GND -> GND`, `SDA -> GPIO 8`, `SCL -> GPIO 9` at `100 kHz`; `RST` and `A0–A2` unconnected) for up to 8 downstream I2C sensors (`CH 0` currently hosts sensor `0x29`).
+  - **Wireless OTA Updates (Station Mode `WIFI_STA`)**: Associates non-blockingly with home Wi-Fi (`rover1-esp32s3`, port `3232`, `default_16MB.csv` dual `6.25 MB` `app0`/`app1` slots) for authenticated `ArduinoOTA` updates (`python esp32s3_status_led/deploy_esp32s3.py --ota`) with USB unplugged; see [`esp32s3_status_led/README.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/README.md).
+  - **Optional Flashing/Debug Connection**: Native Espressif USB JTAG/serial debug port labeled **USB** (`303a:1001`, MAC `58:e6:c5:72:3f:fc`, `16MB` Quad Flash / `8MB` PSRAM, `/dev/ttyACM0`); unplugged during normal operation and used only for `--usb` recovery.
 - **Critical Separation Rule**:
   - **Never confuse the Lonely Binary ESP32-S3 N16R8 (`/dev/ttyAMA0` or `/dev/ttyACM0`, `303a:1001`) with the Maker-ESP32-Pro motor controller (`/dev/rover-esp32` → `/dev/ttyUSB0`, `1a86:7523`).**
   - **Do not modify or flash the Maker-ESP32-Pro** when experimenting with the ESP32-S3.

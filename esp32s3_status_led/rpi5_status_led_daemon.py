@@ -18,6 +18,11 @@ LED Policy:
                           by ESP32-S3's 1.5s heartbeat watchdog timeout, which also puts
                           ESP32-S3 GPIO17 TX into high-Z INPUT to prevent backfeeding an
                           unpowered RPi5).
+
+OTA & Maintenance Coordination:
+  - Parses `[ESP32S3_OTA]` events over UART to log OTA update start, progress, reboot
+    maintenance windows, and post-reboot reconnection with the updated firmware version
+    and partition slot.
 """
 
 import json
@@ -116,8 +121,8 @@ def is_rover_moving() -> bool:
     return False
 
 
-def run_oneshot_query(query_cmd: str) -> int:
-    """Send a one-shot query (e.g. MUX or STATUS) over the verified ESP32-S3 port and print the response."""
+def run_oneshot_query(query_cmd: str, wait_Sec: float = 2.0) -> int:
+    """Send a one-shot query (e.g. MUX, STATUS, OTA, WIFI_OFF_TEST) over the verified ESP32-S3 port."""
     target_port = select_target_port()
     if not target_port:
         print("[esp32s3-led-daemon] ERROR: No verified ESP32-S3 serial port found.", file=sys.stderr)
@@ -139,28 +144,51 @@ def run_oneshot_query(query_cmd: str) -> int:
         ser.reset_input_buffer()
         ser.write(f"{query_cmd}\n".encode("ascii"))
         ser.flush()
-        deadline = time.time() + 1.5
+        deadline = time.time() + wait_Sec
         while time.time() < deadline:
             line = ser.readline().decode("utf-8", errors="replace").strip()
             if line:
                 print(line)
-                if "SUMMARY" in line or (query_cmd == "STATUS" and "STATUS=" in line):
+                if "SUMMARY" in line:
+                    break
+                if query_cmd == "STATUS" and "STATUS=" in line:
+                    break
+                if query_cmd == "OTA" and "[ESP32S3_OTA] FW=" in line:
+                    break
+                if query_cmd.startswith("WIFI_OFF_TEST") and "EVENT=WIFI_TEST_START" in line:
+                    break
+                if query_cmd == "WIFI_ON" and "EVENT=WIFI_RECONNECT_TRIGGERED" in line:
                     break
     return 0
 
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] in ("--scan-mux", "--status"):
-        cmd = "MUX" if sys.argv[1] == "--scan-mux" else "STATUS"
-        sys.exit(run_oneshot_query(cmd))
+    if len(sys.argv) > 1:
+        arg = sys.argv[1]
+        if arg == "--scan-mux":
+            sys.exit(run_oneshot_query("MUX"))
+        elif arg == "--status":
+            sys.exit(run_oneshot_query("STATUS"))
+        elif arg == "--ota-status":
+            sys.exit(run_oneshot_query("OTA"))
+        elif arg == "--wifi-off-test":
+            dur = int(sys.argv[2]) if len(sys.argv) > 2 else 8
+            sys.exit(run_oneshot_query(f"WIFI_OFF_TEST {dur}"))
+        elif arg == "--wifi-on":
+            sys.exit(run_oneshot_query("WIFI_ON"))
 
     ser = None
     last_state = None
     did_initial_mux_log = False
+    ota_maintenance_active = False
+    ota_reboot_deadline = 0.0
+    last_rx_time = time.time()
+
     print("[esp32s3-led-daemon] Starting RPi5 -> ESP32-S3 status LED daemon...", flush=True)
 
     try:
         while running:
+            now = time.time()
             if ser is None:
                 target_port = select_target_port()
                 if not target_port:
@@ -178,6 +206,7 @@ def main():
                     print(f"[esp32s3-led-daemon] Connected to {target_port}", flush=True)
                     last_state = None
                     did_initial_mux_log = False
+                    last_rx_time = now
                 except Exception as exc:
                     print(f"[esp32s3-led-daemon] Open failed on {target_port}: {exc}", flush=True)
                     time.sleep(1.0)
@@ -190,18 +219,65 @@ def main():
             try:
                 ser.write(cmd)
                 if not did_initial_mux_log:
-                    ser.write(b"MUX\nSTATUS\n")
+                    ser.write(b"MUX\nSTATUS\nOTA\n")
                     did_initial_mux_log = True
                 ser.flush()
                 while ser.in_waiting > 0:
                     rx_line = ser.readline().decode("utf-8", errors="replace").strip()
                     if rx_line:
+                        last_rx_time = time.time()
                         print(f"[esp32s3-uart] {rx_line}", flush=True)
+                        if "[ESP32S3_OTA] EVENT=START" in rx_line:
+                            ota_maintenance_active = True
+                            ota_reboot_deadline = time.time() + 45.0
+                            print(
+                                "[esp32s3-led-daemon] MAINTENANCE: ESP32-S3 OTA firmware update started; "
+                                "expecting temporary unavailability during flash & reboot.",
+                                flush=True,
+                            )
+                        elif "[ESP32S3_OTA] EVENT=END STATUS=SUCCESS REBOOTING=1" in rx_line:
+                            ota_maintenance_active = True
+                            ota_reboot_deadline = time.time() + 15.0
+                            print(
+                                "[esp32s3-led-daemon] MAINTENANCE: ESP32-S3 OTA flash complete; "
+                                "device is rebooting into new partition...",
+                                flush=True,
+                            )
+                            # Schedule post-reboot status & mux verification once device comes back up
+                            did_initial_mux_log = False
+                        elif "[ESP32S3_OTA] EVENT=ERROR" in rx_line:
+                            ota_maintenance_active = False
+                            print(
+                                f"[esp32s3-led-daemon] WARNING: ESP32-S3 OTA reported error: {rx_line}",
+                                flush=True,
+                            )
+                        elif ota_maintenance_active and (
+                            "[ESP32S3_LED] State ->" in rx_line or "[ESP32S3_OTA] FW=" in rx_line
+                        ):
+                            ota_maintenance_active = False
+                            print(
+                                "[esp32s3-led-daemon] MAINTENANCE COMPLETE: ESP32-S3 reconnected over UART after OTA reboot.",
+                                flush=True,
+                            )
+
+                if ota_maintenance_active and time.time() > ota_reboot_deadline:
+                    ota_maintenance_active = False
+                    print(
+                        "[esp32s3-led-daemon] WARNING: OTA maintenance window expired; resuming normal monitoring.",
+                        flush=True,
+                    )
+
                 if state_label != last_state:
                     print(f"[esp32s3-led-daemon] LED -> {state_label}", flush=True)
                     last_state = state_label
             except Exception as exc:
-                print(f"[esp32s3-led-daemon] Serial write error ({exc}), reconnecting...", flush=True)
+                if ota_maintenance_active:
+                    print(
+                        f"[esp32s3-led-daemon] MAINTENANCE: Serial link temporarily unavailable during OTA reboot ({exc})",
+                        flush=True,
+                    )
+                else:
+                    print(f"[esp32s3-led-daemon] Serial write error ({exc}), reconnecting...", flush=True)
                 try:
                     ser.close()
                 except Exception:
