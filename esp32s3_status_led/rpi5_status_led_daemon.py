@@ -2,9 +2,12 @@
 """
 Raspberry Pi 5 -> Lonely Binary ESP32-S3 N16R8 Status LED Daemon.
 
-Strictly isolated to the ESP32-S3 USB JTAG/serial debug unit:
-  - By-ID path: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:72:3F:FC-if00
-  - USB VID:PID: 303a:1001
+Supports both:
+  1. Primary: RPi5 40-pin header GPIO UART0 (/dev/ttyAMA0, Pi GPIO14 TX -> ESP GPIO18 RX,
+     Pi GPIO15 RX <- ESP GPIO17 TX, 115200 baud) when USB is unplugged.
+  2. Fallback: ESP32-S3 native USB JTAG/serial debug unit
+     (/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:72:3F:FC-if00,
+     VID:PID 303a:1001).
 
 Never opens /dev/rover-esp32 or /dev/ttyUSB0 (Maker-ESP32-Pro motor controller).
 
@@ -12,7 +15,9 @@ LED Policy:
   - Solid GREEN ("G\\n"): RPi5 is ON and rover is stationary/idle.
   - Solid BLUE  ("B\\n"): RPi5 is ON and rover is actively moving.
   - Solid RED   ("R\\n"): Sent immediately on daemon stop / RPi5 shutdown (and enforced
-                          by ESP32-S3's 1.5s heartbeat watchdog timeout).
+                          by ESP32-S3's 1.5s heartbeat watchdog timeout, which also puts
+                          ESP32-S3 GPIO17 TX into high-Z INPUT to prevent backfeeding an
+                          unpowered RPi5).
 """
 
 import json
@@ -24,6 +29,7 @@ import time
 import urllib.request
 import serial
 
+GPIO_UART_PORT = "/dev/ttyAMA0"
 ESP32S3_BY_ID = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:72:3F:FC-if00"
 EXPECTED_VID = "303a"
 EXPECTED_PID = "1001"
@@ -42,7 +48,17 @@ signal.signal(signal.SIGTERM, handle_Stop)
 signal.signal(signal.SIGINT, handle_Stop)
 
 
-def verify_esp32s3_port(port_path: str) -> bool:
+def verify_gpio_uart_port(port_path: str) -> bool:
+    """Verify port_path is the RPi5 RP1 hardware UART0 (/dev/ttyAMA0) and never a USB serial adapter."""
+    if not os.path.exists(port_path):
+        return False
+    real_dev = os.path.realpath(port_path)
+    if "ttyUSB" in real_dev or "rover-esp32" in port_path or "ttyACM" in real_dev:
+        return False
+    return real_dev == "/dev/ttyAMA0"
+
+
+def verify_esp32s3_usb_port(port_path: str) -> bool:
     """Verify via udevadm that port_path is the 303a:1001 ESP32-S3 and never the Maker-ESP32."""
     if not os.path.exists(port_path):
         return False
@@ -65,6 +81,15 @@ def verify_esp32s3_port(port_path: str) -> bool:
         elif line.startswith("ID_MODEL_ID="):
             pid = line.split("=", 1)[1].strip().lower()
     return vid == EXPECTED_VID and pid == EXPECTED_PID
+
+
+def select_target_port() -> str | None:
+    """Prefer GPIO UART (/dev/ttyAMA0); fall back to verified ESP32-S3 USB JTAG if UART0 is absent."""
+    if verify_gpio_uart_port(GPIO_UART_PORT):
+        return GPIO_UART_PORT
+    if verify_esp32s3_usb_port(ESP32S3_BY_ID):
+        return ESP32S3_BY_ID
+    return None
 
 
 def is_rover_moving() -> bool:
@@ -99,22 +124,23 @@ def main():
     try:
         while running:
             if ser is None:
-                if not verify_esp32s3_port(ESP32S3_BY_ID):
+                target_port = select_target_port()
+                if not target_port:
                     time.sleep(1.0)
                     continue
                 try:
                     ser = serial.Serial(
-                        port=ESP32S3_BY_ID,
+                        port=target_port,
                         baudrate=115200,
                         timeout=0.1,
                         write_timeout=0.5,
                         dsrdtr=False,
                         rtscts=False,
                     )
-                    print(f"[esp32s3-led-daemon] Connected to {ESP32S3_BY_ID}", flush=True)
+                    print(f"[esp32s3-led-daemon] Connected to {target_port}", flush=True)
                     last_state = None
                 except Exception as exc:
-                    print(f"[esp32s3-led-daemon] Open failed: {exc}", flush=True)
+                    print(f"[esp32s3-led-daemon] Open failed on {target_port}: {exc}", flush=True)
                     time.sleep(1.0)
                     continue
 

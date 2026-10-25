@@ -193,6 +193,16 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
 
 ## 6. Daily Engineering & Activity Log
 
+### 2026-10-25 (Sunday)
+- **Active Motor Controller Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — untouched
+- **Accomplishments & Observations**:
+  1. **ESP32-S3 GPIO UART0 Migration (`RPi5 GPIO 14/15` $\leftrightarrow$ `ESP32-S3 GPIO 18/17`) (`06:34–06:39 PDT`)**:
+     - Configured [`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp) to listen on hardware `Serial1` (`RX = GPIO 18`, `TX = GPIO 17`, `115200` baud) alongside USB `Serial`, with non-blocking USB TX (`Serial.setTxTimeoutMs(0)`) so the firmware runs seamlessly when the USB cable is unplugged.
+     - Implemented **unpowered-RPi5 backfeed protection**: `GPIO 17 (TX)` is initialized in high-impedance `INPUT` (`Serial1.begin(115200, SERIAL_8N1, 18, -1)`) and is only attached as a driven UART TX output while an active RPi5 heartbeat is present on `GPIO 18 (RX)`, automatically detaching back to high-Z `INPUT` on `"R\n"` or the `1.5 s` heartbeat timeout.
+     - Enabled RPi5 40-pin header UART0 (`/dev/ttyAMA0`, `GPIO14 = TXD0`, `GPIO15 = RXD0`) dynamically via `dtoverlay uart0-pi5`, persisted `dtparam=uart0=on` and `dtoverlay=uart0-pi5` in `/boot/firmware/config.txt`, removed `console=serial0,115200` from `/boot/firmware/cmdline.txt`, and masked `serial-getty@ttyAMA0.service`.
+     - Updated [`esp32s3_status_led/rpi5_status_led_daemon.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/rpi5_status_led_daemon.py) to use `/dev/ttyAMA0` as primary (with USB JTAG `303a:1001` as fallback) while continuing to strictly block `/dev/ttyUSB0` / `/dev/rover-esp32`.
+     - Verified bidirectional communication over `/dev/ttyAMA0` (`[ESP32S3_LED] STATUS=GREEN HEARTBEAT=1 AGE_MS=70`) and confirmed `rover-server.service` / Maker-ESP32-Pro remained untouched (`bootCount: 1`, `armed: false`, `mode: 0`).
+
 ### 2026-10-24 (Saturday)
 - **Active Motor Controller Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — untouched
 - **Accomplishments & Observations**:

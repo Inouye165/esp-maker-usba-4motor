@@ -122,7 +122,34 @@ def main():
             else:
                 raise RuntimeError(f"Flashing failed (rc={rc}):\n{flash_err}")
 
-        print("\n=== 5. Installing & Starting esp32s3-status-led.service on RPi5 ===")
+        print("\n=== 5. Enabling RPi5 GPIO UART0 (/dev/ttyAMA0 on GPIO14/15) & Disabling Serial Console ===")
+        run_ssh(client, "sudo -n systemctl stop serial-getty@ttyAMA0.service 2>/dev/null || true", check=False)
+        run_ssh(client, "sudo -n systemctl disable serial-getty@ttyAMA0.service 2>/dev/null || true", check=False)
+        run_ssh(client, "sudo -n systemctl mask serial-getty@ttyAMA0.service 2>/dev/null || true", check=False)
+        # Load uart0-pi5 overlay dynamically if /dev/ttyAMA0 is not yet present
+        run_ssh(
+            client,
+            "test -e /dev/ttyAMA0 || sudo -n dtoverlay uart0-pi5",
+            check=True,
+        )
+        # Persist dtparam=uart0=on and dtoverlay=uart0-pi5 in /boot/firmware/config.txt
+        run_ssh(
+            client,
+            "grep -q '^dtparam=uart0=on' /boot/firmware/config.txt || echo 'dtparam=uart0=on' | sudo -n tee -a /boot/firmware/config.txt >/dev/null",
+        )
+        run_ssh(
+            client,
+            "grep -q '^dtoverlay=uart0-pi5' /boot/firmware/config.txt || echo 'dtoverlay=uart0-pi5' | sudo -n tee -a /boot/firmware/config.txt >/dev/null",
+        )
+        # Remove console=serial0,115200 from /boot/firmware/cmdline.txt so Linux boot/login never touches GPIO14/15
+        run_ssh(
+            client,
+            "sudo -n sed -i 's/console=serial0,[0-9]* //g; s/console=ttyAMA0,[0-9]* //g' /boot/firmware/cmdline.txt",
+        )
+        _, uart_verify, _ = run_ssh(client, "ls -l /dev/ttyAMA0 && pinctrl get 14,15")
+        print(uart_verify)
+
+        print("\n=== 6. Installing & Starting esp32s3-status-led.service on RPi5 ===")
         service_unit = f"""[Unit]
 Description=Rover 1 ESP32-S3 Status LED Daemon (Green=RPi5 On, Blue=Moving, Red=Off)
 After=network.target rover-server.service
