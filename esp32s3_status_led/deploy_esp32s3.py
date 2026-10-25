@@ -429,7 +429,7 @@ sys.exit(
         raw_after, new_parsed = query_esp32s3_uart_status(client, daemon_remote)
         if new_parsed.get("WIFI") == "CONNECTED" and new_parsed.get("IP", "0.0.0.0") != "0.0.0.0":
             break
-    print(raw_after)
+    print(raw_after.encode("ascii", "replace").decode("ascii"))
 
     print(
         f"  Post-OTA Transition: FW {prev_fw} ({prev_part}) -> "
@@ -439,7 +439,7 @@ sys.exit(
     print("\n=== 6. Verifying I2C Multiplexer (0x70) Post-OTA ===")
     run_ssh(client, "sudo -n systemctl stop esp32s3-status-led.service 2>/dev/null || true", check=False)
     _, mux_scan_out, _ = run_ssh(client, f"python3 {daemon_remote} --scan-mux")
-    print(mux_scan_out)
+    print(mux_scan_out.encode("ascii", "replace").decode("ascii"))
     run_ssh(client, "sudo -n systemctl start esp32s3-status-led.service")
     time.sleep(1.5)
 

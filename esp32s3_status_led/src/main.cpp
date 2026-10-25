@@ -8,6 +8,8 @@
 #include <hal/gpio_hal.h>
 #include <soc/uart_periph.h>
 #include <Adafruit_NeoPixel.h>
+#include <vl53l7cx_class.h>
+#include <vl53l4cd_class.h>
 
 #if __has_include("ota_secrets.h")
 #include "ota_secrets.h"
@@ -16,7 +18,7 @@
 #endif
 
 #ifndef ESP32S3_FW_VERSION
-#define ESP32S3_FW_VERSION "1.1.0-ota"
+#define ESP32S3_FW_VERSION "1.2.0-tof-mux"
 #endif
 
 // Lonely Binary ESP32-S3 N16R8 onboard WS2812 RGB LED pins across board revisions
@@ -30,18 +32,25 @@ static constexpr int UART_RX_PIN = 18;
 static constexpr int UART_TX_PIN = 17;
 static constexpr unsigned long UART_BAUD = 115200;
 
-// I2C Multiplexer (TCA9548A / PCA9548A) on ESP32-S3 default I2C pins
+// I2C Multiplexer (TCA9548A / PCA9548A) on ESP32-S3 default I2C pins (400 kHz Fast Mode for VL53L7CX/VL53L4CD)
 static constexpr int I2C_SDA_PIN = 8;
 static constexpr int I2C_SCL_PIN = 9;
-static constexpr uint32_t I2C_FREQ_HZ = 100000;
+static constexpr uint32_t I2C_FREQ_HZ = 400000;
 static constexpr uint8_t MUX_I2C_ADDR = 0x70;
+static constexpr uint8_t TOF_I2C_ADDR = 0x29;
 static constexpr uint8_t MUX_NUM_CHANNELS = 8;
+static constexpr size_t I2C_CHUNK_BYTES = 128;
 
 // Timeout without RPi5 heartbeat before reverting to Solid Red (RPi5 off/disconnected)
 static constexpr unsigned long HEARTBEAT_TIMEOUT_MS = 1500;
 
 // Non-blocking Wi-Fi reconnect check interval
 static constexpr unsigned long WIFI_RECONNECT_INTERVAL_MS = 15000;
+
+// ToF polling & hot-plug discovery intervals
+static constexpr unsigned long TOF_POLL_INTERVAL_MS = 35;
+static constexpr unsigned long TOF_BROADCAST_INTERVAL_MS = 250;
+static constexpr unsigned long TOF_HOTPLUG_SCAN_INTERVAL_MS = 2500;
 
 Adafruit_NeoPixel pixel48(NUM_PIXELS, LED_PIN_PRIMARY, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel pixel38(NUM_PIXELS, LED_PIN_SECONDARY, NEO_GRB + NEO_KHZ800);
@@ -59,6 +68,49 @@ enum class OtaState : uint8_t {
   OTA_ERROR    = 3
 };
 
+enum class TofSensorType : uint8_t {
+  NONE     = 0,
+  VL53L4CD = 1,
+  VL53L7CX = 2,
+  UNKNOWN  = 3
+};
+
+struct TofChannelState {
+  TofSensorType type = TofSensorType::NONE;
+  bool present = false;
+  bool initialized = false;
+  bool initFailed = false;
+  uint8_t consecutiveErrors = 0;
+  uint16_t modelId = 0;
+  unsigned long lastSampleMs = 0;
+  uint32_t frameCount = 0;
+
+  // VL53L4CD single-zone state
+  VL53L4CD* l4cd = nullptr;
+  int16_t distMm = -1;
+  uint8_t rangeStatus = 255;
+  uint16_t signalKcps = 0;
+  uint16_t sigmaMm = 0;
+
+  // VL53L7CX 8x8 multizone state
+  VL53L7CX* l7cx = nullptr;
+  int16_t minMm = -1;
+  int16_t centerMm = -1;
+  int16_t meanMm = -1;
+  uint8_t validZones = 0;
+  int8_t siliconTempC = 0;
+  int16_t gridMm[64];
+  uint8_t gridStatus[64];
+};
+
+static TofChannelState tofChannels[MUX_NUM_CHANNELS];
+static VL53L7CX_ResultsData l7cxResultsShared;
+static bool muxAvailable = false;
+static uint8_t nextPollChannel = 0;
+static unsigned long lastTofPollMs = 0;
+static unsigned long lastTofBroadcastMs = 0;
+static unsigned long lastHotplugScanMs = 0;
+
 static LedState currentState = LedState::RPI_OFF_RED;
 static unsigned long lastHeartbeatMs = 0;
 static bool hasHeartbeat = false;
@@ -72,6 +124,88 @@ static unsigned long wifiForceOfflineUntilMs = 0;
 static unsigned long lastWifiCheckMs = 0;
 static bool lastWifiConnected = false;
 static unsigned int lastOtaPctLogged = 0;
+
+// Safe ESP32 I2C multi-byte read/write helpers for 16-bit register ST ToF sensors
+static uint8_t esp32TofI2cRead(TwoWire* wire, uint8_t dev7, uint16_t regAddr, uint8_t* pValues, uint32_t size) {
+  uint32_t i = 0;
+  while (i < size) {
+    size_t chunk = (size - i > I2C_CHUNK_BYTES) ? I2C_CHUNK_BYTES : (size_t)(size - i);
+    uint16_t curReg = (uint16_t)(regAddr + i);
+    wire->beginTransmission(dev7);
+    wire->write((uint8_t)(curReg >> 8));
+    wire->write((uint8_t)(curReg & 0xFF));
+    if (wire->endTransmission(false) != 0) {
+      return 1;
+    }
+    size_t got = wire->requestFrom(dev7, chunk, true);
+    if (got != chunk) {
+      return 1;
+    }
+    for (size_t k = 0; k < chunk; ++k) {
+      int b = wire->read();
+      if (b < 0) {
+        return 1;
+      }
+      pValues[i + k] = (uint8_t)b;
+    }
+    i += (uint32_t)chunk;
+  }
+  return 0;
+}
+
+static uint8_t esp32TofI2cWrite(TwoWire* wire, uint8_t dev7, uint16_t regAddr, uint8_t* pValues, uint32_t size) {
+  uint32_t i = 0;
+  uint32_t lastYield = 0;
+  while (i < size) {
+    size_t chunk = (size - i > I2C_CHUNK_BYTES) ? I2C_CHUNK_BYTES : (size_t)(size - i);
+    uint16_t curReg = (uint16_t)(regAddr + i);
+    wire->beginTransmission(dev7);
+    wire->write((uint8_t)(curReg >> 8));
+    wire->write((uint8_t)(curReg & 0xFF));
+    if (wire->write(pValues + i, chunk) != chunk) {
+      wire->endTransmission(true);
+      return 1;
+    }
+    if (wire->endTransmission(true) != 0) {
+      return 1;
+    }
+    i += (uint32_t)chunk;
+    if (i - lastYield >= 2048U) {
+      lastYield = i;
+      delay(0);
+    }
+  }
+  return 0;
+}
+
+// Linker wrappers overriding STM32duino VL53L7CX and VL53L4CD platform I2C transfers on ESP32
+extern "C" uint8_t __wrap__ZN8VL53L7CX7RdMultiEP17VL53L7CX_PlatformtPhj(
+    VL53L7CX* self, VL53L7CX_Platform* p_platform, uint16_t RegisterAddress, uint8_t* p_values, uint32_t size) {
+  (void)self;
+  uint8_t dev7 = (uint8_t)((p_platform->address >> 1) & 0x7F);
+  return esp32TofI2cRead(p_platform->dev_i2c, dev7, RegisterAddress, p_values, size);
+}
+
+extern "C" uint8_t __wrap__ZN8VL53L7CX7WrMultiEP17VL53L7CX_PlatformtPhj(
+    VL53L7CX* self, VL53L7CX_Platform* p_platform, uint16_t RegisterAddress, uint8_t* p_values, uint32_t size) {
+  (void)self;
+  uint8_t dev7 = (uint8_t)((p_platform->address >> 1) & 0x7F);
+  return esp32TofI2cWrite(p_platform->dev_i2c, dev7, RegisterAddress, p_values, size);
+}
+
+extern "C" uint8_t __wrap__ZN8VL53L4CD16VL53L4CD_I2CReadEhtPhj(
+    VL53L4CD* self, uint8_t DeviceAddr, uint16_t RegisterAddress, uint8_t* p_values, uint32_t size) {
+  (void)self;
+  uint8_t dev7 = (uint8_t)((DeviceAddr >> 1) & 0x7F);
+  return esp32TofI2cRead(&Wire, dev7, RegisterAddress, p_values, size);
+}
+
+extern "C" uint8_t __wrap__ZN8VL53L4CD17VL53L4CD_I2CWriteEhtPhj(
+    VL53L4CD* self, uint8_t DeviceAddr, uint16_t RegisterAddress, uint8_t* p_values, uint32_t size) {
+  (void)self;
+  uint8_t dev7 = (uint8_t)((DeviceAddr >> 1) & 0x7F);
+  return esp32TofI2cWrite(&Wire, dev7, RegisterAddress, p_values, size);
+}
 
 static void setUartTxDriven(bool enable) {
   if (enable && !uartTxEnabled) {
@@ -110,6 +244,16 @@ static const char* otaStateName(OtaState state) {
     case OtaState::OTA_ERROR:    return "ERROR";
     case OtaState::OTA_DISABLED:
     default:                     return "DISABLED";
+  }
+}
+
+static const char* tofTypeName(TofSensorType t) {
+  switch (t) {
+    case TofSensorType::VL53L4CD: return "VL53L4CD";
+    case TofSensorType::VL53L7CX: return "VL53L7CX";
+    case TofSensorType::UNKNOWN:  return "UNKNOWN";
+    case TofSensorType::NONE:
+    default:                      return "NONE";
   }
 }
 
@@ -161,7 +305,7 @@ static bool writeMuxMask(uint8_t mask, uint8_t* readbackOut = nullptr) {
   if (Wire.endTransmission() != 0) {
     return false;
   }
-  if (Wire.requestFrom(MUX_I2C_ADDR, (uint8_t)1) != 1) {
+  if (Wire.requestFrom(MUX_I2C_ADDR, (size_t)1, true) != 1) {
     return false;
   }
   uint8_t rb = (uint8_t)Wire.read();
@@ -171,11 +315,346 @@ static bool writeMuxMask(uint8_t mask, uint8_t* readbackOut = nullptr) {
   return (rb == mask);
 }
 
+static bool selectMuxChannel(uint8_t ch) {
+  if (ch >= MUX_NUM_CHANNELS) {
+    return false;
+  }
+  return writeMuxMask((uint8_t)(1U << ch));
+}
+
+static void resetChannelState(uint8_t ch) {
+  TofChannelState& st = tofChannels[ch];
+  st.type = TofSensorType::NONE;
+  st.present = false;
+  st.initialized = false;
+  st.initFailed = false;
+  st.consecutiveErrors = 0;
+  st.modelId = 0;
+  st.lastSampleMs = 0;
+  st.frameCount = 0;
+  st.distMm = -1;
+  st.rangeStatus = 255;
+  st.signalKcps = 0;
+  st.sigmaMm = 0;
+  st.minMm = -1;
+  st.centerMm = -1;
+  st.meanMm = -1;
+  st.validZones = 0;
+  st.siliconTempC = 0;
+  for (int i = 0; i < 64; ++i) {
+    st.gridMm[i] = -1;
+    st.gridStatus[i] = 255;
+  }
+}
+
+// Identify whether a 0x29 ToF device on the currently selected mux channel is VL53L4CD (0xEBAA) or VL53L7CX (0xF002)
+static TofSensorType identifyTofSensorOnBus(uint16_t* modelIdOut = nullptr) {
+  uint8_t buf[2] = {0, 0};
+  if (esp32TofI2cRead(&Wire, TOF_I2C_ADDR, 0x010F, buf, 2) == 0) {
+    uint16_t id4 = ((uint16_t)buf[0] << 8) | (uint16_t)buf[1];
+    if (id4 == 0xEBAA) {
+      if (modelIdOut) *modelIdOut = id4;
+      return TofSensorType::VL53L4CD;
+    }
+  }
+
+  // Probe VL53L7CX bank 0 device_id (0xF0) & revision_id (0x02)
+  uint8_t zero = 0x00;
+  uint8_t two = 0x02;
+  uint8_t id7[2] = {0, 0};
+  if (esp32TofI2cWrite(&Wire, TOF_I2C_ADDR, 0x7FFF, &zero, 1) == 0 &&
+      esp32TofI2cRead(&Wire, TOF_I2C_ADDR, 0x0000, id7, 2) == 0) {
+    esp32TofI2cWrite(&Wire, TOF_I2C_ADDR, 0x7FFF, &two, 1);
+    uint16_t combined = ((uint16_t)id7[0] << 8) | (uint16_t)id7[1];
+    if (modelIdOut) *modelIdOut = combined;
+    if (id7[0] == 0xF0) {
+      return TofSensorType::VL53L7CX;
+    }
+  }
+  return TofSensorType::UNKNOWN;
+}
+
+static bool initChannelSensor(uint8_t ch) {
+  if (!selectMuxChannel(ch)) {
+    return false;
+  }
+  TofChannelState& st = tofChannels[ch];
+  if (!probeI2cAddress(TOF_I2C_ADDR)) {
+    resetChannelState(ch);
+    writeMuxMask(0x00);
+    return false;
+  }
+
+  st.present = true;
+  uint16_t modelId = 0;
+  TofSensorType detected = identifyTofSensorOnBus(&modelId);
+  st.modelId = modelId;
+  st.type = detected;
+
+  if (detected == TofSensorType::VL53L4CD) {
+    if (st.l4cd == nullptr) {
+      st.l4cd = new VL53L4CD(&Wire, -1);
+    }
+    st.l4cd->begin();
+    if (st.l4cd->InitSensor() == VL53L4CD_ERROR_NONE &&
+        st.l4cd->VL53L4CD_SetRangeTiming(25, 0) == VL53L4CD_ERROR_NONE &&
+        st.l4cd->VL53L4CD_StartRanging() == VL53L4CD_ERROR_NONE) {
+      st.initialized = true;
+      st.initFailed = false;
+      st.consecutiveErrors = 0;
+      char logBuf[128];
+      snprintf(logBuf, sizeof(logBuf), "[ESP32S3_TOF_INIT] CH=%u TYPE=VL53L4CD MODEL=0x%04X STATUS=RANGING", ch, modelId);
+      broadcastLog(logBuf);
+      writeMuxMask(0x00);
+      return true;
+    } else {
+      st.initialized = false;
+      st.initFailed = true;
+      char logBuf[128];
+      snprintf(logBuf, sizeof(logBuf), "[ESP32S3_TOF_INIT] CH=%u TYPE=VL53L4CD MODEL=0x%04X STATUS=INIT_FAIL", ch, modelId);
+      broadcastLog(logBuf);
+      writeMuxMask(0x00);
+      return false;
+    }
+  } else if (detected == TofSensorType::VL53L7CX || detected == TofSensorType::UNKNOWN) {
+    if (st.l7cx == nullptr) {
+      st.l7cx = new VL53L7CX(&Wire, -1);
+    }
+    st.l7cx->begin();
+    unsigned long t0 = millis();
+    // Refresh heartbeat timer before ~350ms VL53L7CX firmware upload so status LED stays green
+    if (hasHeartbeat) {
+      lastHeartbeatMs = t0;
+    }
+    int rc = st.l7cx->init_sensor();
+    if (rc == 0 &&
+        st.l7cx->vl53l7cx_set_resolution(VL53L7CX_RESOLUTION_8X8) == 0 &&
+        st.l7cx->vl53l7cx_set_ranging_frequency_hz(10) == 0 &&
+        st.l7cx->vl53l7cx_start_ranging() == 0) {
+      st.type = TofSensorType::VL53L7CX;
+      st.initialized = true;
+      st.initFailed = false;
+      st.consecutiveErrors = 0;
+      if (hasHeartbeat) {
+        lastHeartbeatMs = millis();
+      }
+      char logBuf[144];
+      snprintf(logBuf,
+               sizeof(logBuf),
+               "[ESP32S3_TOF_INIT] CH=%u TYPE=VL53L7CX MODEL=0x%04X STATUS=RANGING_8X8_10HZ INIT_MS=%lu",
+               ch,
+               modelId,
+               millis() - t0);
+      broadcastLog(logBuf);
+      writeMuxMask(0x00);
+      return true;
+    } else {
+      st.initialized = false;
+      st.initFailed = true;
+      if (hasHeartbeat) {
+        lastHeartbeatMs = millis();
+      }
+      char logBuf[128];
+      snprintf(logBuf, sizeof(logBuf), "[ESP32S3_TOF_INIT] CH=%u TYPE=%s MODEL=0x%04X STATUS=INIT_FAIL", ch, tofTypeName(detected), modelId);
+      broadcastLog(logBuf);
+      writeMuxMask(0x00);
+      return false;
+    }
+  }
+
+  writeMuxMask(0x00);
+  return false;
+}
+
+static void scanAndInitAllTofChannels(bool forceReinit) {
+  muxAvailable = probeI2cAddress(MUX_I2C_ADDR);
+  if (!muxAvailable) {
+    for (uint8_t ch = 0; ch < MUX_NUM_CHANNELS; ++ch) {
+      resetChannelState(ch);
+    }
+    return;
+  }
+
+  for (uint8_t ch = 0; ch < MUX_NUM_CHANNELS; ++ch) {
+    if (forceReinit) {
+      resetChannelState(ch);
+    }
+    if (!selectMuxChannel(ch)) {
+      continue;
+    }
+    bool devHere = probeI2cAddress(TOF_I2C_ADDR);
+    if (!devHere) {
+      if (tofChannels[ch].present || tofChannels[ch].initialized) {
+        resetChannelState(ch);
+      }
+      continue;
+    }
+    if (!tofChannels[ch].initialized && !tofChannels[ch].initFailed) {
+      initChannelSensor(ch);
+    }
+  }
+  writeMuxMask(0x00);
+}
+
+static void pollNextActiveTofChannel() {
+  if (!muxAvailable || currentOtaState == OtaState::OTA_UPDATING) {
+    return;
+  }
+
+  for (uint8_t attempt = 0; attempt < MUX_NUM_CHANNELS; ++attempt) {
+    uint8_t ch = (nextPollChannel + attempt) % MUX_NUM_CHANNELS;
+    TofChannelState& st = tofChannels[ch];
+    if (!st.initialized) {
+      continue;
+    }
+    nextPollChannel = (ch + 1) % MUX_NUM_CHANNELS;
+
+    if (!selectMuxChannel(ch)) {
+      return;
+    }
+
+    if (st.type == TofSensorType::VL53L4CD && st.l4cd != nullptr) {
+      uint8_t ready = 0;
+      VL53L4CD_ERROR err = st.l4cd->VL53L4CD_CheckForDataReady(&ready);
+      if (err != VL53L4CD_ERROR_NONE) {
+        if (++st.consecutiveErrors >= 4) {
+          resetChannelState(ch);
+        }
+      } else if (ready) {
+        VL53L4CD_Result_t res;
+        if (st.l4cd->VL53L4CD_GetResult(&res) == VL53L4CD_ERROR_NONE) {
+          st.l4cd->VL53L4CD_ClearInterrupt();
+          st.consecutiveErrors = 0;
+          st.lastSampleMs = millis();
+          st.frameCount++;
+          st.rangeStatus = res.range_status;
+          st.signalKcps = res.signal_per_spad_kcps;
+          st.sigmaMm = res.sigma_mm;
+          st.distMm = (res.range_status == 0) ? (int16_t)res.distance_mm : (int16_t)res.distance_mm;
+        }
+      }
+    } else if (st.type == TofSensorType::VL53L7CX && st.l7cx != nullptr) {
+      uint8_t ready = 0;
+      uint8_t err = st.l7cx->vl53l7cx_check_data_ready(&ready);
+      if (err != 0) {
+        if (++st.consecutiveErrors >= 4) {
+          resetChannelState(ch);
+        }
+      } else if (ready) {
+        if (st.l7cx->vl53l7cx_get_ranging_data(&l7cxResultsShared) == 0) {
+          st.consecutiveErrors = 0;
+          st.lastSampleMs = millis();
+          st.frameCount++;
+          st.siliconTempC = l7cxResultsShared.silicon_temp_degc;
+
+          int32_t sumValid = 0;
+          uint8_t countValid = 0;
+          int16_t minVal = 32767;
+
+          for (int z = 0; z < 64; ++z) {
+            uint8_t tstat = l7cxResultsShared.target_status[z];
+            uint8_t nTargets = l7cxResultsShared.nb_target_detected[z];
+            int16_t d = l7cxResultsShared.distance_mm[z];
+            st.gridStatus[z] = tstat;
+            // Status 5 (100% valid), 6, 9, or 10 with >=1 target and positive distance
+            bool valid = (nTargets > 0) && (d > 0) && (tstat == 5 || tstat == 6 || tstat == 9 || tstat == 10);
+            if (valid) {
+              st.gridMm[z] = d;
+              sumValid += d;
+              countValid++;
+              if (d < minVal) {
+                minVal = d;
+              }
+            } else {
+              st.gridMm[z] = -1;
+            }
+          }
+
+          st.validZones = countValid;
+          st.minMm = (countValid > 0) ? minVal : -1;
+          st.meanMm = (countValid > 0) ? (int16_t)(sumValid / countValid) : -1;
+
+          // Center 2x2 zones in 8x8 grid: indices 27 (r3,c3), 28 (r3,c4), 35 (r4,c3), 36 (r4,c4)
+          const int centerIdx[4] = {27, 28, 35, 36};
+          int32_t centerSum = 0;
+          int centerCnt = 0;
+          for (int k = 0; k < 4; ++k) {
+            int16_t cd = st.gridMm[centerIdx[k]];
+            if (cd > 0) {
+              centerSum += cd;
+              centerCnt++;
+            }
+          }
+          st.centerMm = (centerCnt > 0) ? (int16_t)(centerSum / centerCnt) : st.minMm;
+        }
+      }
+    }
+
+    writeMuxMask(0x00);
+    break;
+  }
+}
+
+static void printTofSnapshotJson(Stream& out) {
+  unsigned long now = millis();
+  int activeCount = 0;
+  for (uint8_t ch = 0; ch < MUX_NUM_CHANNELS; ++ch) {
+    if (tofChannels[ch].present) {
+      activeCount++;
+    }
+  }
+
+  out.printf("[ESP32S3_TOF] {\"fw\":\"%s\",\"uptime_ms\":%lu,\"mux_ok\":%d,\"i2c_hz\":%lu,\"active_sensors\":%d,\"channels\":[",
+             ESP32S3_FW_VERSION,
+             now,
+             muxAvailable ? 1 : 0,
+             (unsigned long)I2C_FREQ_HZ,
+             activeCount);
+
+  for (uint8_t ch = 0; ch < MUX_NUM_CHANNELS; ++ch) {
+    const TofChannelState& st = tofChannels[ch];
+    if (ch > 0) {
+      out.print(",");
+    }
+    unsigned long ageMs = (st.lastSampleMs > 0 && now >= st.lastSampleMs) ? (now - st.lastSampleMs) : 999999UL;
+    out.printf("{\"ch\":%u,\"present\":%d,\"type\":\"%s\",\"init\":%d,\"fail\":%d,\"frames\":%lu,\"age_ms\":%lu",
+               ch,
+               st.present ? 1 : 0,
+               tofTypeName(st.type),
+               st.initialized ? 1 : 0,
+               st.initFailed ? 1 : 0,
+               (unsigned long)st.frameCount,
+               ageMs);
+
+    if (st.type == TofSensorType::VL53L4CD && st.initialized) {
+      out.printf(",\"dist_mm\":%d,\"status\":%u,\"signal_kcps\":%u,\"sigma_mm\":%u",
+                 (int)st.distMm,
+                 (unsigned int)st.rangeStatus,
+                 (unsigned int)st.signalKcps,
+                 (unsigned int)st.sigmaMm);
+    } else if (st.type == TofSensorType::VL53L7CX && st.initialized) {
+      out.printf(",\"min_mm\":%d,\"center_mm\":%d,\"mean_mm\":%d,\"valid_zones\":%u,\"temp_c\":%d,\"grid_mm\":[",
+                 (int)st.minMm,
+                 (int)st.centerMm,
+                 (int)st.meanMm,
+                 (unsigned int)st.validZones,
+                 (int)st.siliconTempC);
+      for (int z = 0; z < 64; ++z) {
+        if (z > 0) out.print(",");
+        out.print((int)st.gridMm[z]);
+      }
+      out.print("]");
+    }
+    out.print("}");
+  }
+  out.println("]}");
+}
+
 static void runMuxScanReport(Stream& replyStream) {
-  bool muxPresent = probeI2cAddress(MUX_I2C_ADDR);
+  muxAvailable = probeI2cAddress(MUX_I2C_ADDR);
   replyStream.printf("[ESP32S3_I2C] SDA=%d SCL=%d FREQ=%lu MUX_ADDR=0x%02X PRESENT=%d\n",
-                     I2C_SDA_PIN, I2C_SCL_PIN, (unsigned long)I2C_FREQ_HZ, MUX_I2C_ADDR, muxPresent ? 1 : 0);
-  if (!muxPresent) {
+                     I2C_SDA_PIN, I2C_SCL_PIN, (unsigned long)I2C_FREQ_HZ, MUX_I2C_ADDR, muxAvailable ? 1 : 0);
+  if (!muxAvailable) {
     replyStream.printf("[ESP32S3_I2C] SUMMARY MUX_0x70=FAIL CHANNELS_OK=0/8 DESELECTED=0 TOTAL_SENSORS=0\n");
     return;
   }
@@ -212,8 +691,13 @@ static void runMuxScanReport(Stream& replyStream) {
       devList = "NONE";
     }
 
-    replyStream.printf("[ESP32S3_I2C] CH=%u MASK=0x%02X SELECT_OK=%d READBACK=0x%02X DEVICES=%s\n",
-                       ch, mask, selOk ? 1 : 0, readback, devList.c_str());
+    replyStream.printf("[ESP32S3_I2C] CH=%u MASK=0x%02X SELECT_OK=%d READBACK=0x%02X DEVICES=%s TYPE=%s\n",
+                       ch,
+                       mask,
+                       selOk ? 1 : 0,
+                       readback,
+                       devList.c_str(),
+                       tofTypeName(tofChannels[ch].type));
   }
 
   uint8_t deselectReadback = 0xFF;
@@ -436,7 +920,24 @@ static void handleCommandLine(const String& rawLine, Stream& replyStream, bool i
     if (isGpioUart) {
       setUartTxDriven(true);
     }
+    scanAndInitAllTofChannels(false);
     runMuxScanReport(replyStream);
+  } else if (cmd == "TOF") {
+    lastHeartbeatMs = now;
+    hasHeartbeat = true;
+    if (isGpioUart) {
+      setUartTxDriven(true);
+    }
+    printTofSnapshotJson(replyStream);
+  } else if (cmd == "TOF_RESCAN") {
+    lastHeartbeatMs = now;
+    hasHeartbeat = true;
+    if (isGpioUart) {
+      setUartTxDriven(true);
+    }
+    scanAndInitAllTofChannels(true);
+    runMuxScanReport(replyStream);
+    printTofSnapshotJson(replyStream);
   }
 }
 
@@ -447,13 +948,21 @@ void setup() {
 
   // Initialize GPIO17 in high-Z INPUT until RPi5 proves it is powered by sending a heartbeat on GPIO18
   pinMode(UART_TX_PIN, INPUT);
+  Serial1.setRxBufferSize(512);
+  Serial1.setTxBufferSize(2048);
   Serial1.begin(UART_BAUD, SERIAL_8N1, UART_RX_PIN, -1);
   uartTxEnabled = false;
 
-  // Initialize I2C bus on SDA=GPIO8, SCL=GPIO9 at 100 kHz and ensure all mux channels start deselected
+  for (uint8_t ch = 0; ch < MUX_NUM_CHANNELS; ++ch) {
+    resetChannelState(ch);
+  }
+
+  // Initialize I2C bus on SDA=GPIO8, SCL=GPIO9 at 400 kHz with 1024-byte buffer for ST ToF transfers
+  Wire.setBufferSize(1024);
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ_HZ);
-  Wire.setTimeOut(50);
+  Wire.setTimeOut(150);
   if (probeI2cAddress(MUX_I2C_ADDR)) {
+    muxAvailable = true;
     writeMuxMask(0x00);
   }
 
@@ -469,6 +978,9 @@ void setup() {
 
   // Start Wi-Fi in Station Mode non-blocking (never creates an AP)
   startWifiStationNonBlocking();
+
+  // Discover and initialize any ToF sensors connected on boot
+  scanAndInitAllTofChannels(false);
 }
 
 void loop() {
@@ -515,11 +1027,31 @@ void loop() {
     setState(LedState::RPI_OFF_RED);
   }
 
+  // Poll active ToF sensors round-robin
+  if (now - lastTofPollMs >= TOF_POLL_INTERVAL_MS) {
+    lastTofPollMs = now;
+    pollNextActiveTofChannel();
+  }
+
+  // Hot-plug scan of uninitialized mux channels every 2.5s so newly plugged sensors auto-initialize
+  if (now - lastHotplugScanMs >= TOF_HOTPLUG_SCAN_INTERVAL_MS) {
+    lastHotplugScanMs = now;
+    scanAndInitAllTofChannels(false);
+  }
+
+  // Broadcast live ToF JSON snapshot at 4 Hz when UART TX is active
+  if (now - lastTofBroadcastMs >= TOF_BROADCAST_INTERVAL_MS) {
+    lastTofBroadcastMs = now;
+    if (uartTxEnabled && currentOtaState != OtaState::OTA_UPDATING) {
+      printTofSnapshotJson(Serial1);
+    }
+  }
+
   // Periodic refresh every 250ms to guard against any power-glitch pixel reset
   if (now - lastRefreshMs >= 250) {
     lastRefreshMs = now;
     applyLedColor(currentState);
   }
 
-  delay(5);
+  delay(3);
 }
