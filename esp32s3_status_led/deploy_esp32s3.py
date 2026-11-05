@@ -32,13 +32,25 @@ import sys
 import time
 import paramiko
 
-ESP32S3_PORT = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:72:3F:FC-if00"
+ESP32S3_PORT = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:71:6A:98-if00"
 EXPECTED_VID = "303a"
 EXPECTED_PID = "1001"
 EXPECTED_OTA_HOSTNAME = "rover1-esp32s3"
 RPI_HOST = "10.0.0.246"
 RPI_USER = "ron"
 REMOTE_DIR = "/home/ron/esp32s3_status_led"
+
+
+def find_esp32s3_port(client: paramiko.SSHClient) -> str:
+    """Find active ESP32-S3 USB port by symlink or fallback to ttyACM0."""
+    rc, out, _ = run_ssh(
+        client,
+        "ls -1 /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*-if00 2>/dev/null",
+        check=False,
+    )
+    if rc == 0 and out.strip():
+        return out.splitlines()[0].strip()
+    return "/dev/ttyACM0"
 
 
 def run_ssh(client: paramiko.SSHClient, cmd: str, check: bool = True) -> tuple[int, str, str]:
@@ -220,10 +232,11 @@ def query_esp32s3_uart_status(client: paramiko.SSHClient, daemon_remote: str) ->
 
 def deploy_via_usb(client: paramiko.SSHClient, base_dir: str, build_dir: str, daemon_remote: str):
     print("\n=== 3. Verifying ESP32-S3 USB Identity (303a:1001) ===")
-    rc, udev_out, _ = run_ssh(client, f"udevadm info -q property -n '{ESP32S3_PORT}'", check=False)
+    port = find_esp32s3_port(client)
+    rc, udev_out, _ = run_ssh(client, f"udevadm info -q property -n '{port}'", check=False)
     if rc != 0:
         raise RuntimeError(
-            f"ESP32-S3 USB port {ESP32S3_PORT} is not connected! "
+            f"ESP32-S3 USB port {port} is not connected! "
             "Reconnect the USB cable for --usb bootstrap/recovery or use --ota for wireless update."
         )
     vid, pid, devname = "", "", ""
@@ -237,10 +250,10 @@ def deploy_via_usb(client: paramiko.SSHClient, base_dir: str, build_dir: str, da
 
     if vid != EXPECTED_VID or pid != EXPECTED_PID or "ttyUSB" in devname:
         raise RuntimeError(
-            f"SAFETY ABORT: Port {ESP32S3_PORT} resolved to {devname} ({vid}:{pid}), "
+            f"SAFETY ABORT: Port {port} resolved to {devname} ({vid}:{pid}), "
             f"expected {EXPECTED_VID}:{EXPECTED_PID} on ttyACM!"
         )
-    print(f"  PASS: {ESP32S3_PORT} -> {devname} (VID:PID {vid}:{pid})")
+    print(f"  PASS: {port} -> {devname} (VID:PID {vid}:{pid})")
 
     home_dir = os.path.expanduser("~")
     boot_app0 = os.path.join(
@@ -273,9 +286,9 @@ def deploy_via_usb(client: paramiko.SSHClient, base_dir: str, build_dir: str, da
         flash_pairs.append(f"{offset} '{rpath}'")
     sftp.close()
 
-    print("\n=== 4. Flashing ESP32-S3 N16R8 (/dev/ttyACM0) ===")
+    print(f"\n=== 4. Flashing ESP32-S3 N16R8 ({port}) ===")
     flash_cmd = (
-        f"python3 -m esptool --chip esp32s3 --port '{ESP32S3_PORT}' --baud 460800 "
+        f"python3 -m esptool --chip esp32s3 --port '{port}' --baud 460800 "
         f"--before default-reset --after hard-reset write-flash {' '.join(flash_pairs)}"
     )
     rc, flash_out, flash_err = run_ssh(client, flash_cmd, check=False)
