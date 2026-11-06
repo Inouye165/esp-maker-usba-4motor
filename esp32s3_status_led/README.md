@@ -12,7 +12,12 @@ Isolated PlatformIO firmware and Raspberry Pi 5 host daemon/deployer for Rover 1
   - **RPi5 `GPIO 15 / RXD0` (Pin 10)** $\leftarrow$ **ESP32-S3 `GPIO 17 / TX`**
   - **Unpowered-RPi5 Backfeed Protection**: `GPIO 17` starts in high-impedance `INPUT` mode and is only connected to the `UART1 TX` output matrix while an active RPi5 heartbeat (`G` / `B` / query) is present on `GPIO 18`. If `"R\n"` is received or heartbeats stop for `> 1.5 s`, `GPIO 17` immediately detaches back to high-Z `INPUT`.
 - **I2C Multiplexer (`TCA9548A` / `PCA9548A`, addr `0x70`)**:
-  - `SDA = GPIO 8`, `SCL = GPIO 9` at `100 kHz` (`50 ms` bus timeout), 8 downstream channels (`CH 0..7`).
+  - `SDA = GPIO 8`, `SCL = GPIO 9` at `200 kHz` (`150 ms` bus timeout, `1024-byte` Wire buffer), 8 downstream channels (`CH 0..7`).
+  - Currently populated with:
+    - **`CH 0`**: Front-Right `VL53L7CX` 8×8 Wide-Field ToF (`0x29`, angled $8^\circ$ outward right)
+    - **`CH 1`**: Front-Left `VL53L7CX` 8×8 Wide-Field ToF (`0x29`, angled $8^\circ$ outward left)
+    - **`CH 2`**: `VL53L4CD` Single-Zone ToF (`0x29`, wired for testing; not yet mapped to radar/ROS 2)
+    - **`CH 3..7`**: Open for remaining `VL53L4CD` cliff / auxiliary sensors (auto-discovered via 2.5s hot-plug scan).
 - **Onboard WS2812 RGB Status LED (`GPIO 48` / `GPIO 38`)**:
   - **Solid Green**: RPi5 is ON and Rover 1 is stationary/idle.
   - **Solid Blue**: RPi5 is ON and Rover 1 is actively moving.

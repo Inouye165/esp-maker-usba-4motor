@@ -18,7 +18,7 @@
 #endif
 
 #ifndef ESP32S3_FW_VERSION
-#define ESP32S3_FW_VERSION "1.2.3-tof-mux"
+#define ESP32S3_FW_VERSION "1.2.4-tof-mux"
 #endif
 
 // Lonely Binary ESP32-S3 N16R8 onboard WS2812 RGB LED pins across board revisions
@@ -642,7 +642,7 @@ static void pollNextActiveTofChannel() {
           st.rangeStatus = res.range_status;
           st.signalKcps = res.signal_per_spad_kcps;
           st.sigmaMm = res.sigma_mm;
-          st.distMm = (res.range_status == 0) ? (int16_t)res.distance_mm : (int16_t)res.distance_mm;
+          st.distMm = (res.range_status == 0 && res.distance_mm > 0) ? (int16_t)res.distance_mm : -1;
         }
       }
     } else if (st.type == TofSensorType::VL53L7CX && st.l7cx != nullptr) {
@@ -697,7 +697,7 @@ static void pollNextActiveTofChannel() {
               centerCnt++;
             }
           }
-          st.centerMm = (centerCnt > 0) ? (int16_t)(centerSum / centerCnt) : st.minMm;
+          st.centerMm = (centerCnt > 0) ? (int16_t)(centerSum / centerCnt) : -1;
         }
       }
     }
@@ -1082,7 +1082,7 @@ void setup() {
     resetChannelState(ch);
   }
 
-  // Initialize I2C bus on SDA=GPIO8, SCL=GPIO9 at 400 kHz with 1024-byte buffer for ST ToF transfers
+  // Initialize I2C bus on SDA=GPIO8, SCL=GPIO9 at I2C_FREQ_HZ (200 kHz) with 1024-byte buffer for ST ToF transfers
   Wire.setBufferSize(1024);
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ_HZ);
   Wire.setTimeOut(150);

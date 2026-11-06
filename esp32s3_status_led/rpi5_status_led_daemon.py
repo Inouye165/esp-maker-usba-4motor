@@ -6,7 +6,7 @@ Supports both:
   1. Primary: RPi5 40-pin header GPIO UART0 (/dev/ttyAMA0, Pi GPIO14 TX -> ESP GPIO18 RX,
      Pi GPIO15 RX <- ESP GPIO17 TX, 115200 baud) when USB is unplugged.
   2. Fallback: ESP32-S3 native USB JTAG/serial debug unit
-     (/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:72:3F:FC-if00,
+     (/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:71:6A:98-if00,
      VID:PID 303a:1001).
 
 Never opens /dev/rover-esp32 or /dev/ttyUSB0 (Maker-ESP32-Pro motor controller).
@@ -26,6 +26,7 @@ ToF Multiplexer Telemetry Bridge:
   - Watches `/tmp/esp32s3_tof_cmd.txt` for on-demand commands (e.g., `TOF_RESCAN`).
 """
 
+import glob
 import json
 import os
 import signal
@@ -36,13 +37,15 @@ import urllib.request
 import serial
 
 GPIO_UART_PORT = "/dev/ttyAMA0"
-ESP32S3_BY_ID = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:72:3F:FC-if00"
+ESP32S3_BY_ID = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:71:6A:98-if00"
+ESP32S3_BY_ID_GLOB = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*-if00"
 EXPECTED_VID = "303a"
 EXPECTED_PID = "1001"
 PID_TELEMETRY_URL = "http://127.0.0.1:3000/api/pid-telemetry"
 TOF_STATE_FILE = "/tmp/esp32s3_tof_state.json"
 TOF_CMD_FILE = "/tmp/esp32s3_tof_cmd.txt"
 POLL_INTERVAL_S = 0.20
+STATUS_REFRESH_INTERVAL_S = 10.0
 
 running = True
 
@@ -97,6 +100,9 @@ def select_target_port() -> str | None:
         return GPIO_UART_PORT
     if verify_esp32s3_usb_port(ESP32S3_BY_ID):
         return ESP32S3_BY_ID
+    for candidate in sorted(glob.glob(ESP32S3_BY_ID_GLOB)):
+        if verify_esp32s3_usb_port(candidate):
+            return candidate
     return None
 
 
@@ -213,6 +219,7 @@ def main():
     ser = None
     last_state = None
     did_initial_mux_log = False
+    last_status_query_time = 0.0
     ota_maintenance_active = False
     ota_reboot_deadline = 0.0
     last_rx_time = time.time()
@@ -256,6 +263,10 @@ def main():
                 if not did_initial_mux_log:
                     ser.write(b"MUX\nSTATUS\nOTA\nTOF\n")
                     did_initial_mux_log = True
+                    last_status_query_time = now
+                elif state_label != last_state or (now - last_status_query_time >= STATUS_REFRESH_INTERVAL_S):
+                    ser.write(b"STATUS\nOTA\n")
+                    last_status_query_time = now
 
                 pending_cmd = consume_pending_cmd()
                 if pending_cmd:

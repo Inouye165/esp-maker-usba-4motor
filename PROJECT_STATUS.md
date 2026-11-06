@@ -18,6 +18,7 @@ This root document is the single source of truth for **Rover 1** build/repositor
 | **Effective Track Width** | `0.3408575433 m` | Calibrated differential track width |
 | **IMU Sensor & Mode** | BNO08x — `SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC` (`0x08`) | Non-magnetic yaw only (magnetic orientation forbidden indoors) |
 | **Latest Calibration Handoff** | [`docs/HANDOFF_REBUILT_CHASSIS_CALIBRATION_20261018.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/docs/HANDOFF_REBUILT_CHASSIS_CALIBRATION_20261018.md) | Complete calibration & compound out-and-back handoff for Antigravity 2.0 |
+| **Latest Session Handoff & TODO** | [`HANDOFF.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/HANDOFF.md), [`TODO.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/TODO.md), [`docs/HANDOFF_TOF_SENSOR_BENCH_AND_RADAR_20261105.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/docs/HANDOFF_TOF_SENSOR_BENCH_AND_RADAR_20261105.md) | 2026-11-05 3-sensor ToF multiplexer bench, ROS 2 `rover_tof_bridge`, HUD radar micro-zoom (`0.25m`/`0.5m`/`1.0m`), and code audit |
 
 ### Standard Build & Deployment Commands
 * **Run Native Firmware Unit Tests (Before Flashing)**:
@@ -192,6 +193,35 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
 ---
 
 ## 6. Daily Engineering & Activity Log
+
+### 2026-11-05 (Thursday)
+- **Active Motor Controller Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — untouched
+- **Active ESP32-S3 ToF/LED Firmware**: `1.2.3-tof-mux` (live on ESP32-S3), `1.2.4-tof-mux` (audited in repo, ready for `--ota` flash next session)
+- **Accomplishments & Code Changes**:
+  1. **3-Sensor ToF Multiplexer Verification (`TCA9548A` at `0x70` on ESP32-S3, `200 kHz` I2C)**:
+     - Confirmed all 3 attached ST Time-of-Flight sensors live via `http://10.0.0.246:3000/api/tof-sensors` (`mux_ok: 1`, `i2c_hz: 200000`, `0` errors across all active channels):
+       - **`CH 0` (`front_right_l7cx`)**: Front-Right **`VL53L7CX`** 8×8 (`0x29`, `MODEL=0xF002`, `init: 1`, `rot: "90_ccw"`, angled $-8^\circ$ outward).
+       - **`CH 1` (`front_left_l7cx`)**: Front-Left **`VL53L7CX`** 8×8 (`0x29`, `MODEL=0xF002`, `init: 1`, `rot: "90_ccw"`, angled $+8^\circ$ outward).
+       - **`CH 2` (`unassigned` single-zone)**: **`VL53L4CD`** (`0x29`, `MODEL=0xEBAA`, `init: 1`, live in `/api/tof-sensors` and `sensors.html`; intentionally excluded from ROS 2 and radar until physically mounted/mapped).
+  2. **ROS 2 ToF Bridge Node & Static Transforms (`rover_tof_bridge.py` & `foundation.launch.py`)**:
+     - Created [`rover_tof_bridge.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/rover_bringup/rover_tof_bridge.py) polling `/api/tof-sensors` at `10 Hz` via a persistent `requests.Session()` and publishing:
+       - `/tof/front_left/points` (`sensor_msgs/msg/PointCloud2`) & `/tof/front_left/range` (`sensor_msgs/msg/Range`, frame `tof_front_left_link`)
+       - `/tof/front_right/points` (`sensor_msgs/msg/PointCloud2`) & `/tof/front_right/range` (`sensor_msgs/msg/Range`, frame `tof_front_right_link`)
+     - Added static TF publishers in [`foundation.launch.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/launch/foundation.launch.py) (`base_link -> tof_front_left_link` at `x=0.14 m, y=+0.08 m, z=0.08 m, yaw=+0.139626 rad [+8°]` and `base_link -> tof_front_right_link` at `x=0.14 m, y=-0.08 m, z=0.08 m, yaw=-0.139626 rad [-8°]`).
+     - Rebuilt `rover_bringup` inside `rover-ros2` on RPi5 and verified live ROS 2 topics (`~9.8 Hz`) and TF transforms (`tf2_echo`).
+  3. **HUD Radar 8×8 ToF Overlay & Close-In Micro-Zoom (`0.25 m` / `10 in`, `0.50 m` / `20 in`, `1.0 m` / `3.3 ft`)**:
+     - Updated [`public/hud-core.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-core.js) (`tofToRobotFrame` & `drawRadar`) to project the nearest valid zone in each of the 8 display columns per front `VL53L7CX` sensor into the robot frame ($\pm 8^\circ$ outward mount yaw) and render them as high-visibility magenta squares (`#ff44ee`) on top of the 360° LiDAR scan.
+     - Added `0.25 m (10 in)`, `0.5 m (20 in)`, and `1.0 m (3.3 ft)` close-in zoom steps to Desktop ([`public/hud.html`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud.html)) and Mobile ([`public/hud-mobile.html`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-mobile.html), [`public/hud-mobile.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-mobile.js)) radars with `cm`-labeled range rings (`10cm / 20cm / 25cm` at `0.25 m` zoom) and `cm + in` minimum distance readout (`MIN: XX cm (X.X in)`).
+  4. **Code & Firmware Audit Fixes**:
+     - **[`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp) (`1.2.4-tof-mux`)**:
+       - Fixed `VL53L4CD` invalid-status ternary bug where both branches returned `(int16_t)res.distance_mm` instead of `-1` when `res.range_status != 0` or `res.distance_mm == 0`.
+       - Fixed `VL53L7CX` center 2×2 `distMm` fallback (`cSum / cValid : -1` instead of falling back to `st.minMm` when center zones `27, 28, 35, 36` have no target).
+     - **[`esp32s3_status_led/rpi5_status_led_daemon.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/rpi5_status_led_daemon.py) & [`esp32s3_status_led/deploy_esp32s3.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/deploy_esp32s3.py)**:
+       - Updated fallback USB symlink MAC from old replaced board (`58:E6:C5:72:3F:FC`) to installed board (`58:E6:C5:71:6A:98`) with dynamic glob discovery gated by `303a:1001` udev verification.
+       - Added periodic `STATUS\nOTA\n` refresh (`10 s` and on LED state change) so `esp_status` and `ota_status` in `/tmp/esp32s3_tof_state.json` never stay frozen at initial boot values.
+     - **[`public/hud-core.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-core.js), [`public/hud-desktop.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-desktop.js), [`public/hud-mobile.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-mobile.js)**:
+       - Fixed `drawRadar()` to report `live: Boolean(lidarLive || tofLive)` so the HUD radar displays `FRONT TOF LIVE` and `NEAREST` / `MIN` distance even when RPLiDAR C1 is unplugged.
+     - **Unit Tests Added**: Added [`test_tof_bridge.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/test/test_tof_bridge.py) (5/5 passing) and `Core 5` in [`test_hud_cockpit.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/test/test_hud_cockpit.js).
 
 ### 2026-10-25 (Sunday)
 - **Active Motor Controller Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — untouched

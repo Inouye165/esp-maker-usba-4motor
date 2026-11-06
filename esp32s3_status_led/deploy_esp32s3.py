@@ -5,7 +5,7 @@ Deploy & Flash Lonely Binary ESP32-S3 N16R8 Status LED Firmware + RPi5 Systemd S
 Supports two explicit deployment modes:
   1. USB Bootstrap / Recovery (`--usb`, default):
      - Verifies USB VID:PID is 303a:1001 (Espressif USB JTAG/serial debug unit) on
-       /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:72:3F:FC-if00.
+       /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:71:6A:98-if00.
      - Flashes bootloader, default_16MB.csv partition table, boot_app0, and firmware.bin.
   2. Secure Wi-Fi OTA Update (`--ota`):
      - Works with USB completely unplugged.
