@@ -77,3 +77,4 @@ Because the post-session code & firmware audit fixes were committed while Rover 
 
 - [ ] **4A. Merge `feat/esp32s3-tof-sensor-bench` to `main` (When Authorized by Ron)**:
   - Both `esp-maker-usba-4motor` and `yahboom-encoder` are working on branch `feat/esp32s3-tof-sensor-bench`. Merge to `main` once physical verification of the close-in radar and `1.2.4-tof-mux` is complete.
+

@@ -19,3 +19,4 @@ See also root [`HANDOFF.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-ma
    - Fixed `VL53L4CD` invalid-status ternary bug and `VL53L7CX` center 2×2 `-1` fallback in [`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp).
    - Fixed stale USB MAC fallback and frozen `esp_status`/`ota_status` in [`esp32s3_status_led/rpi5_status_led_daemon.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/rpi5_status_led_daemon.py).
    - Fixed `drawRadar()` live state when RPLiDAR C1 is unplugged and added unit tests in [`test_tof_bridge.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/test/test_tof_bridge.py) and [`test_hud_cockpit.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/test/test_hud_cockpit.js).
+

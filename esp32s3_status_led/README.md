@@ -35,7 +35,7 @@ Configured in [`platformio.ini`](file:///c:/Users/Ron/electronic_projects/esp/es
 | :--- | :--- | :--- | :--- | :--- |
 | `nvs` | `data` / `nvs` | `0x009000` | `20 KB` | Non-volatile storage |
 | `otadata` | `data` / `ota` | `0x00E000` | `8 KB` | Active OTA slot selector (`app0` $\leftrightarrow$ `app1`) |
-| `app0` | `app` / `ota_0` | `0x010000` | `6.25 MB` (`0x640000`) | Dual OTA slot 0 (firmware uses ~`781 KB` / `11.9%`) |
+| `app0` | `app` / `ota_0` | `0x010000` | `6.25 MB` (`0x640000`) | Dual OTA slot 0 (firmware `1.2.4-tof-mux` uses ~`885 KB` / `13.5%`) |
 | `app1` | `app` / `ota_1` | `0x650000` | `6.25 MB` (`0x640000`) | Dual OTA slot 1 |
 | `spiffs` | `data` / `spiffs` | `0xC90000` | `3.375 MB` | Filesystem partition |
 | `coredump` | `data` / `coredump` | `0xFF0000` | `64 KB` | Crash dump storage |
@@ -73,7 +73,7 @@ Compiles the firmware locally, queries `/dev/ttyAMA0` on the RPi5 to verify targ
 ```powershell
 python esp32s3_status_led/deploy_esp32s3.py --ota
 # Optional explicit version string:
-python esp32s3_status_led/deploy_esp32s3.py --ota --fw-version 1.1.3-ota
+python esp32s3_status_led/deploy_esp32s3.py --ota --fw-version 1.2.4-tof-mux
 ```
 
 ### C. Query Status, OTA Readiness, and Multiplexer over RPi5 GPIO UART0

@@ -1,4 +1,13 @@
-# Rover Project Master Handoff: Nav2 Lifecycle Restoration & Obstacle Stopping Plan
+# Rover Project Master Handoff: Nav2 Lifecycle Restoration & Obstacle Stopping Plan (Historical Snapshot — 2026-09-26)
+
+> [!NOTE]
+> **Historical Reference Document (2026-09-26)**:
+> This document records the 2026-09-26 Nav2 Collision Monitor and Guarded Cold-Start Localization commissioning milestones.
+> For the **current** Rover 1 hardware state, rebuilt-chassis calibration (`1.3.4-remap-r03`), ESP32-S3 3-sensor ToF multiplexer bench (`1.2.4-tof-mux`), ROS 2 `rover_tof_bridge`, and HUD radar micro-zoom (`2026-11-05`), consult:
+> - [`HANDOFF.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/HANDOFF.md) & [`TODO.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/TODO.md)
+> - [`PROJECT_STATUS.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/PROJECT_STATUS.md)
+> - [`docs/HANDOFF_TOF_SENSOR_BENCH_AND_RADAR_20261105.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/docs/HANDOFF_TOF_SENSOR_BENCH_AND_RADAR_20261105.md)
+> - [`docs/HANDOFF_REBUILT_CHASSIS_CALIBRATION_20261018.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/docs/HANDOFF_REBUILT_CHASSIS_CALIBRATION_20261018.md)
 
 ---
 

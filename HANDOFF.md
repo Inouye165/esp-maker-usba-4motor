@@ -77,3 +77,4 @@ python esp32s3_status_led/deploy_esp32s3.py --ota
 cd c:\Users\Ron\electronic_projects\yahboom-encoder
 $env:ROVER_PI_HOST="10.0.0.246"; $env:ROVER_PI_USER="ron"; python deploy_yahboom.py
 ```
+
