@@ -1,0 +1,37 @@
+{
+  "status": "VALID",
+  "is_valid": true,
+  "session_type": "SAVED_MAP_AMCL",
+  "associated_map": "house_slam_2026-09-23_candidate_hallway.yaml",
+  "description": "Permanent verified HOME pose settled on floor at x=1.193853, y=-0.045221, yaw=-5.047 deg",
+  "promoted_at_utc": "2026-09-23T15:42:00.000000+00:00",
+  "recorded_epoch_s": 1790178120.0,
+  "sample_count": 100,
+  "frame_id": "map",
+  "child_frame_id": "base_link",
+  "pose": {
+    "position": {
+      "x": 1.193853,
+      "y": -0.045221,
+      "z": 0.0
+    },
+    "orientation": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": -0.044029,
+      "w": 0.999030
+    },
+    "yaw_rad": -0.088087,
+    "yaw_deg": -5.047
+  },
+  "stability_verification": {
+    "max_pos_movement_mm": 0.0,
+    "max_heading_movement_deg": 0.0,
+    "std_dev_x_mm": 0.0,
+    "std_dev_y_mm": 0.0,
+    "std_dev_yaw_deg": 0.0,
+    "threshold_pos_mm": 20.0,
+    "threshold_yaw_deg": 1.0,
+    "passed": true
+  }
+}
