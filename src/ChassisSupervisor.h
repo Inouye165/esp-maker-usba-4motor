@@ -208,11 +208,17 @@ inline void updateChassisStallSupervisorWithState(
 
             bool credibleMotion = false;
             if (currentManeuver == MANEUVER_PURE_SPIN || state.prevManeuverType == MANEUVER_PURE_SPIN) {
-                // In pure spin, credible motion is evidenced either by gyro rotation (|gz| >= 0.04 rad/s)
-                // or by active opposing track motion (movingLeft >= 1 && movingRight >= 1).
-                // This allows sustained manual turning even if the IMU is offline, in reset recovery,
-                // commanding fine low-speed rotation (< 0.04 rad/s), or raised on bench blocks.
-                credibleMotion = (movingWheels >= 2) && ((std::fabs(gz) >= 0.04f) || (movingLeft >= 1 && movingRight >= 1));
+                bool imuHealthy = imu.isInitialized() && !imu.inResetRecovery() && imu.isGyroValid();
+                if (imuHealthy) {
+                    // When IMU is healthy, gyro yaw rate STRICTLY corroborates chassis rotation (|gz| >= 0.04 rad/s).
+                    // If wheels spin but the chassis does not rotate (slip, high-centered, or obstruction),
+                    // this correctly treats the condition as a stall, preserving autonomous safety!
+                    credibleMotion = (movingWheels >= 2) && (std::fabs(gz) >= 0.04f);
+                } else {
+                    // Degraded fallback ONLY when IMU is uninitialized, offline, or in reset recovery:
+                    // Corroborated by active opposing track movement.
+                    credibleMotion = (movingWheels >= 2) && (movingLeft >= 1 && movingRight >= 1);
+                }
             } else {
                 float leftTarget = 0.0f, rightTarget = 0.0f;
                 DifferentialDrive::velocityToWheels(activeCmd.linearVelocity, activeCmd.angularVelocity, leftTarget, rightTarget);
@@ -482,7 +488,16 @@ inline void updateSpinRecoveryHarnessWithState(
         }
     }
 
-    bool genuineChassisBreakout = (movingWheels >= 3) && (imuRotating || (movingLeft >= 1 && movingRight >= 1));
+    bool imuHealthy = imuManager.isInitialized() && !imuManager.inResetRecovery() && imuManager.isGyroValid();
+    bool genuineChassisBreakout = false;
+    if (imuHealthy) {
+        // When IMU is healthy, chassis breakout STRICTLY requires gyro rotation in commanded direction.
+        genuineChassisBreakout = (movingWheels >= 3) && imuRotating;
+    } else {
+        // Degraded fallback ONLY when IMU is uninitialized, offline, or in reset recovery:
+        // Corroborated by active opposing track movement in commanded direction.
+        genuineChassisBreakout = (movingWheels >= 3) && (movingLeft >= 1 && movingRight >= 1);
+    }
 
     if (genuineChassisBreakout) {
         state.spinBreakoutSustainedTicks++;

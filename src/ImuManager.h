@@ -59,6 +59,7 @@ public:
 
   bool isInitialized() const { return _initialized; }
   bool inResetRecovery() const { return _inResetRecovery; }
+  bool isGyroValid(int64_t snapUs = -1) const;
   const ImuData& getData() const { return _data; }
   static const char* getOrientationSourceName() { return "SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC"; }
 

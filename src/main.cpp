@@ -570,6 +570,17 @@ void loop() {
     uint8_t cfgFlags = (WHEEL_BALANCE_ENABLED ? 0x01 : 0x00) | (DYNAMIC_BRAKE_ENABLED ? 0x02 : 0x00);
     serialProtocol.sendPidTelemetry(wheelController, YawOuterLoopDiag(), (uint8_t)motorDriver.getActuationState(), cfgFlags);
   }
+
+  // Section 5c: Safe non-blocking runtime retry for uninitialized IMU (disarmed and stationary only)
+  static unsigned long lastImuRetryMs = 0;
+  if (!imuManager.isInitialized() && !commandManager.isNormalDriveArmed() && motorDriver.getMode() != MotorOutputMode::NORMAL_DRIVE) {
+    if (now - lastImuRetryMs >= 2000) {
+      lastImuRetryMs = now;
+      if (imuManager.begin(21, 22, 0x4B)) {
+        LOG_SERIAL_PRINTLN("[IMU] BNO08x initialized successfully during runtime retry!");
+      }
+    }
+  }
   uint64_t t5 = esp_timer_get_time();
   g_loopProf.sendBulkTx.record((uint32_t)(t5 - t4));
 #else

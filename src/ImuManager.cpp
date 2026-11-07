@@ -276,6 +276,12 @@ uint16_t ImuManager::getGyroAgeMs(int64_t snapUs) const {
   return computeAgeMs(_data.gyroUpdateUs, snapUs);
 }
 
+bool ImuManager::isGyroValid(int64_t snapUs) const {
+  if (!_initialized || _inResetRecovery) return false;
+  int64_t nowUs = (snapUs >= 0) ? snapUs : (int64_t)esp_timer_get_time();
+  return getGyroAgeMs(nowUs) <= 100;
+}
+
 uint16_t ImuManager::getAccelAgeMs(int64_t snapUs) const {
   return computeAgeMs(_data.accelUpdateUs, snapUs);
 }
