@@ -18,7 +18,7 @@ This root document is the single source of truth for **Rover 1** build/repositor
 | **Effective Track Width** | `0.3408575433 m` | Calibrated differential track width |
 | **IMU Sensor & Mode** | BNO08x — `SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC` (`0x08`) | Non-magnetic yaw only (magnetic orientation forbidden indoors) |
 | **Latest Calibration Handoff** | [`docs/HANDOFF_REBUILT_CHASSIS_CALIBRATION_20261018.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/docs/HANDOFF_REBUILT_CHASSIS_CALIBRATION_20261018.md) | Complete calibration & compound out-and-back handoff for Antigravity 2.0 |
-| **Latest Session Handoff & TODO** | [`HANDOFF.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/HANDOFF.md), [`TODO.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/TODO.md), [`docs/HANDOFF_TOF_SENSOR_BENCH_AND_RADAR_20261105.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/docs/HANDOFF_TOF_SENSOR_BENCH_AND_RADAR_20261105.md) | 2026-11-05 3-sensor ToF multiplexer bench, ROS 2 `rover_tof_bridge`, HUD radar micro-zoom (`0.25m`/`0.5m`/`1.0m`), and code audit |
+| **Latest Session Handoff & TODO** | [`HANDOFF.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/HANDOFF.md), [`TODO.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/TODO.md), [`docs/HANDOFF_TOF_SENSOR_BENCH_AND_RADAR_20261105.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/docs/HANDOFF_TOF_SENSOR_BENCH_AND_RADAR_20261105.md) | 2026-11-07 Front Obstacle Safety Zone (30 mm stop / 75 mm crawl), 125 mm ToF sensor spacing, and raised-bench acceptance |
 
 ### Standard Build & Deployment Commands
 * **Run Native Firmware Unit Tests (Before Flashing)**:
@@ -185,6 +185,7 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
 | **2026-10-18 15:46** | **`1.3.4-remap-r03`** | **`d53ca31`** | **Calibrated 1.000m Forward Test (`rover-test linear`, Rebuilt Chassis)** | **`+10 mm` ("10 mm long" [1010 mm physical])** | **`+0.9968 m` Enc (-3.2 mm err), `+1.11°` Yaw Drift** | **`SUCCESS` (1/1 PASS; 99.68% accuracy, net error -3.2mm [-0.32%]; coast 4.2mm; L/R speed diff -0.002 rad/s; 0 resets)** | `linear_forward_1p000m_1792363466.json` |
 | **2026-10-18 15:50** | **`1.3.4-remap-r03`** | **`7707217`** | **Calibrated 1.010m Reverse Test (`rover-test linear`, Rebuilt Chassis)** | **`-4.5 mm` ("almost perfect. 4-5 mm short")** | **`-0.9977 m` Enc (+12.3 mm err), `-1.84°` Yaw Drift** | **`SUCCESS` (1/1 PASS; 1.010m return target; coast 4.7mm; L/R speed diff +0.029 rad/s; 0 resets; Mode 0 LOCKED)** | `linear_reverse_1p010m_1792363806.json` |
 | **2026-10-18 15:58** | **`1.3.4-remap-r03`** | **`100803c`** | **Autonomous Compound Out-and-Back (1.0m Fwd -> 180° CW -> 1.0m Return)** | **Lined up well at origin ("good now lined up")** | **Leg 1: `+0.9916 m` (-8.4mm)<br>Leg 2: `+181.24°` (+1.24°)<br>Leg 3: `+0.9936 m` (-6.5mm)** | **`SUCCESS` (3/3 LEGS PASS; Outbound vs Inbound parity Δ=2.0mm [0.2%]; 0 stalls; 0 resets across full ~25s compound run; Mode 0 LOCKED)** | `linear_forward_1p000m_1792364263.json`<br>`turn_cw_180deg_1792364272.json`<br>`linear_forward_1p000m_1792364279.json` |
+| **2026-11-07 06:40** | **`1.3.4-remap-r03`** | **`74307bb`** | **Front Proximity Indicator & Safety Zone (Raised Platform Wheel Check)** | **Wheels slow at ≤75mm; stop at ≤30mm; reverse permitted** | **Live ToF `d <= 75mm` -> CRAWL; `d <= 30mm` -> STOP** | **`SUCCESS` (Operator verified on raised platform with spinning wheels; floor stopping distance unverified; 125mm spacing & ±8° angles confirmed)** | `Front Safety Zone Raised Bench` |
 
 *\*Note on 2026-10-13 18:16 (A2): Wheel encoders turned `-259` ticks (`26.8 mm` @ 65mm / `27.6 mm` @ 66.95mm max tire travel), confirming nominal motor travel (`99.3%`) with a ~5 mm mark placement offset.*
 *\*Note on 2026-10-14 04:42 (Turn 90° CW): Step 1 passed (`+90.95°` IMU, `90.0°` physical, `0` wheel stalls). Step 2 aborted before motion because `complete_zero_handshake` in `tools/rover_tests/transport.py` did not refresh `autonomyState.lastCmdTime` after reaching `READY_DISARMED`; fixed in `transport.py` and `server.js` (`d59c58f` / `43e828d`).*
@@ -193,6 +194,61 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
 ---
 
 ## 6. Daily Engineering & Activity Log
+
+### 2026-11-07 (Saturday)
+- **Active Motor Controller Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — untouched
+- **Active ESP32-S3 ToF/LED Firmware**: `1.2.3-tof-mux` (live on ESP32-S3)
+- **Accomplishments & Code Changes**:
+  1. **Front Obstacle Safety Zone Proximity Threshold Update (`30 mm` Stop / `75 mm` Crawl)**:
+     - Updated authoritative safety logic in [`front_safety_zone.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/front_safety_zone.js) (`FRONT_STOP_THRESHOLD_MM = 30`, `FRONT_CRAWL_THRESHOLD_MM = 75`):
+       - **Above 75 mm**: Normal uninhibited operation (`state: CLEAR`, `level: clear`, `indicatorText: PROXIMITY — CLEAR`).
+       - **Above 30 mm through 75 mm**: Yellow warning (`state: CRAWL`, `level: warn`, `indicatorCode: CRAWL_ZONE` / `SLOWING`), restricting forward driving speed to crawl (`0.03 m/s`).
+       - **0 through 30 mm**: Red warning (`state: STOP`, `level: bad`, `indicatorCode: STOP_ZONE` / `STOP`), immediately stopping forward and in-place motion (`0.0 m/s`).
+       - Preserved reverse escape (`vx < 0` allowed without block) and nominal crawl speeds (`0.03 m/s` linear, `0.35 rad/s` angular).
+     - Updated browser fallback logic in [`public/hud-core.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-core.js) (`FRONT_STOP_MM = 30`, `FRONT_CRAWL_MM = 75`).
+     - Updated displayed threshold text in [`public/hud-mobile.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-mobile.js) (`≤${stopThresh}mm` fallback 30 mm, `≤${crawlThresh}mm` fallback 75 mm).
+     - Maintained existing HUD design, styling, and stale-data expiration handling (> 2500 ms expires to OFFLINE).
+  2. **Software Verification**:
+     - `node test/test_hud_cockpit.js` (including boundary test suite covering 0, 29, 30, 31, 74, 75, 76 mm, reverse escape, and recovery): **PASSED** (all 22 suites passed).
+     - `pytest ros2/ros2_ws/src/rover_bringup/test/test_tof_bridge.py`: **PASSED** (6/6 tests passed).
+     - On-target Node.js boundary validation on RPi5 (`10.0.0.246`): **PASSED** (verified 0, 29, 30, 31, 74, 75, 76 mm, reverse escape, and recovery).
+  3. **RPi5 Host Deployment**:
+     - Synchronized git branch `feat/esp32s3-tof-sensor-bench` to commit `7932bbf`.
+     - Rebuilt `rover_bringup` via colcon and recreated ROS 2 containers on RPi5.
+     - Verified live `/api/tof-sensors`, `/api/drive/status`, and `/api/autonomy/status` serving `stopThresholdMm: 30`, `crawlThresholdMm: 75`, and live radar assets serving updated thresholds.
+  4. **Front-Corner ToF Geometry Correction (125 mm Lateral Separation)**:
+     - Updated front ToF lateral mounting positions based on Ron's measurement (125 mm separation, centered symmetrically across the front, angled ±8° outward):
+       - Left: `y = +0.0625 m`, `yaw = +8°` (`+0.13962634 rad`)
+       - Right: `y = -0.0625 m`, `yaw = -8°` (`-0.13962634 rad`)
+     - Updated `TOF_MOUNTS` in [`public/hud-core.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-core.js) and static TFs (`base_link_to_tof_front_left_publisher` and `base_link_to_tof_front_right_publisher`) in [`foundation.launch.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/launch/foundation.launch.py).
+     - Explicitly preserved forward position (`x = +0.14 m`) and height (`z = +0.08 m`) as unverified placeholder measurements.
+     - Added mount geometry assertions and projection symmetry tests in [`test/test_hud_cockpit.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/test/test_hud_cockpit.js) and [`ros2/ros2_ws/src/rover_bringup/test/test_launch.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/test/test_launch.py).
+   5. **Operator Acceptance & Task Closeout (Raised Platform Wheel Verification)**:
+      - Ron physically tested and verified drive behavior with Rover 1 raised on a test platform and wheels spinning:
+        - **Yellow/crawl warning & slowdown**: verified at $\le 75\text{ mm}$ (smooth crawl speed restriction).
+        - **Red/stop warning & stop**: verified at $\le 30\text{ mm}$ (forward and in-place motion stopped immediately; reverse motion preserved).
+      - **Physical Ground Truth**: Verified actual wheel response and motor cutoff on a raised platform; floor-driving stopping distance under rover momentum was not tested.
+      - **Sensor Spacing & Geometry**: Corrected to 125 mm lateral separation symmetrically centered across the chassis (`y = ±0.0625 m`), retaining existing $\pm 8^\circ$ angles.
+      - **Deferred Alignment**: Further physical alignment calibration deferred as unnecessary for the current proximity task. Remaining mounting placeholders ($x = +0.14\text{ m}$, $z = +0.08\text{ m}$) remain identified. Front proximity indicator and sensor-spacing task closed out as complete.
+
+### 2026-11-06 (Friday)
+- **Active Motor Controller Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — untouched
+- **Active ESP32-S3 ToF/LED Firmware**: `1.2.3-tof-mux` (live on ESP32-S3), `1.2.5-tof-mux` (compiled in repo, ready for `--ota` flash next session)
+- **Accomplishments & Code Changes**:
+  1. **Front Obstacle Safety Zone (`<= 50 mm` Crawl / `<= 10 mm` Stop) for Autonomous & Manual Driving**:
+     - Created [`front_safety_zone.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/front_safety_zone.js) (`evaluateFrontSafetyZone` & `applyFrontSafetyZoneToVelocity`) monitoring the front-mapped ToF sensors (`front_left_l7cx` on `CH 1` and `front_right_l7cx` on `CH 0`):
+       - **Crawl Zone (`10 mm < minMm <= 50 mm`)**: Clamps forward velocity (`linear > 0`) to `0.03 m/s` (`DEFAULT_CRAWL_LINEAR_MPS`), scales `angular` proportionally to preserve turn curvature, and caps in-place rotation to `±0.35 rad/s`.
+       - **Stop Zone (`0 mm <= minMm <= 10 mm`)**: Immediately zeroes all forward and in-place motion (`linear = 0.0, angular = 0.0` when `linear >= 0`), while continuing to allow **reverse motion (`linear < 0`)** (`REVERSE_ALLOWED`, angular capped to `±0.35 rad/s`) so the operator or autonomy can back away from the obstacle.
+     - Integrated into [`server.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/server.js):
+       - Refreshes `currentFrontSafetyZone` at `10 Hz` and inside `startDriveKeepaliveLoop()` (`20 Hz`), broadcasting `{ type: 'front_safety_zone', zone }` over WebSocket on transitions and exposing `frontSafetyZone` in `/api/tof-sensors`, `/api/drive/status`, and `/api/autonomy/status`.
+       - Enforced across **manual driving** (`WebSocket case 'joystick'`) and **autonomous / calibration driving** (`POST /api/autonomy/cmd_vel` and `startDriveKeepaliveLoop()`), including **post-slew-limiter clamping** so entering `<= 50 mm` or `<= 10 mm` drops speed on the immediate `50 ms` tick without waiting for the `0.60 m/s²` autonomy deceleration ramp, and clears forward clearance bit `0x01` in `clearanceMask` on `STOP`.
+  2. **Close-Range (`0..19 mm`) Blind-Spot Fix Across Firmware, ROS 2 Bridge & HUD Radar**:
+     - **[`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp) (`1.2.5-tof-mux`)**: Updated `VL53L7CX` and `VL53L4CD` distance checks from `d > 0` to `d >= 0` (and accepted `tstat == 4` when `d <= 60`) because ST's `vl53l7cx_api.cpp` integer-divides `distance_mm[i] /= 4` and clamps `< 4 mm` contact readings to `0`. Previously, `d > 0` discarded `0 mm` contact readings as `-1` (`No Target`).
+     - **[`rover_tof_bridge.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/rover_bringup/rover_tof_bridge.py)**: Lowered default `range_min_m` from `0.02` (`20 mm`) to `0.0` (`0 mm`) so `0..19 mm` stop/crawl readings are published in `/tof/front_left/{points,range}` and `/tof/front_right/{points,range}`.
+     - **[`public/hud-core.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-core.js), [`public/hud-desktop.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-desktop.js), [`public/hud-mobile.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-mobile.js), [`public/hud.html`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud.html), [`public/hud.css`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud.css)**: Lowered `tofToRobotFrame()` minimum distance filter from `d >= 20` to `d >= 0`, added `evaluateFrontZone()` and `evaluateRadarDriveIndicator()`, and added a dedicated indicator bar (`#hud-radar-drive-ind`) **inside `.radar-box` but strictly outside the radar circles** (`cy = 0.445 * size`, `outer = 0.335 * size`) that displays when the **slow-down override** (`<= 50 mm`) is in effect, when the **brake is applied** (`<= 10 mm` stop override, firmware `BRAKE` actuation state, or `E-STOP`), or when there is **no motor power** (`DISARMED`, `ESP32 OFFLINE`, or `VMOT` motor switch OFF / `STICTION_BLOCKED` at `0 rad/s`).
+  3. **Verification**:
+     - `pio run -e esp32-s3-devkitc-1` (`1.2.5-tof-mux`) compiled cleanly (`RAM: 15.8%`, `Flash: 13.5%`).
+     - `node test/test_hud_cockpit.js` (`Core 1..7`, including `front_safety_zone.js` and `#hud-radar-drive-ind` radar indicator tests) and `pytest ros2/ros2_ws/src/rover_bringup/test/test_tof_bridge.py` (`6/6`) all passed.
 
 ### 2026-11-05 (Thursday)
 - **Active Motor Controller Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — untouched

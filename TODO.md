@@ -1,43 +1,45 @@
 # Rover 1 — Prioritized Action List (`TODO.md`)
 
-**Last Updated**: 2026-11-05
+**Last Updated**: 2026-11-06
 **Active Branch (Both Repos)**: `feat/esp32s3-tof-sensor-bench`
 **Motor Controller Firmware**: `1.3.4-remap-r03` (Maker-ESP32-Pro, verified & locked)
-**ESP32-S3 ToF/LED Firmware**: `1.2.3-tof-mux` (live on RPi5), `1.2.4-tof-mux` (audited in repo, ready for `--ota` flash)
+**ESP32-S3 ToF/LED Firmware**: `1.2.3-tof-mux` (live on RPi5), `1.2.5-tof-mux` (audited in repo with `0 mm` close-range contact fix, ready for `--ota` flash)
 
 ---
 
 ## 1. Immediate Next-Session Startup (When Rover 1 / RPi5 is Powered On)
 
-Because the post-session code & firmware audit fixes were committed while Rover 1 (`10.0.0.246`) was powered off for the night, run these two sync steps first thing on next boot:
+Because the post-session code & firmware audit fixes and the new Front Obstacle Safety Zone (`<= 50 mm` crawl, `<= 10 mm` stop) were implemented while Rover 1 (`10.0.0.246`) was powered off, run these two sync steps first thing on next boot:
 
-- [ ] **1A. Flash Audited ESP32-S3 Firmware (`1.2.4-tof-mux`) & Updated Daemon via Wireless OTA**:
+- [ ] **1A. Flash Audited ESP32-S3 Firmware (`1.2.5-tof-mux`) & Updated Daemon via Wireless OTA**:
   ```powershell
   cd c:\Users\Ron\electronic_projects\esp\esp-maker-usba-4motor
   python esp32s3_status_led/deploy_esp32s3.py --ota
   ```
   *What this updates on RPi5 / ESP32-S3*:
-  - Flashes [`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp) (`1.2.4-tof-mux`) fixing the `VL53L4CD` invalid-range-status ternary bug and `VL53L7CX` center 2×2 fallback (`-1` when center 4 zones have no target).
+  - Flashes [`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp) (`1.2.5-tof-mux`) preserving `0 mm` (`< 4 mm` contact) `VL53L7CX`/`VL53L4CD` readings (`d >= 0` and `tstat == 4 && d <= 60`), fixing the `VL53L4CD` invalid-range-status ternary bug, and fixing the `VL53L7CX` center 2×2 fallback (`-1` when center 4 zones have no target).
   - Updates `/home/ron/esp32s3_status_led/rpi5_status_led_daemon.py` so `esp_status` and `ota_status` in `/tmp/esp32s3_tof_state.json` refresh every `10 s` and on LED state transitions (`GREEN` / `BLUE` / `RED`).
 
-- [ ] **1B. Sync Audited Cockpit HUD & ROS 2 `rover_tof_bridge` Fixes to RPi5**:
+- [x] **1B. Sync Front Safety Zone, Cockpit HUD & ROS 2 `rover_tof_bridge` Updates to RPi5**:
   ```powershell
   cd c:\Users\Ron\electronic_projects\yahboom-encoder
-  $env:ROVER_PI_HOST="10.0.0.246"; $env:ROVER_PI_USER="ron"; python deploy_yahboom.py
+  $env:ROVER_PI_HOST="10.0.0.246"; $env:ROVER_PI_USER="ron"; python deploy_yahboom.py --allow-dirty
   ```
   *What this updates on RPi5*:
-  - Updates [`public/hud-core.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-core.js), [`public/hud-desktop.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-desktop.js), and [`public/hud-mobile.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-mobile.js) so the radar displays `FRONT TOF LIVE` and live `NEAREST` / `MIN: XX cm (X.X in)` even when the 360° RPLiDAR C1 is unplugged.
-  - Updates [`rover_tof_bridge.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/rover_bringup/rover_tof_bridge.py) inside `rover-ros2` to use a persistent `requests.Session()` and REP-117 `Range` bounds checking.
+  - Deploys [`front_safety_zone.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/front_safety_zone.js) and [`server.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/server.js) enforcing the **Front Obstacle Safety Zone** (`31..75 mm` slows forward speed to a `0.03 m/s` crawl; `0..30 mm` stops all forward/in-place motion while allowing reverse) for both manual and autonomous driving.
+  - Updates [`public/hud.html`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud.html), [`public/hud.css`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud.css), [`public/hud-core.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-core.js), [`public/hud-desktop.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-desktop.js), and [`public/hud-mobile.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-mobile.js) with the `#hud-radar-drive-ind` indicator inside `.radar-box` (outside the radar circles), updated thresholds (`30 mm` stop / `75 mm` crawl), and `d >= 0` close-range ToF retention.
+  - Updates [`rover_tof_bridge.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/rover_bringup/rover_tof_bridge.py) inside `rover-ros2` to use `range_min_m = 0.0`, a persistent `requests.Session()`, and REP-117 `Range` bounds checking.
 
 ---
 
 ## 2. Time-of-Flight (`TCA9548A` + `VL53L7CX` / `VL53L4CD`) Tasks
 
-- [ ] **2A. Measure Exact Physical Mount Offsets for Front-Corner `VL53L7CX` Sensors**:
-  - Currently, `base_link -> tof_front_left_link` and `base_link -> tof_front_right_link` use placeholder offsets (`x = +0.14 m`, `y = ±0.08 m`, `z = +0.08 m`, `yaw = ±8°` [`±0.139626 rad`]).
-  - Measure the exact physical `(x, y, z)` distance from `base_link` (chassis center) to each front corner sensor lens and update both:
-    - [`foundation.launch.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/launch/foundation.launch.py)
-    - `TOF_MOUNTS` in [`public/hud-core.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-core.js)
+- [x] **2A. Measure Exact Physical Lateral Separation & Front Proximity Safety Zone**:
+  - Measured 125 mm lateral separation symmetrically centered across the front (`y = ±0.0625 m`), retaining existing `±8°` outward angles.
+  - Updated both [`foundation.launch.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/launch/foundation.launch.py) and `TOF_MOUNTS` in [`public/hud-core.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-core.js).
+  - Forward position (`x = +0.14 m`) and height (`z = +0.08 m`) remain unverified placeholder measurements; further physical alignment calibration deferred as unnecessary for the current proximity task.
+  - Implemented authoritative Front Obstacle Safety Zone: yellow/crawl at $\le 75\text{ mm}$, red/stop at $\le 30\text{ mm}$, with reverse escape preserved.
+  - Operator verified actual wheel slowdown and stop response on a raised platform with spinning wheels (floor-driving stopping distance not tested). Proximity indicator and sensor-spacing task complete.
 
 - [ ] **2B. Decide Physical Role & Mapping for `CH 2` (`VL53L4CD`)**:
   - `CH 2` (`VL53L4CD`, `0x29`, `MODEL=0xEBAA`) is initialized and live in `/api/tof-sensors` and `http://10.0.0.246:3000/sensors.html`, but intentionally unassigned (`unassigned`) and excluded from ROS 2 / HUD Radar.
