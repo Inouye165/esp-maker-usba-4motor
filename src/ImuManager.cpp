@@ -16,11 +16,17 @@ bool ImuManager::begin(int sdaPin, int sclPin, uint8_t i2cAddr) {
 
   Wire.begin(sdaPin, sclPin);
   Wire.setClock(400000); // 400 kHz I2C Fast Mode
+  Wire.setTimeOut(10);   // 10 ms fast timeout
 
   uint8_t addrs[2] = { i2cAddr, (uint8_t)((i2cAddr == 0x4B) ? 0x4A : 0x4B) };
   for (int a = 0; a < 2; a++) {
     uint8_t targetAddr = addrs[a];
-    LOG_SERIAL_PRINTF("[IMU] Probing BNO08x at address 0x%02X...\n", targetAddr);
+    Wire.beginTransmission(targetAddr);
+    if (Wire.endTransmission() != 0) {
+      continue; // No ACK at address; skip expensive _bno.begin_I2C() handshake
+    }
+
+    LOG_SERIAL_PRINTF("[IMU] Found I2C ACK at 0x%02X, initializing BNO08x...\n", targetAddr);
     if (_bno.begin_I2C(targetAddr, &Wire)) {
       Wire.setClock(400000);
       LOG_SERIAL_PRINTF("[IMU] BNO08x hardware detected successfully at 0x%02X. Enabling sensor reports at ~50 Hz...\n", targetAddr);

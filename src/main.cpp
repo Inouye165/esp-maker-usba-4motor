@@ -574,7 +574,7 @@ void loop() {
   // Section 5c: Safe non-blocking runtime retry for uninitialized IMU (disarmed and stationary only)
   static unsigned long lastImuRetryMs = 0;
   if (!imuManager.isInitialized() && !commandManager.isNormalDriveArmed() && motorDriver.getMode() != MotorOutputMode::NORMAL_DRIVE) {
-    if (now - lastImuRetryMs >= 2000) {
+    if (now - lastImuRetryMs >= 5000) {
       lastImuRetryMs = now;
       if (imuManager.begin(21, 22, 0x4B)) {
         LOG_SERIAL_PRINTLN("[IMU] BNO08x initialized successfully during runtime retry!");
