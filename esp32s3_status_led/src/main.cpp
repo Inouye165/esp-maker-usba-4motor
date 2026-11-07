@@ -18,7 +18,7 @@
 #endif
 
 #ifndef ESP32S3_FW_VERSION
-#define ESP32S3_FW_VERSION "1.2.4-tof-mux"
+#define ESP32S3_FW_VERSION "1.2.5-tof-mux"
 #endif
 
 // Lonely Binary ESP32-S3 N16R8 onboard WS2812 RGB LED pins across board revisions
@@ -642,7 +642,7 @@ static void pollNextActiveTofChannel() {
           st.rangeStatus = res.range_status;
           st.signalKcps = res.signal_per_spad_kcps;
           st.sigmaMm = res.sigma_mm;
-          st.distMm = (res.range_status == 0 && res.distance_mm > 0) ? (int16_t)res.distance_mm : -1;
+          st.distMm = (res.range_status == 0 && res.distance_mm >= 0) ? (int16_t)res.distance_mm : -1;
         }
       }
     } else if (st.type == TofSensorType::VL53L7CX && st.l7cx != nullptr) {
@@ -668,8 +668,8 @@ static void pollNextActiveTofChannel() {
             uint8_t nTargets = l7cxResultsShared.nb_target_detected[z];
             int16_t d = l7cxResultsShared.distance_mm[z];
             st.gridStatus[z] = tstat;
-            // Status 5 (100% valid), 6, 9, or 10 with >=1 target and positive distance
-            bool valid = (nTargets > 0) && (d > 0) && (tstat == 5 || tstat == 6 || tstat == 9 || tstat == 10);
+            // Status 5 (100% valid), 6, 9, 10, or 4 (close-range saturation <=60mm) with >=1 target and d >= 0
+            bool valid = (nTargets > 0) && (d >= 0) && (tstat == 5 || tstat == 6 || tstat == 9 || tstat == 10 || (tstat == 4 && d <= 60));
             if (valid) {
               st.gridMm[z] = d;
               sumValid += d;
@@ -692,7 +692,7 @@ static void pollNextActiveTofChannel() {
           int centerCnt = 0;
           for (int k = 0; k < 4; ++k) {
             int16_t cd = st.gridMm[centerIdx[k]];
-            if (cd > 0) {
+            if (cd >= 0) {
               centerSum += cd;
               centerCnt++;
             }
