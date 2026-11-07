@@ -1,8 +1,10 @@
 # Rover 1 — Session Handoff (`HANDOFF.md`)
 
 **Date**: 2026-11-07
-**Active Branch (Both Repos)**: `feat/esp32s3-tof-sensor-bench`
-**Motor Controller Firmware (`esp-maker-usba-4motor`)**: **`1.3.4-remap-r03`** (`source: rev42-remap-c`, commit `a2e3d43`, untouched & verified)
+**Active Branches**:
+- Firmware (`esp-maker-usba-4motor`): `fix/chassis-supervisor-pure-spin-motion-evidence` (commit `012e641`)
+- Host (`yahboom-encoder`): `feat/smooth-progressive-manual-turning` (commit `caad519`)
+**Motor Controller Firmware (`esp-maker-usba-4motor`)**: **`1.3.4-remap-r03`** (`source: rev42-remap-c`, commit `012e641`, flashed SHA-256 `7f808b16df0e6d8ec6e7206b307178453b514ebf67bf22057207c873cc17bba0`)
 **Auxiliary ESP32-S3 Firmware (`esp32s3_status_led/`)**: **`1.2.3-tof-mux`** (running on ESP32-S3), **`1.2.5-tof-mux`** (audited & compiled in repo with `0 mm` close-range contact fix, ready for `--ota` flash when RPi5 is powered on)
 
 ---
@@ -12,7 +14,10 @@
 ### A. Primary Motor Controller — NULLLAB Maker-ESP32-Pro (`1a86:7523`, `/dev/rover-esp32` → `/dev/ttyUSB0`)
 - Owned exclusively by `rover-server.service` (`115200` baud).
 - Active firmware **`1.3.4-remap-r03`** with calibrated rebuilt-chassis motor/encoder mapping (`LF=M2/E2`, `RF=M1/E1`, `LR=M4/E4`, `RR=M3/E3`), `0.06695 m` effective wheel diameter, `0.3408575433 m` track width, `0.0135 m` linear stopping advance, and `0.7°` angular stopping advance.
-- BNO08x IMU on `SDA=21, SCL=22` (`0x4B`) in non-magnetic `SH2_GAME_ROTATION_VECTOR` (`0x08`) mode at `50 Hz`.
+- Two-tier pure-spin motion evidence implemented in [`src/ChassisSupervisor.h`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/src/ChassisSupervisor.h):
+  - **Tier 1 (Healthy IMU)**: strictly requires gyro yaw rate ($|gz| \ge 0.04\text{ rad/s}$) to preserve obstacle stall detection.
+  - **Tier 2 (Degraded / Offline IMU)**: falls back to opposing wheel encoder movement (`movingLeft >= 1 && movingRight >= 1`).
+- BNO08x IMU on `SDA=21, SCL=22` (`0x4B`/`0x4A` probe) in non-magnetic `SH2_GAME_ROTATION_VECTOR` (`0x08`) mode at `50 Hz`. *Hardware note: BNO08x does not currently ACK on I2C bus; Tier 2 encoder fallback enables manual driving and bench verification.*
 
 ### B. Auxiliary Sensor & Status LED Controller — Lonely Binary ESP32-S3 N16R8 (`/dev/ttyAMA0`, `303a:1001`)
 - Connected to RPi5 40-pin header UART0 (`RPi5 GPIO 14 TXD0 -> ESP32-S3 GPIO 18 RX`, `RPi5 GPIO 15 RXD0 <- ESP32-S3 GPIO 17 TX`) at `115200` baud; owned by `esp32s3-status-led.service` ([`esp32s3_status_led/rpi5_status_led_daemon.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/rpi5_status_led_daemon.py)).
@@ -83,7 +88,21 @@
 
 ---
 
-## 4. Next-Session Startup Commands (When Rover 1 is Powered On)
+## 4. Smooth Manual Turning & Chassis Supervisor Closeout (2026-11-07)
+
+- **Detailed Closeout Report**: See [`docs/CLOSEOUT_SMOOTH_TURNING_AND_CHASSIS_SUPERVISOR_20261107.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/docs/CLOSEOUT_SMOOTH_TURNING_AND_CHASSIS_SUPERVISOR_20261107.md).
+- **Core Problem**:
+  - Abrupt turn initiation caused by compound double deadband (`0.12` gamepad + `0.10` server = `20.8%` physical stick dead travel) and discontinuous 35% speed jump.
+  - Unexpected sustained turn cutout caused by offline IMU ($gz = 0.0\text{ rad/s}$): [`ChassisSupervisor.h`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/src/ChassisSupervisor.h) strictly required gyro yaw rate for pure-spin motion evidence, timing out after $1,000\text{ ms}$ (at $+960\text{ ms}$ active turn) and cutting motor PWM to 0 via `forceBlocked()`.
+- **Delivered Changes**:
+  - **Host (`yahboom-encoder`)**: Continuous quadratic turn shaping from $0.0\text{ rad/s}$, host angular slew limiter ($2.0\text{ rad/s}^2$ accel / $3.0\text{ rad/s}^2$ decel) with immediate safety bypass, and scoping recovery fault handling to autonomy.
+  - **Firmware (`esp-maker-usba-4motor`)**: Two-tier motion evidence architecture (Tier 1 healthy gyro yaw vs. Tier 2 degraded encoder fallback), I2C bus clear sequence, fast presence checks, and disarmed runtime retries.
+  - **Evidence**: Verified by 23/23 native tests, 311 pytest tests, full host test suite, and 5-second raised-wheel diagnostic runs at both $0.40$ and $0.15\text{ rad/s}$ with zero stops.
+  - **Operator Acceptance**: Ron confirmed: **"its working."**
+
+---
+
+## 5. Next-Session Startup Commands (When Rover 1 is Powered On)
 
 ```powershell
 # 1. Flash audited ESP32-S3 firmware (1.2.5-tof-mux) and updated daemon via Wi-Fi OTA

@@ -1,15 +1,22 @@
 # Rover 1 — Prioritized Action List (`TODO.md`)
 
-**Last Updated**: 2026-11-06
-**Active Branch (Both Repos)**: `feat/esp32s3-tof-sensor-bench`
-**Motor Controller Firmware**: `1.3.4-remap-r03` (Maker-ESP32-Pro, verified & locked)
+**Last Updated**: 2026-11-07
+**Active Branches**:
+- Firmware (`esp-maker-usba-4motor`): `fix/chassis-supervisor-pure-spin-motion-evidence` (commit `012e641`)
+- Host (`yahboom-encoder`): `feat/smooth-progressive-manual-turning` (commit `caad519`)
+**Motor Controller Firmware**: `1.3.4-remap-r03` (Maker-ESP32-Pro, flashed SHA-256 `7f808b16df0e6d8ec6e7206b307178453b514ebf67bf22057207c873cc17bba0`)
 **ESP32-S3 ToF/LED Firmware**: `1.2.3-tof-mux` (live on RPi5), `1.2.5-tof-mux` (audited in repo with `0 mm` close-range contact fix, ready for `--ota` flash)
 
 ---
 
 ## 1. Immediate Next-Session Startup (When Rover 1 / RPi5 is Powered On)
 
-Because the post-session code & firmware audit fixes and the new Front Obstacle Safety Zone (`<= 50 mm` crawl, `<= 10 mm` stop) were implemented while Rover 1 (`10.0.0.246`) was powered off, run these two sync steps first thing on next boot:
+- [x] **1C. Smooth Progressive Manual Turning & Two-Tier Chassis Supervisor (Completed 2026-11-07)**:
+  - Eliminated 35% speed jump with continuous quadratic curve starting from $0.0\text{ rad/s}$ and host angular slew rate limiter ($2.0\text{ rad/s}^2$ accel / $3.0\text{ rad/s}^2$ decel).
+  - Resolved $+960\text{ ms}$ sustained turn stall cutout via two-tier motion evidence in [`ChassisSupervisor.h`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/src/ChassisSupervisor.h) (Tier 1 healthy gyro yaw vs. Tier 2 degraded encoder fallback).
+  - Added I2C bus clear, non-blocking presence probe, and disarmed runtime retries.
+  - Verified on bench blocks: 5.0-second sustained turns at both $0.40$ and $0.15\text{ rad/s}$ completed with zero stall cutouts.
+  - Ron tested and confirmed: **"its working."** Detailed closeout in [`docs/CLOSEOUT_SMOOTH_TURNING_AND_CHASSIS_SUPERVISOR_20261107.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/docs/CLOSEOUT_SMOOTH_TURNING_AND_CHASSIS_SUPERVISOR_20261107.md).
 
 - [ ] **1A. Flash Audited ESP32-S3 Firmware (`1.2.5-tof-mux`) & Updated Daemon via Wireless OTA**:
   ```powershell
@@ -72,6 +79,9 @@ Because the post-session code & firmware audit fixes and the new Front Obstacle 
     ./tools/run_gold_standard_home_test.sh --test-safety
     ./tools/run_gold_standard_home_test.sh --execute
     ```
+
+- [ ] **3D. Physical BNO08x IMU Hardware & Power Rail Inspection**:
+  - Telemetry confirmed the BNO08x does not acknowledge on I2C address `0x4B` or `0x4A`. Check physical Dupont wiring (`SDA=GPIO 21`, `SCL=GPIO 22`, `3V3/VIN`, `GND`) and board peripheral rail before attempting autonomous navigation runs that rely on gyro yaw dead-reckoning.
 
 ---
 
