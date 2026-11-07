@@ -23,12 +23,13 @@ tools/rover_tests/
 ```
 tools/rover_tests/
 ├── __init__.py         # Package declaration and version
-├── cli.py              # Canonical CLI entrypoint (rover-test)
+├── cli.py              # Canonical CLI entrypoint (rover-test: turn, linear, out-and-back)
 ├── transport.py        # NativeWSClient, CockpitClient, 3-zero handshake, disarm cleanup
 ├── sensors.py          # BNO08x non-magnetic validation, YawUnwrapper, GyroIntegrator
-├── controllers.py      # AngularApproachController, BaseApproachController
+├── controllers.py      # AngularApproachController, LinearApproachController, BaseApproachController
 ├── turn.py             # TurnParameters, wheel polarity mapping, symmetry verification
-├── runner.py           # Multi-trial execution engine, safety watchdogs, Ron approvals
+├── linear.py           # LinearParameters, effective wheel kinematics (0.06695m), stopping advance (0.0135m)
+├── runner.py           # Multi-trial & compound execution engine, safety watchdogs, Ron approvals
 └── reporting.py        # MultiTrialSuiteReport, JSON serialization, Markdown tables
 ```
 
@@ -56,6 +57,7 @@ python -m tools.rover_tests.cli turn [OPTIONS]
 | `--max-angular-speed` | Float | `0.80` | Cruise yaw rate in rad/s (per Exact Motion Contract). |
 | `--creep-angular-speed`| Float | `0.20` | Creep yaw rate in rad/s (per Exact Motion Contract). |
 | `--creep-threshold-deg`| Float | `30.0` | Approach zone threshold where deceleration begins. |
+| `--stopping-advance-deg`| Float | `0.7` | Calibrated stopping advance in degrees (when braking enabled). |
 | `--settle-seconds` | Float | `2.0` | Post-motion standstill duration before recording final heading. |
 | `--angle-tolerance-deg`| Float | `2.0` | Pass/fail angular error tolerance threshold. |
 | `--inter-trial-approval` | Flag | `False` | Requires explicit operator approval before each trial and prompts for Ron's physical ground-truth estimate after settling. |
@@ -135,16 +137,20 @@ The following scripts located in `scratch/` and root were created for historical
 
 ---
 
-## 7. Adding Future Subcommands (`linear` and `outback`)
+## 7. Canonical Subcommands: `rover-test linear` and `rover-test out-and-back`
 
-The architecture in `tools/rover_tests/` is designed to support additional subcommands without duplicating infrastructure:
+Both straight-line translation (`linear`) and compound autonomous maneuvers (`out-and-back`) are implemented and calibrated in `tools/rover_tests/`:
 
-1. **`controllers.py`**: Contains `BaseApproachController`. `LinearApproachController` can be wrapped or imported directly.
-2. **`linear.py`**: Define `LinearParameters` (distance, speed, direction, approach zone) and wheel speed calculations.
-3. **`outback.py`**: Define compound routine chaining `linear` and `turn` segments using `SegmentTracker` for lateral drift tracking.
-4. **`cli.py`**: Add subparser commands `linear` and `outback` forwarding to `PhysicalTestRunner`.
-5. **Reused Infrastructure**:
-   - `transport.py`: WebSocket client, token auth, 3-zero handshake, and disarm cleanup are reused as-is.
-   - `sensors.py`: Fresh odometry capture and IMU verification are reused as-is.
-   - `runner.py`: The trial loop, operator approval prompt, watchdog monitoring, and Ron estimate collection are reused as-is.
-   - `reporting.py`: Ingests linear distance metrics alongside angular metrics.
+### A. `rover-test linear`
+Executes closed-loop forward or reverse translation using `LinearApproachController` ($0.20\text{ m/s}$ cruise $\to 0.05\text{ m/s}$ creep in final $0.15\text{ m}$, stopping advance $0.0135\text{ m}$, effective wheel diameter $0.06695\text{ m}$):
+```powershell
+python -m tools.rover_tests.cli linear --distance 1.0 --direction forward --trials 1 --inter-trial-approval
+python -m tools.rover_tests.cli linear --distance 1.0 --direction reverse --trials 1 --inter-trial-approval
+```
+
+### B. `rover-test out-and-back`
+Executes an autonomous 3-leg (`forward -> 180° turn -> forward return`) or 4-leg (with `--final-turn`) compound sequence:
+```powershell
+python -m tools.rover_tests.cli out-and-back --distance 1.0
+python -m tools.rover_tests.cli out-and-back --distance 1.0 --final-turn
+```

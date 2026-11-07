@@ -18,6 +18,7 @@ This root document is the single source of truth for **Rover 1** build/repositor
 | **Effective Track Width** | `0.3408575433 m` | Calibrated differential track width |
 | **IMU Sensor & Mode** | BNO08x — `SH2_GAME_ROTATION_VECTOR_NON_MAGNETIC` (`0x08`) | Non-magnetic yaw only (magnetic orientation forbidden indoors) |
 | **Latest Calibration Handoff** | [`docs/HANDOFF_REBUILT_CHASSIS_CALIBRATION_20261018.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/docs/HANDOFF_REBUILT_CHASSIS_CALIBRATION_20261018.md) | Complete calibration & compound out-and-back handoff for Antigravity 2.0 |
+| **Latest Session Handoff & TODO** | [`HANDOFF.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/HANDOFF.md), [`TODO.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/TODO.md), [`docs/HANDOFF_TOF_SENSOR_BENCH_AND_RADAR_20261105.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/docs/HANDOFF_TOF_SENSOR_BENCH_AND_RADAR_20261105.md) | 2026-11-07 Front Obstacle Safety Zone (30 mm stop / 75 mm crawl), 125 mm ToF sensor spacing, and raised-bench acceptance |
 
 ### Standard Build & Deployment Commands
 * **Run Native Firmware Unit Tests (Before Flashing)**:
@@ -184,6 +185,7 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
 | **2026-10-18 15:46** | **`1.3.4-remap-r03`** | **`d53ca31`** | **Calibrated 1.000m Forward Test (`rover-test linear`, Rebuilt Chassis)** | **`+10 mm` ("10 mm long" [1010 mm physical])** | **`+0.9968 m` Enc (-3.2 mm err), `+1.11°` Yaw Drift** | **`SUCCESS` (1/1 PASS; 99.68% accuracy, net error -3.2mm [-0.32%]; coast 4.2mm; L/R speed diff -0.002 rad/s; 0 resets)** | `linear_forward_1p000m_1792363466.json` |
 | **2026-10-18 15:50** | **`1.3.4-remap-r03`** | **`7707217`** | **Calibrated 1.010m Reverse Test (`rover-test linear`, Rebuilt Chassis)** | **`-4.5 mm` ("almost perfect. 4-5 mm short")** | **`-0.9977 m` Enc (+12.3 mm err), `-1.84°` Yaw Drift** | **`SUCCESS` (1/1 PASS; 1.010m return target; coast 4.7mm; L/R speed diff +0.029 rad/s; 0 resets; Mode 0 LOCKED)** | `linear_reverse_1p010m_1792363806.json` |
 | **2026-10-18 15:58** | **`1.3.4-remap-r03`** | **`100803c`** | **Autonomous Compound Out-and-Back (1.0m Fwd -> 180° CW -> 1.0m Return)** | **Lined up well at origin ("good now lined up")** | **Leg 1: `+0.9916 m` (-8.4mm)<br>Leg 2: `+181.24°` (+1.24°)<br>Leg 3: `+0.9936 m` (-6.5mm)** | **`SUCCESS` (3/3 LEGS PASS; Outbound vs Inbound parity Δ=2.0mm [0.2%]; 0 stalls; 0 resets across full ~25s compound run; Mode 0 LOCKED)** | `linear_forward_1p000m_1792364263.json`<br>`turn_cw_180deg_1792364272.json`<br>`linear_forward_1p000m_1792364279.json` |
+| **2026-11-07 06:40** | **`1.3.4-remap-r03`** | **`74307bb`** | **Front Proximity Indicator & Safety Zone (Raised Platform Wheel Check)** | **Wheels slow at ≤75mm; stop at ≤30mm; reverse permitted** | **Live ToF `d <= 75mm` -> CRAWL; `d <= 30mm` -> STOP** | **`SUCCESS` (Operator verified on raised platform with spinning wheels; floor stopping distance unverified; 125mm spacing & ±8° angles confirmed)** | `Front Safety Zone Raised Bench` |
 
 *\*Note on 2026-10-13 18:16 (A2): Wheel encoders turned `-259` ticks (`26.8 mm` @ 65mm / `27.6 mm` @ 66.95mm max tire travel), confirming nominal motor travel (`99.3%`) with a ~5 mm mark placement offset.*
 *\*Note on 2026-10-14 04:42 (Turn 90° CW): Step 1 passed (`+90.95°` IMU, `90.0°` physical, `0` wheel stalls). Step 2 aborted before motion because `complete_zero_handshake` in `tools/rover_tests/transport.py` did not refresh `autonomyState.lastCmdTime` after reaching `READY_DISARMED`; fixed in `transport.py` and `server.js` (`d59c58f` / `43e828d`).*
@@ -192,6 +194,132 @@ curl -s -X POST http://127.0.0.1:3000/api/maintenance/run_test -H 'Content-Type:
 ---
 
 ## 6. Daily Engineering & Activity Log
+
+### 2026-11-07 (Saturday)
+- **Active Motor Controller Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — untouched
+- **Active ESP32-S3 ToF/LED Firmware**: `1.2.3-tof-mux` (live on ESP32-S3)
+- **Accomplishments & Code Changes**:
+  1. **Front Obstacle Safety Zone Proximity Threshold Update (`30 mm` Stop / `75 mm` Crawl)**:
+     - Updated authoritative safety logic in [`front_safety_zone.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/front_safety_zone.js) (`FRONT_STOP_THRESHOLD_MM = 30`, `FRONT_CRAWL_THRESHOLD_MM = 75`):
+       - **Above 75 mm**: Normal uninhibited operation (`state: CLEAR`, `level: clear`, `indicatorText: PROXIMITY — CLEAR`).
+       - **Above 30 mm through 75 mm**: Yellow warning (`state: CRAWL`, `level: warn`, `indicatorCode: CRAWL_ZONE` / `SLOWING`), restricting forward driving speed to crawl (`0.03 m/s`).
+       - **0 through 30 mm**: Red warning (`state: STOP`, `level: bad`, `indicatorCode: STOP_ZONE` / `STOP`), immediately stopping forward and in-place motion (`0.0 m/s`).
+       - Preserved reverse escape (`vx < 0` allowed without block) and nominal crawl speeds (`0.03 m/s` linear, `0.35 rad/s` angular).
+     - Updated browser fallback logic in [`public/hud-core.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-core.js) (`FRONT_STOP_MM = 30`, `FRONT_CRAWL_MM = 75`).
+     - Updated displayed threshold text in [`public/hud-mobile.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-mobile.js) (`≤${stopThresh}mm` fallback 30 mm, `≤${crawlThresh}mm` fallback 75 mm).
+     - Maintained existing HUD design, styling, and stale-data expiration handling (> 2500 ms expires to OFFLINE).
+  2. **Software Verification**:
+     - `node test/test_hud_cockpit.js` (including boundary test suite covering 0, 29, 30, 31, 74, 75, 76 mm, reverse escape, and recovery): **PASSED** (all 22 suites passed).
+     - `pytest ros2/ros2_ws/src/rover_bringup/test/test_tof_bridge.py`: **PASSED** (6/6 tests passed).
+     - On-target Node.js boundary validation on RPi5 (`10.0.0.246`): **PASSED** (verified 0, 29, 30, 31, 74, 75, 76 mm, reverse escape, and recovery).
+  3. **RPi5 Host Deployment**:
+     - Synchronized git branch `feat/esp32s3-tof-sensor-bench` to commit `7932bbf`.
+     - Rebuilt `rover_bringup` via colcon and recreated ROS 2 containers on RPi5.
+     - Verified live `/api/tof-sensors`, `/api/drive/status`, and `/api/autonomy/status` serving `stopThresholdMm: 30`, `crawlThresholdMm: 75`, and live radar assets serving updated thresholds.
+  4. **Front-Corner ToF Geometry Correction (125 mm Lateral Separation)**:
+     - Updated front ToF lateral mounting positions based on Ron's measurement (125 mm separation, centered symmetrically across the front, angled ±8° outward):
+       - Left: `y = +0.0625 m`, `yaw = +8°` (`+0.13962634 rad`)
+       - Right: `y = -0.0625 m`, `yaw = -8°` (`-0.13962634 rad`)
+     - Updated `TOF_MOUNTS` in [`public/hud-core.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-core.js) and static TFs (`base_link_to_tof_front_left_publisher` and `base_link_to_tof_front_right_publisher`) in [`foundation.launch.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/launch/foundation.launch.py).
+     - Explicitly preserved forward position (`x = +0.14 m`) and height (`z = +0.08 m`) as unverified placeholder measurements.
+     - Added mount geometry assertions and projection symmetry tests in [`test/test_hud_cockpit.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/test/test_hud_cockpit.js) and [`ros2/ros2_ws/src/rover_bringup/test/test_launch.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/test/test_launch.py).
+   5. **Operator Acceptance & Task Closeout (Raised Platform Wheel Verification)**:
+      - Ron physically tested and verified drive behavior with Rover 1 raised on a test platform and wheels spinning:
+        - **Yellow/crawl warning & slowdown**: verified at $\le 75\text{ mm}$ (smooth crawl speed restriction).
+        - **Red/stop warning & stop**: verified at $\le 30\text{ mm}$ (forward and in-place motion stopped immediately; reverse motion preserved).
+      - **Physical Ground Truth**: Verified actual wheel response and motor cutoff on a raised platform; floor-driving stopping distance under rover momentum was not tested.
+      - **Sensor Spacing & Geometry**: Corrected to 125 mm lateral separation symmetrically centered across the chassis (`y = ±0.0625 m`), retaining existing $\pm 8^\circ$ angles.
+      - **Deferred Alignment**: Further physical alignment calibration deferred as unnecessary for the current proximity task. Remaining mounting placeholders ($x = +0.14\text{ m}$, $z = +0.08\text{ m}$) remain identified. Front proximity indicator and sensor-spacing task closed out as complete.
+
+### 2026-11-06 (Friday)
+- **Active Motor Controller Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — untouched
+- **Active ESP32-S3 ToF/LED Firmware**: `1.2.3-tof-mux` (live on ESP32-S3), `1.2.5-tof-mux` (compiled in repo, ready for `--ota` flash next session)
+- **Accomplishments & Code Changes**:
+  1. **Front Obstacle Safety Zone (`<= 50 mm` Crawl / `<= 10 mm` Stop) for Autonomous & Manual Driving**:
+     - Created [`front_safety_zone.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/front_safety_zone.js) (`evaluateFrontSafetyZone` & `applyFrontSafetyZoneToVelocity`) monitoring the front-mapped ToF sensors (`front_left_l7cx` on `CH 1` and `front_right_l7cx` on `CH 0`):
+       - **Crawl Zone (`10 mm < minMm <= 50 mm`)**: Clamps forward velocity (`linear > 0`) to `0.03 m/s` (`DEFAULT_CRAWL_LINEAR_MPS`), scales `angular` proportionally to preserve turn curvature, and caps in-place rotation to `±0.35 rad/s`.
+       - **Stop Zone (`0 mm <= minMm <= 10 mm`)**: Immediately zeroes all forward and in-place motion (`linear = 0.0, angular = 0.0` when `linear >= 0`), while continuing to allow **reverse motion (`linear < 0`)** (`REVERSE_ALLOWED`, angular capped to `±0.35 rad/s`) so the operator or autonomy can back away from the obstacle.
+     - Integrated into [`server.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/server.js):
+       - Refreshes `currentFrontSafetyZone` at `10 Hz` and inside `startDriveKeepaliveLoop()` (`20 Hz`), broadcasting `{ type: 'front_safety_zone', zone }` over WebSocket on transitions and exposing `frontSafetyZone` in `/api/tof-sensors`, `/api/drive/status`, and `/api/autonomy/status`.
+       - Enforced across **manual driving** (`WebSocket case 'joystick'`) and **autonomous / calibration driving** (`POST /api/autonomy/cmd_vel` and `startDriveKeepaliveLoop()`), including **post-slew-limiter clamping** so entering `<= 50 mm` or `<= 10 mm` drops speed on the immediate `50 ms` tick without waiting for the `0.60 m/s²` autonomy deceleration ramp, and clears forward clearance bit `0x01` in `clearanceMask` on `STOP`.
+  2. **Close-Range (`0..19 mm`) Blind-Spot Fix Across Firmware, ROS 2 Bridge & HUD Radar**:
+     - **[`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp) (`1.2.5-tof-mux`)**: Updated `VL53L7CX` and `VL53L4CD` distance checks from `d > 0` to `d >= 0` (and accepted `tstat == 4` when `d <= 60`) because ST's `vl53l7cx_api.cpp` integer-divides `distance_mm[i] /= 4` and clamps `< 4 mm` contact readings to `0`. Previously, `d > 0` discarded `0 mm` contact readings as `-1` (`No Target`).
+     - **[`rover_tof_bridge.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/rover_bringup/rover_tof_bridge.py)**: Lowered default `range_min_m` from `0.02` (`20 mm`) to `0.0` (`0 mm`) so `0..19 mm` stop/crawl readings are published in `/tof/front_left/{points,range}` and `/tof/front_right/{points,range}`.
+     - **[`public/hud-core.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-core.js), [`public/hud-desktop.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-desktop.js), [`public/hud-mobile.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-mobile.js), [`public/hud.html`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud.html), [`public/hud.css`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud.css)**: Lowered `tofToRobotFrame()` minimum distance filter from `d >= 20` to `d >= 0`, added `evaluateFrontZone()` and `evaluateRadarDriveIndicator()`, and added a dedicated indicator bar (`#hud-radar-drive-ind`) **inside `.radar-box` but strictly outside the radar circles** (`cy = 0.445 * size`, `outer = 0.335 * size`) that displays when the **slow-down override** (`<= 50 mm`) is in effect, when the **brake is applied** (`<= 10 mm` stop override, firmware `BRAKE` actuation state, or `E-STOP`), or when there is **no motor power** (`DISARMED`, `ESP32 OFFLINE`, or `VMOT` motor switch OFF / `STICTION_BLOCKED` at `0 rad/s`).
+  3. **Verification**:
+     - `pio run -e esp32-s3-devkitc-1` (`1.2.5-tof-mux`) compiled cleanly (`RAM: 15.8%`, `Flash: 13.5%`).
+     - `node test/test_hud_cockpit.js` (`Core 1..7`, including `front_safety_zone.js` and `#hud-radar-drive-ind` radar indicator tests) and `pytest ros2/ros2_ws/src/rover_bringup/test/test_tof_bridge.py` (`6/6`) all passed.
+
+### 2026-11-05 (Thursday)
+- **Active Motor Controller Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — untouched
+- **Active ESP32-S3 ToF/LED Firmware**: `1.2.3-tof-mux` (live on ESP32-S3), `1.2.4-tof-mux` (audited in repo, ready for `--ota` flash next session)
+- **Accomplishments & Code Changes**:
+  1. **3-Sensor ToF Multiplexer Verification (`TCA9548A` at `0x70` on ESP32-S3, `200 kHz` I2C)**:
+     - Confirmed all 3 attached ST Time-of-Flight sensors live via `http://10.0.0.246:3000/api/tof-sensors` (`mux_ok: 1`, `i2c_hz: 200000`, `0` errors across all active channels):
+       - **`CH 0` (`front_right_l7cx`)**: Front-Right **`VL53L7CX`** 8×8 (`0x29`, `MODEL=0xF002`, `init: 1`, `rot: "90_ccw"`, angled $-8^\circ$ outward).
+       - **`CH 1` (`front_left_l7cx`)**: Front-Left **`VL53L7CX`** 8×8 (`0x29`, `MODEL=0xF002`, `init: 1`, `rot: "90_ccw"`, angled $+8^\circ$ outward).
+       - **`CH 2` (`unassigned` single-zone)**: **`VL53L4CD`** (`0x29`, `MODEL=0xEBAA`, `init: 1`, live in `/api/tof-sensors` and `sensors.html`; intentionally excluded from ROS 2 and radar until physically mounted/mapped).
+  2. **ROS 2 ToF Bridge Node & Static Transforms (`rover_tof_bridge.py` & `foundation.launch.py`)**:
+     - Created [`rover_tof_bridge.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/rover_bringup/rover_tof_bridge.py) polling `/api/tof-sensors` at `10 Hz` via a persistent `requests.Session()` and publishing:
+       - `/tof/front_left/points` (`sensor_msgs/msg/PointCloud2`) & `/tof/front_left/range` (`sensor_msgs/msg/Range`, frame `tof_front_left_link`)
+       - `/tof/front_right/points` (`sensor_msgs/msg/PointCloud2`) & `/tof/front_right/range` (`sensor_msgs/msg/Range`, frame `tof_front_right_link`)
+     - Added static TF publishers in [`foundation.launch.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/launch/foundation.launch.py) (`base_link -> tof_front_left_link` at `x=0.14 m, y=+0.08 m, z=0.08 m, yaw=+0.139626 rad [+8°]` and `base_link -> tof_front_right_link` at `x=0.14 m, y=-0.08 m, z=0.08 m, yaw=-0.139626 rad [-8°]`).
+     - Rebuilt `rover_bringup` inside `rover-ros2` on RPi5 and verified live ROS 2 topics (`~9.8 Hz`) and TF transforms (`tf2_echo`).
+  3. **HUD Radar 8×8 ToF Overlay & Close-In Micro-Zoom (`0.25 m` / `10 in`, `0.50 m` / `20 in`, `1.0 m` / `3.3 ft`)**:
+     - Updated [`public/hud-core.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-core.js) (`tofToRobotFrame` & `drawRadar`) to project the nearest valid zone in each of the 8 display columns per front `VL53L7CX` sensor into the robot frame ($\pm 8^\circ$ outward mount yaw) and render them as high-visibility magenta squares (`#ff44ee`) on top of the 360° LiDAR scan.
+     - Added `0.25 m (10 in)`, `0.5 m (20 in)`, and `1.0 m (3.3 ft)` close-in zoom steps to Desktop ([`public/hud.html`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud.html)) and Mobile ([`public/hud-mobile.html`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-mobile.html), [`public/hud-mobile.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-mobile.js)) radars with `cm`-labeled range rings (`10cm / 20cm / 25cm` at `0.25 m` zoom) and `cm + in` minimum distance readout (`MIN: XX cm (X.X in)`).
+  4. **Code & Firmware Audit Fixes**:
+     - **[`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp) (`1.2.4-tof-mux`)**:
+       - Fixed `VL53L4CD` invalid-status ternary bug where both branches returned `(int16_t)res.distance_mm` instead of `-1` when `res.range_status != 0` or `res.distance_mm == 0`.
+       - Fixed `VL53L7CX` center 2×2 `distMm` fallback (`cSum / cValid : -1` instead of falling back to `st.minMm` when center zones `27, 28, 35, 36` have no target).
+     - **[`esp32s3_status_led/rpi5_status_led_daemon.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/rpi5_status_led_daemon.py) & [`esp32s3_status_led/deploy_esp32s3.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/deploy_esp32s3.py)**:
+       - Updated fallback USB symlink MAC from old replaced board (`58:E6:C5:72:3F:FC`) to installed board (`58:E6:C5:71:6A:98`) with dynamic glob discovery gated by `303a:1001` udev verification.
+       - Added periodic `STATUS\nOTA\n` refresh (`10 s` and on LED state change) so `esp_status` and `ota_status` in `/tmp/esp32s3_tof_state.json` never stay frozen at initial boot values.
+     - **[`public/hud-core.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-core.js), [`public/hud-desktop.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-desktop.js), [`public/hud-mobile.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud-mobile.js)**:
+       - Fixed `drawRadar()` to report `live: Boolean(lidarLive || tofLive)` so the HUD radar displays `FRONT TOF LIVE` and `NEAREST` / `MIN` distance even when RPLiDAR C1 is unplugged.
+     - **Unit Tests Added**: Added [`test_tof_bridge.py`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/ros2/ros2_ws/src/rover_bringup/test/test_tof_bridge.py) (5/5 passing) and `Core 5` in [`test_hud_cockpit.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/test/test_hud_cockpit.js).
+
+### 2026-10-25 (Sunday)
+- **Active Motor Controller Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — untouched
+- **Accomplishments & Observations**:
+  1. **ESP32-S3 GPIO UART0 Migration (`RPi5 GPIO 14/15` $\leftrightarrow$ `ESP32-S3 GPIO 18/17`) (`06:34–06:39 PDT`)**:
+     - Configured [`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp) to listen on hardware `Serial1` (`RX = GPIO 18`, `TX = GPIO 17`, `115200` baud) alongside USB `Serial`, with non-blocking USB TX (`Serial.setTxTimeoutMs(0)`) so the firmware runs seamlessly when the USB cable is unplugged.
+     - Implemented **unpowered-RPi5 backfeed protection**: `GPIO 17 (TX)` is initialized in high-impedance `INPUT` (`Serial1.begin(115200, SERIAL_8N1, 18, -1)`) and is only attached as a driven UART TX output while an active RPi5 heartbeat is present on `GPIO 18 (RX)`, automatically detaching back to high-Z `INPUT` on `"R\n"` or the `1.5 s` heartbeat timeout.
+     - Enabled RPi5 40-pin header UART0 (`/dev/ttyAMA0`, `GPIO14 = TXD0`, `GPIO15 = RXD0`) dynamically via `dtoverlay uart0-pi5`, persisted `dtparam=uart0=on` and `dtoverlay=uart0-pi5` in `/boot/firmware/config.txt`, removed `console=serial0,115200` from `/boot/firmware/cmdline.txt`, and masked `serial-getty@ttyAMA0.service`.
+     - Updated [`esp32s3_status_led/rpi5_status_led_daemon.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/rpi5_status_led_daemon.py) to use `/dev/ttyAMA0` as primary (with USB JTAG `303a:1001` as fallback) while continuing to strictly block `/dev/ttyUSB0` / `/dev/rover-esp32`.
+     - Verified bidirectional communication over `/dev/ttyAMA0` (`[ESP32S3_LED] STATUS=GREEN HEARTBEAT=1 AGE_MS=70`) and confirmed `rover-server.service` / Maker-ESP32-Pro remained untouched (`bootCount: 1`, `armed: false`, `mode: 0`).
+
+  2. **ESP32-S3 8-Channel I2C Multiplexer (`0x70`) Wiring & Verification (`08:52–09:01 PDT`)**:
+     - Wired 8-channel I2C multiplexer (`TCA9548A` / `PCA9548A`) to the **Lonely Binary ESP32-S3 N16R8** terminal breakout board: `VIN -> 3V3`, `GND -> GND`, `SDA -> GPIO 8`, `SCL -> GPIO 9` (`RST` and `A0–A2` unconnected; no downstream sensors attached yet).
+     - Added non-blocking `100 kHz` I2C bus initialization (`Wire.begin(8, 9, 100000)`, `Wire.setTimeOut(50)`), `0x70` presence probe, per-channel selection + control-register readback verification (`CH 0..7`, masks `0x01..0x80`), downstream sensor address scan (`0x08..0x77`), and post-scan channel deselection (`0x00` write + readback verification) to [`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp), preserving all existing status LED, heartbeat, and GPIO UART0 backfeed-protection behavior.
+     - Verified over RPi5 GPIO UART0 (`/dev/ttyAMA0`): `MUX_ADDR=0x70 PRESENT=1`, all `8/8` channels selected and read back cleanly (`DEVICES=NONE`), post-scan deselect verified (`MASK=0x00 DESELECT_OK=1 READBACK=0x00`), and LED status reported `STATUS=GREEN HEARTBEAT=1 MUX_0x70=OK`.
+     - Confirmed `rover-server.service` and Maker-ESP32-Pro remained untouched (`bootCount: 1`, `armed: false`, `mode: 0`).
+
+  3. **ESP32-S3 Secure Wi-Fi OTA Firmware Updates & USB-Disconnected Acceptance (`09:36–11:11 PDT`)**:
+     - Configured [`esp32s3_status_led/platformio.ini`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/platformio.ini) with `board_build.partitions = default_16MB.csv` (`app0` and `app1` dual `6.25 MB` OTA slots; firmware uses `781,584 bytes` / `11.9%`).
+     - Added non-blocking home Wi-Fi station association (`WIFI_STA`, hostname `rover1-esp32s3`) and authenticated `ArduinoOTA` (`MD5_CHALLENGE`, port `3232`) to [`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp), keeping credentials in git-ignored local files (`include/ota_secrets.h` and `.ota_secrets.json`) and updating `setUartTxDriven()` to switch `GPIO 17` via `esp_rom_gpio_connect_out_signal` so UART1 TX re-attaches reliably in Arduino-ESP32 `2.0.16` while preserving high-Z `INPUT` backfeed protection.
+     - Updated [`esp32s3_status_led/rpi5_status_led_daemon.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/rpi5_status_led_daemon.py) and [`esp32s3_status_led/deploy_esp32s3.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/deploy_esp32s3.py) (`--ota` and `--usb` modes) to verify target identity over `/dev/ttyAMA0`, push OTA updates without exposing secrets in `argv` or logs, and log coordinated `MAINTENANCE` windows during flash/reboot.
+     - **Verification**:
+       1. Initial USB bootstrap (`1.1.0-ota-usb` on `app0`), wrong-password rejection (`Authenticating...FAIL`), USB-attached OTA update (`1.1.0-ota-usb` $\to$ `1.1.1-ota-wifi` on `app1`), and bounded 8-second Wi-Fi-unavailable test (`WIFI_OFF_TEST 8`) all passed.
+       2. **Final USB-Disconnected Acceptance (`11:10–11:11 PDT`)**: With USB physically unplugged (`NO_TTYACM`, no `303a:1001` in `lsusb`), ran `python esp32s3_status_led/deploy_esp32s3.py --ota --fw-version 1.1.2-ota-unplugged`. Verified transition `1.1.1-ota-wifi (app1)` $\to$ `1.1.2-ota-unplugged (app0)`, automatic `/dev/ttyAMA0` UART reconnection (`STATUS=GREEN HEARTBEAT=1 WIFI=CONNECTED IP=10.0.0.154 OTA=READY`), and 8-channel `TCA9548A` (`0x70`) multiplexer check (`CHANNELS_OK=8/8 DESELECTED=1`, also detecting downstream sensor `0x29` on `CH=0`).
+       3. Confirmed `rover-server.service` and Maker-ESP32-Pro remained untouched (`bootCount: 1`, `armed: false`, `mode: 0`).
+
+  4. **ESP32-S3 8-Channel ToF Sensor Bench (`VL53L7CX` 8×8 & `VL53L4CD` Cliff) Integration (`11:44–12:49 PDT`)**:
+     - Added `STM32duino VL53L7CX` and `STM32duino VL53L4CD` drivers to [`esp32s3_status_led/platformio.ini`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/platformio.ini) and [`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp) (`1.2.0-tof-mux`, `400 kHz` I2C with bounded 128-byte chunked ESP32 `TwoWire` linker wrappers and 2.5s hot-plug discovery across all 8 `TCA9548A` channels `CH 0..7`).
+     - Flashed `1.2.0-tof-mux` via Wi-Fi OTA (`deploy_esp32s3.py --ota`) and verified both attached **`VL53L7CX`** 8×8 sensors on **`CH=0` (Front)** and **`CH=1` (Rear)** (`0x29`, `MODEL=0xF002`) automatically initialized in `8×8 @ 10 Hz` mode and streamed live `[ESP32S3_TOF]` 64-zone distance frames over `/dev/ttyAMA0` into `/tmp/esp32s3_tof_state.json`.
+     - Added `/api/tof-sensors`, `/api/tof-sensors/rescan`, and `/api/tof-sensors/mapping` to [`server.js`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/server.js) and deployed the live testing bench page at **`http://10.0.0.246:3000/sensors.html`** ([`public/sensors.html`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/sensors.html)) plus a `📡 ToF Bench` header button in [`public/hud.html`](file:///c:/Users/Ron/electronic_projects/yahboom-encoder/public/hud.html).
+     - Confirmed `rover-server.service` and Maker-ESP32-Pro remained disarmed and locked (`serialConnected: true`, `armed: false`).
+
+### 2026-10-24 (Saturday)
+- **Active Motor Controller Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — untouched
+- **Accomplishments & Observations**:
+  1. **Root `AGENTS.md` Documentation (`09:15–09:25 PDT`)**:
+     - Created comprehensive root [`AGENTS.md`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/AGENTS.md) covering Rover 1 identity, rebuilt-chassis hardware & power isolation architecture, branch discipline, build/verification commands, working style, and safety boundaries.
+  2. **Lonely Binary ESP32-S3 N16R8 Verification & Status LED Deployment (`09:21–09:50 PDT`)**:
+     - Verified auxiliary **Lonely Binary ESP32-S3 N16R8** (seated in its supplied terminal breakout board, connected via native **USB** port) on RPi5 `10.0.0.246`: USB VID:PID `303a:1001` (`Espressif USB JTAG/serial debug unit`), MAC `58:e6:c5:72:3f:fc`, `16MB` Quad Flash, `8MB` PSRAM, enumerating at `/dev/ttyACM0` (`/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:72:3F:FC-if00`), completely isolated from the Maker-ESP32-Pro (`1a86:7523`, `/dev/rover-esp32` → `/dev/ttyUSB0`).
+     - Created isolated PlatformIO subproject [`esp32s3_status_led/`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/platformio.ini) (`env:esp32-s3-devkitc-1`), firmware [`esp32s3_status_led/src/main.cpp`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/src/main.cpp), RPi5 daemon [`esp32s3_status_led/rpi5_status_led_daemon.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/rpi5_status_led_daemon.py), and deployer [`esp32s3_status_led/deploy_esp32s3.py`](file:///c:/Users/Ron/electronic_projects/esp/esp-maker-usba-4motor/esp32s3_status_led/deploy_esp32s3.py).
+     - Flashed ESP32-S3 and enabled `esp32s3-status-led.service` on RPi5 (`10.0.0.246`). Operator visually confirmed the onboard RGB LED is **solid green** when the RPi5 is on (stationary), with automatic switch to **solid blue** during rover motion (via `/api/pid-telemetry`) and **solid red** when the RPi5 is off/halted or heartbeats stop (`> 1.5 s`).
+     - Confirmed `rover-server.service` and Maker-ESP32-Pro remained untouched (`bootCount: 1`, `armed: false`, `mode: 0`).
 
 ### 2026-10-18 (Saturday)
 - **Active Firmware**: `1.3.4-remap-r03` (`source: rev42-remap-c`, commit `a2e3d43`) — flashed `08:15 PDT`

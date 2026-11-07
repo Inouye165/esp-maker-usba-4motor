@@ -17,7 +17,7 @@ The agent and codebase **MUST**:
 3. **Established Approach Behavior**:
    * **Cruise Phase**: Drive at established cruise speed ($v_x = 0.20\text{ m/s}$).
    * **Slowdown / Creep Phase**: Automatically step down to creep speed ($v_x = 0.05\text{ m/s}$) upon entering the $0.150\text{ m}$ ($150\text{ mm}$) approach zone.
-   * **Completion**: Command zero velocity ($v_x = 0.00\text{ m/s}$) when target distance is reached.
+   * **Calibrated Stopping Advance**: Command zero velocity ($v_x = 0.00\text{ m/s}$) at $\text{target\_distance} - 0.0135\text{ m}$ ($13.5\text{ mm}$ stopping advance) so dynamic brake coast lands on target.
 4. **Never Cut From Full Speed**: Never drive at constant cruise speed ($0.20\text{ m/s}$) until the target and abruptly command zero.
 5. **Continuous Telemetry & Actuation Monitoring**: Continuously monitor M1–M4 speed targets, PWM, measured wheel speeds, and raw encoder ticks.
 6. **Capture Required Milestones**: Record slowdown entry, target crossing, zero command, post-zero coast movement, and final settled odometry.
@@ -42,10 +42,10 @@ The agent and codebase **MUST**:
 6. **Established Angular Slowdown**:
    * **Cruise Phase**: Rotate at cruise speed ($\omega_z = 0.80\text{ rad/s}$).
    * **Slowdown / Creep Phase**: Automatically step down to creep speed ($\omega_z = 0.20\text{ rad/s}$) within the final $30.0^\circ$ approach zone.
-   * **Completion**: Command zero angular velocity ($\omega_z = 0.00\text{ rad/s}$) at target angle completion.
-7. **Wheel Polarity Verification for Pivots**:
-   * **Clockwise (CW / +Yaw delta)**: M1 (LF) and M3 (LR) positive; M2 (RF) and M4 (RR) negative.
-   * **Counter-Clockwise (CCW / -Yaw delta)**: M1 (LF) and M3 (LR) negative; M2 (RF) and M4 (RR) positive.
+   * **Calibrated Stopping Advance**: Command zero angular velocity ($\omega_z = 0.00\text{ rad/s}$) at $\text{target\_angle} - 0.7^\circ$ stopping advance.
+7. **Wheel Polarity Verification for Pivots** *(logical telemetry channels `m1..m4`; on rebuilt chassis `1.3.4-remap-r03`, `m1/LF`=Port M2, `m2/RF`=Port M1, `m3/LR`=Port M4, `m4/RR`=Port M3)*:
+   * **Clockwise (CW / +Yaw delta in `rover-test`)**: `m1` (LF) and `m3` (LR) positive; `m2` (RF) and `m4` (RR) negative.
+   * **Counter-Clockwise (CCW / -Yaw delta in `rover-test`)**: `m1` (LF) and `m3` (LR) negative; `m2` (RF) and `m4` (RR) positive.
 8. **Symmetric Target Magnitudes**: Verify opposite sides receive opposite directions with equal intended speed magnitudes.
 9. **Telemetry Distinction**: Distinguish speed targets from differing PID/PWM outputs.
 10. **Final State**: Always finish stopped, **DISARMED**, and **LOCKED**.

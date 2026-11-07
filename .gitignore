@@ -17,3 +17,5 @@ deploy_firmware.py
 __pycache__/
 *.pyc
 reports/
+esp32s3_status_led/include/ota_secrets.h
+esp32s3_status_led/.ota_secrets.json
