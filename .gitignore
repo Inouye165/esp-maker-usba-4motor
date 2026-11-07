@@ -19,3 +19,24 @@ __pycache__/
 reports/
 esp32s3_status_led/include/ota_secrets.h
 esp32s3_status_led/.ota_secrets.json
+
+# Native test binaries and objects
+/test_patched_native
+/test_baseline_native
+/test_baseline
+/test_case2_behavioral
+/test_debug
+/test_open_loop_expiry
+/test_patched
+/test_reverse_crawl_candidate
+/validate_scenarios
+test/test_baseline
+test/test_baseline_native
+test/test_case2_behavioral
+test/test_debug
+test/test_open_loop_expiry
+test/test_patched
+test/test_patched_native
+test/test_reverse_crawl_candidate
+test/validate_scenarios
+*.o
