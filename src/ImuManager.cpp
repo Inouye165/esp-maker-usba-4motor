@@ -4,25 +4,36 @@
 ImuManager::ImuManager() {}
 
 bool ImuManager::begin(int sdaPin, int sclPin, uint8_t i2cAddr) {
+  // Bus clear sequence in case slave is holding SDA low from previous reset
+  pinMode(sclPin, OUTPUT);
+  pinMode(sdaPin, INPUT_PULLUP);
+  for (int i = 0; i < 16; i++) {
+    digitalWrite(sclPin, LOW);
+    delayMicroseconds(5);
+    digitalWrite(sclPin, HIGH);
+    delayMicroseconds(5);
+  }
+
   Wire.begin(sdaPin, sclPin);
   Wire.setClock(400000); // 400 kHz I2C Fast Mode
 
-  LOG_SERIAL_PRINTF("[IMU] Initializing BNO08x on SDA GPIO %d, SCL GPIO %d, Address 0x%02X at 400 kHz I2C...\n", sdaPin, sclPin, i2cAddr);
-
-  if (!_bno.begin_I2C(i2cAddr, &Wire)) {
-    LOG_SERIAL_PRINTLN("[IMU ERROR] Failed to find BNO08x chip at specified address!");
-    _initialized = false;
-    _inResetRecovery = true;
-    return false;
+  uint8_t addrs[2] = { i2cAddr, (uint8_t)((i2cAddr == 0x4B) ? 0x4A : 0x4B) };
+  for (int a = 0; a < 2; a++) {
+    uint8_t targetAddr = addrs[a];
+    LOG_SERIAL_PRINTF("[IMU] Probing BNO08x at address 0x%02X...\n", targetAddr);
+    if (_bno.begin_I2C(targetAddr, &Wire)) {
+      Wire.setClock(400000);
+      LOG_SERIAL_PRINTF("[IMU] BNO08x hardware detected successfully at 0x%02X. Enabling sensor reports at ~50 Hz...\n", targetAddr);
+      _initialized = true;
+      setReports();
+      return true;
+    }
   }
 
-  // Re-assert 400 kHz in case _bno.begin_I2C / Wire.begin reset clock dividers
-  Wire.setClock(400000);
-
-  LOG_SERIAL_PRINTLN("[IMU] BNO08x hardware detected successfully. Enabling sensor reports at ~50 Hz...");
-  _initialized = true;
-  setReports();
-  return true;
+  LOG_SERIAL_PRINTLN("[IMU ERROR] Failed to find BNO08x chip at 0x4B or 0x4A!");
+  _initialized = false;
+  _inResetRecovery = true;
+  return false;
 }
 
 void ImuManager::setReports() {

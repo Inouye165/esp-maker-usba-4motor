@@ -9,7 +9,7 @@ import urllib.request
 import urllib.error
 import paramiko
 
-EXPECTED_FIRMWARE_SHA256 = "6f361b72bfc82a4a3a2b39c37e82300bb0037ce53e2b3a81ca87783f07b54eba"
+EXPECTED_FIRMWARE_SHA256 = "a6ea24a242dc66488dffb200c5de8d10f45fa44d0aad57402528162a94655bea"
 
 def load_env(env_path):
     env_vars = {}
