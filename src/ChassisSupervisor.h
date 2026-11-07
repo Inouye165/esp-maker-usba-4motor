@@ -208,7 +208,11 @@ inline void updateChassisStallSupervisorWithState(
 
             bool credibleMotion = false;
             if (currentManeuver == MANEUVER_PURE_SPIN || state.prevManeuverType == MANEUVER_PURE_SPIN) {
-                credibleMotion = (movingWheels >= 2) && (std::fabs(gz) >= 0.04f);
+                // In pure spin, credible motion is evidenced either by gyro rotation (|gz| >= 0.04 rad/s)
+                // or by active opposing track motion (movingLeft >= 1 && movingRight >= 1).
+                // This allows sustained manual turning even if the IMU is offline, in reset recovery,
+                // commanding fine low-speed rotation (< 0.04 rad/s), or raised on bench blocks.
+                credibleMotion = (movingWheels >= 2) && ((std::fabs(gz) >= 0.04f) || (movingLeft >= 1 && movingRight >= 1));
             } else {
                 float leftTarget = 0.0f, rightTarget = 0.0f;
                 DifferentialDrive::velocityToWheels(activeCmd.linearVelocity, activeCmd.angularVelocity, leftTarget, rightTarget);
@@ -451,25 +455,34 @@ inline void updateSpinRecoveryHarnessWithState(
     }
 
     // Coordinated Pure-Spin Breakout Qualification:
-    // Requires BOTH:
-    // 1. Sustained IMU yaw rate in the commanded direction (|gz| >= 0.08 rad/s matching cmd sign)
-    // 2. Sustained wheel movement from at least 3 of 4 wheels in the commanded direction (|vel| >= 0.10 rad/s)
-    // 3. Persisting for at least 3 consecutive control cycles (30 ms @ 100 Hz)
+    // Requires:
+    // 1. Sustained wheel movement from at least 3 of 4 wheels in the commanded direction (|vel| >= 0.10 rad/s)
+    // 2. Corroborated either by IMU yaw rate (|gz| >= 0.08 rad/s matching cmd sign)
+    //    or by active opposing track motion (movingLeft >= 1 && movingRight >= 1).
+    // This prevents false stall triggers and motor shutdown when the IMU is offline, uninitialized,
+    // bench-tested, or executing fine slow-speed turns.
     float cmdSign = (activeCmd.angularVelocity >= 0.0f) ? 1.0f : -1.0f;
     float gz = imuManager.getData().gz;
     bool imuRotating = (gz * cmdSign >= 0.08f);
 
     int movingWheels = 0;
+    int movingLeft = 0;
+    int movingRight = 0;
     for (int i = 0; i < 4; i++) {
         float v = encoderManager.getVelocity(i);
         // Left wheels (0, 2) rotate reverse for CCW (+wz), Right wheels (1, 3) rotate forward for CCW (+wz)
         float expectedSign = (i == 0 || i == 2) ? -cmdSign : cmdSign;
         if (v * expectedSign >= 0.10f) {
             movingWheels++;
+            if (i == 0 || i == 2) {
+                movingLeft++;
+            } else {
+                movingRight++;
+            }
         }
     }
 
-    bool genuineChassisBreakout = (movingWheels >= 3) && imuRotating;
+    bool genuineChassisBreakout = (movingWheels >= 3) && (imuRotating || (movingLeft >= 1 && movingRight >= 1));
 
     if (genuineChassisBreakout) {
         state.spinBreakoutSustainedTicks++;

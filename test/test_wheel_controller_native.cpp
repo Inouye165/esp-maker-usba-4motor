@@ -1464,6 +1464,38 @@ void testCase9_SpinRecoveryIntentAndExhaustion() {
     assert(pwmM1_at_5s_9M == 0);
     assert(pwmM2_at_5s_9M == 0);
 
+    // Sub-test 9N: Sustained Pure Spin with Offline/Zero Gyro (Bench / IMU Uninitialized)
+    // When IMU is offline or reading gz=0.0f, but wheels are spinning with opposing track motion,
+    // ChassisSupervisor must recognize opposing wheel movement as credible motion.
+    // The 1,000 ms no-motion budget must NOT accumulate or trigger SPIN_RECOVERY_FAILED_LATCHED.
+    std::cout << "  [Sub-test 9N] Testing Sustained Pure Spin with Zero Gyro (Offline IMU)...\n";
+    resetTestEnv(cmdMgr, motionLimiter, wc, md);
+    bool allFree[4] = {false, false, false, false};
+    int shutdownTick_9N = -1;
+    for (int t = 0; t < 300; t++) { // 300 ticks @ 10 ms = 3.0 seconds
+        cmdMgr.setCommand(0.000f, 0.400f, SOURCE_ROS);
+        imuManager.data.gz = 0.0f;
+        stepFullSystemMotionLoop(cmdMgr, motionLimiter, wc, md, allFree, 55.0f);
+        imuManager.data.gz = 0.0f; // Maintain zero gyro reading throughout
+
+        if (g_chassisSupervisorState.spinRecoveryState == SPIN_RECOVERY_FAILED_LATCHED && shutdownTick_9N == -1) {
+            shutdownTick_9N = t + 1;
+        }
+    }
+    int pwmM1_at_3s_9N = getDeliveredMotorPwm(md, 0);
+    int pwmM2_at_3s_9N = getDeliveredMotorPwm(md, 1);
+    std::cout << "    [9N Results] Shutdown Tick: " << shutdownTick_9N << " (expected -1 / no shutdown)\n";
+    std::cout << "    [9N Results] Cumulative No-Motion Ms: " << g_chassisSupervisorState.cumulativeNoMotionMs << " ms\n";
+    std::cout << "    [9N Results] Delivered PWM at 3.0s: M1=" << pwmM1_at_3s_9N << ", M2=" << pwmM2_at_3s_9N << "\n";
+    std::cout << "    [9N Results] Recovery State at 3.0s: " << (int)g_chassisSupervisorState.spinRecoveryState 
+              << ", Exhausted Latch: " << g_chassisSupervisorState.spinFailedExhausted << "\n" << std::flush;
+    assert(shutdownTick_9N == -1); // Must NOT shut down during sustained 3.0s pure spin!
+    assert(g_chassisSupervisorState.spinRecoveryState != SPIN_RECOVERY_FAILED_LATCHED);
+    assert(g_chassisSupervisorState.spinFailedExhausted == false);
+    assert(g_chassisSupervisorState.cumulativeNoMotionMs == 0);
+    assert(pwmM1_at_3s_9N != 0);
+    assert(pwmM2_at_3s_9N != 0);
+
     std::cout << "  -> TEST 9 PASS\n";
 }
 
